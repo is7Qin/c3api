@@ -19,20 +19,6 @@ import (
 // 拆分独立函数以便用真实上游 JSON 构造单测（不得结构体
 // marshal 自证）。
 
-// OpenAI 族的缓存写入计数在 *_tokens_details.cache_write_tokens（chat 为
-// prompt_tokens_details，responses 为 input_tokens_details）。anthropic 用
-// cache_creation_input_tokens（不经本族）。v1.12.0 的 InputTokensDetails 只有
-// cached_tokens，非流式必须走 RawJSON() 的上游原始字节。
-const (
-	chatCacheWritePath      = "prompt_tokens_details.cache_write_tokens"
-	responsesCacheWritePath = "input_tokens_details.cache_write_tokens"
-)
-
-// cacheWriteFromRaw 从 usage 原始 JSON 读 cache_write_tokens（缺失 → 0）。
-func cacheWriteFromRaw(raw, path string) int64 {
-	return gjson.Get(raw, path).Int()
-}
-
 // chatStreamUsage 流式 chat usage 帧 → 元组 + ok（usage 存在判定内建——调用方
 // 不再前置 gjson 检查；显式 null 帧 ok=false 不清零：usageInterval 值首字节
 // {/[ 判定，null 字面量首字节 n → 不存在）。

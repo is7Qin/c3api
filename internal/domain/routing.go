@@ -85,12 +85,6 @@ func fieldInt64(v int64) []byte {
 	return b[:]
 }
 
-func fieldUint64(v uint64) []byte {
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], v)
-	return b[:]
-}
-
 func fieldString(s string) ([]byte, error) {
 	if !utf8.ValidString(s) {
 		return nil, fmt.Errorf("routing: string not valid UTF-8")
@@ -366,8 +360,6 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		InstallationID:   installationID,
 	})
 }
-
-var _ = fieldUint64
 
 // CompileStaleness is the §9-A1 probe tuple: the snapshot-source table counts
 // plus per-table freshness maxima. UpdatedAt nanos ride as int64 (UnixNano —

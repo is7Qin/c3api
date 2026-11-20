@@ -28,12 +28,6 @@ func BPSBaseURLAllowed(raw string) bool {
 	return raw == "" || raw == BPSDefaultEndpoint
 }
 
-// BPSUsesWebSocket derives the BPS transport from the selected request format.
-// There is intentionally no BPS transport field in template/schema/Selection.
-func BPSUsesWebSocket(format RequestFormat) bool {
-	return format == FormatOpenAIResponsesWS
-}
-
 // IdentityEnvelope is the raw account_ext.codex_identity object. Unknown keys
 // are retained intentionally so old writers cannot erase newer BPS profile
 // data. The map is not comparable; use IdentityJSONEqual for semantic checks.
@@ -190,20 +184,6 @@ func mergeIdentityEnvelope(e IdentityEnvelope, patch IdentityPatch) (IdentityEnv
 	return out, nil
 }
 
-// MergeIdentityEnvelope updates only the requested owned fields and returns
-// canonical JSON while preserving installation_id, bps, and unknown keys.
-func MergeIdentityEnvelope(raw []byte, patch IdentityPatch) ([]byte, error) {
-	env, err := ParseIdentityEnvelope(raw)
-	if err != nil {
-		return nil, err
-	}
-	merged, err := mergeIdentityEnvelope(env, patch)
-	if err != nil {
-		return nil, err
-	}
-	return merged.CanonicalJSON()
-}
-
 func IdentityJSONEqual(a, b []byte) bool {
 	ca, errA := CanonicalIdentityJSON(a)
 	cb, errB := CanonicalIdentityJSON(b)
@@ -238,21 +218,6 @@ func BPSProfileHash(raw []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func BPSProfileDigest(raw []byte) [32]byte {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return [32]byte{}
-	}
-	if err := ValidateBPSProfileJSON(trimmed); err != nil {
-		return [32]byte{}
-	}
-	h, err := CanonicalJSONHash(trimmed)
-	if err != nil {
-		return [32]byte{}
-	}
-	return h
-}
-
 // BPSFormatsOnly reports the format gate for the BPS provider.
 func BPSFormatsOnly(formats []RequestFormat) bool {
 	for _, f := range formats {
@@ -261,17 +226,6 @@ func BPSFormatsOnly(formats []RequestFormat) bool {
 		}
 	}
 	return true
-}
-
-// BPSProfileJSONEqual compares profile JSON semantically, ignoring object key
-// order and whitespace while retaining unknown fields.
-func BPSProfileJSONEqual(a, b []byte) bool {
-	ca, errA := CanonicalJSON(a)
-	cb, errB := CanonicalJSON(b)
-	if errA != nil || errB != nil {
-		return false
-	}
-	return bytes.Equal(ca, cb)
 }
 
 // ValidateBPSProfileJSON enforces the phase-1 storage boundary: a profile is

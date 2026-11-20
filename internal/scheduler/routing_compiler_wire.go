@@ -310,21 +310,6 @@ func (s *canonicalSink) flush() {
 	s.n = 0
 }
 
-func (s *canonicalSink) writeBytes(b []byte) {
-	if len(b) <= len(s.scratch)-s.n {
-		s.n += copy(s.scratch[s.n:], b)
-		return
-	}
-	for len(b) > 0 {
-		if s.n == len(s.scratch) {
-			s.flush()
-		}
-		k := copy(s.scratch[s.n:], b)
-		s.n += k
-		b = b[k:]
-	}
-}
-
 // writeString emits the canonical string form: length-prefixed bytes.
 func (s *canonicalSink) writeString(str string) {
 	// Most fields have a one-byte length. Reserve prefix and payload together

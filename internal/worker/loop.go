@@ -60,20 +60,6 @@ func GoLoop(ctx context.Context, name string, log *logx.Logger, fn func(context.
 	return done
 }
 
-// Recover runs fn with one-shot panic recovery and error log (no restart).
-func Recover(name string, log *logx.Logger, fn func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Error("worker goroutine panicked",
-				logx.String("worker", name),
-				logx.Any("panic", r),
-				logx.String("stack", string(debug.Stack())),
-			)
-		}
-	}()
-	fn()
-}
-
 // GoRecover spawns fn in a new goroutine with one-shot panic recovery (no restart).
 func GoRecover(name string, log *logx.Logger, fn func()) {
 	go func() {

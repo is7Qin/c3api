@@ -38,8 +38,8 @@ func (s *fakeBalanceWarningService) MailConfig() (string, int, string, string, s
 // worker/无 flusher" 改由 main 的 cfg.Billing.Enabled 分支持有（分支内才调
 // wire + NewFlusher，分支外两者均为 nil），wire 层不再表达该语义——旧
 // TestWireBalanceWarningReturnsNilWhenBillingSinkAbsent 随 setter 删除而失效；
-// disabled 形状仍由 TestOrderedWorkersKeepsEmailAndOmitsWarningWhenBillingDisabled
-// 与 TestStatsProvidersOmitsWarningWhenBillingDisabled 在 orderedWorkers(nil, nil)
+// disabled 形状仍由 TestWorkerListOmitsNilWarningAndBilling
+// 与 TestStatsProvidersOmitsWarningWhenBillingDisabled 在 nil warning/billingWorker
 // 层断言（与 main 禁用分支的 nil warningWorker/billingWorker 同形）。
 func TestWireBalanceWarningConstructsWorker(t *testing.T) {
 	svc := &fakeBalanceWarningService{enabled: true}
@@ -98,7 +98,7 @@ func TestBalanceWarningEnabledUsesServiceConfigWhenGlobalSwitchEnabled(t *testin
 	require.Equal(t, 1, svc.mailConfigCalls)
 }
 
-func TestOrderedWorkersShutdownUsageThenBillingThenWarningThenEmail(t *testing.T) {
+func TestWorkerManagerShutdownOrderUsageThenBillingThenWarningThenEmail(t *testing.T) {
 	var events []string
 	var mu sync.Mutex
 	email := &lifecycleWorker{name: "email", events: &events, mu: &mu}
@@ -106,7 +106,7 @@ func TestOrderedWorkersShutdownUsageThenBillingThenWarningThenEmail(t *testing.T
 	billingWorker := &lifecycleWorker{name: "billing", events: &events, mu: &mu}
 	usage := &lifecycleWorker{name: "usage", events: &events, mu: &mu}
 	manager := worker.New(nil)
-	require.NoError(t, manager.Register(orderedWorkers(email, warning, billingWorker, usage)...))
+	require.NoError(t, manager.Register(email, warning, billingWorker, usage))
 	require.NoError(t, manager.StartAll(context.Background()))
 
 	require.NoError(t, manager.Shutdown(context.Background()))
@@ -117,11 +117,11 @@ func TestOrderedWorkersShutdownUsageThenBillingThenWarningThenEmail(t *testing.T
 	}, events)
 }
 
-func TestOrderedWorkersKeepsEmailAndOmitsWarningWhenBillingDisabled(t *testing.T) {
+func TestWorkerListOmitsNilWarningAndBilling(t *testing.T) {
 	email := &lifecycleWorker{name: "email", events: &[]string{}, mu: &sync.Mutex{}}
 	usage := &lifecycleWorker{name: "usage", events: &[]string{}, mu: &sync.Mutex{}}
 
-	workers := orderedWorkers(email, nil, nil, usage)
+	workers := []worker.Worker{email, usage}
 
 	require.Len(t, workers, 2)
 	require.Equal(t, "email", workers[0].Name())
@@ -131,7 +131,7 @@ func TestOrderedWorkersKeepsEmailAndOmitsWarningWhenBillingDisabled(t *testing.T
 func TestStatsProvidersMakesConditionalWarningVisibleToOps(t *testing.T) {
 	warningWorker := wireBalanceWarning(notification.NewCooldown(newAssemblyRedis(t)), &fakeBalanceWarningService{enabled: true}, nil, nil)
 	email := &lifecycleWorker{name: "email", events: &[]string{}, mu: &sync.Mutex{}}
-	workers := orderedWorkers(email, warningWorker, nil)
+	workers := []worker.Worker{email, warningWorker}
 	api := handler.New(nil, handler.OpsOptions{Workers: statsProviders(workers, nil)})
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
 	response := httptest.NewRecorder()
@@ -148,7 +148,7 @@ func TestStatsProvidersMakesConditionalWarningVisibleToOps(t *testing.T) {
 func TestStatsProvidersOmitsWarningWhenBillingDisabled(t *testing.T) {
 	email := &lifecycleWorker{name: "email", events: &[]string{}, mu: &sync.Mutex{}}
 
-	providers := statsProviders(orderedWorkers(email, nil, nil), nil)
+	providers := statsProviders([]worker.Worker{email}, nil)
 
 	require.Empty(t, providers)
 }

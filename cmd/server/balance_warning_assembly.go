@@ -40,18 +40,6 @@ func balanceWarningEnabled(svc balanceWarningService) func() bool {
 	}
 }
 
-func orderedWorkers(email, warning, billingWorker worker.Worker, remaining ...worker.Worker) []worker.Worker {
-	workers := make([]worker.Worker, 0, 3+len(remaining))
-	workers = append(workers, email)
-	if warning != nil {
-		workers = append(workers, warning)
-	}
-	if billingWorker != nil {
-		workers = append(workers, billingWorker)
-	}
-	return append(workers, remaining...)
-}
-
 func statsProviders(candidates []worker.Worker, log *logx.Logger) []handler.StatsProvider {
 	providers := make([]handler.StatsProvider, 0, len(candidates))
 	for _, candidate := range candidates {

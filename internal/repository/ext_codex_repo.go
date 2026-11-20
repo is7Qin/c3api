@@ -156,25 +156,6 @@ func bumpAccountGeneration(ctx context.Context, tx *ent.Client, accountID, expec
 	return u.Save(ctx)
 }
 
-// requireOwnedAccountInTx 在**写事务内**以 owner 谓词复核账号存在且落在当前作用
-// 域内（C1，spec §2.5）：越域/缺失 ⇒ ErrNotFound，且**早于任何 ext 写入**——账号
-// 存在性、CAS 与 ext 变更因此落在同一事务边界与同一 owner 谓词内（不先取行再应用
-// 层判权，也不留两次查询之间的转属窗口）。作用域未注入（管理面）时谓词为空 ⇒
-// 仅校验账号存在。
-func requireOwnedAccountInTx(ctx context.Context, client *ent.Client, accountID int64) error {
-	ok, err := client.Account.Query().
-		Where(account.IDEQ(accountID)).
-		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
-		Exist(ctx)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
-	}
-	return nil
-}
-
 // UpsertAccountExt is the existing transaction import entry point. For BPS it
 // is insert-only and inside WithTx; replacement must use AdminUpsertAccountExtCAS.
 func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {

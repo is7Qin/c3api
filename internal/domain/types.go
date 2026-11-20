@@ -91,34 +91,6 @@ func CanAccessSupplierSurface(r Role) bool {
 	return slices.Contains(SupplierSurfaceRoles(), r)
 }
 
-// roleRank 角色层级秩（user < supplier < platform_admin）；非法角色返回 -1。
-// AtLeast 的唯一事实源。角色是**层级**而非互斥（spec 2026-10-09 §2.1）。
-func roleRank(r Role) int {
-	switch r {
-	case RoleUser:
-		return 0
-	case RoleSupplier:
-		return 1
-	case RolePlatformAdmin:
-		return 2
-	}
-	return -1
-}
-
-// AtLeast 报告 role 是否达到 min 的层级（user ⊂ supplier ⊂ platform_admin；
-// spec 2026-10-09 §2.1）。管理 key 的可达面 = owner 角色在该层级下的闭包：
-// 供应商面 = AtLeast(supplier)、admin 面 = AtLeast(platform_admin)、user 面无门槛。
-// 非法角色 fail-closed：任一实参非法（!Role.Valid()）⇒ 返回 false。
-// **禁止**用 role == RoleSupplier 精确判等作面门槛（会错误拒绝 platform_admin）；
-// 仅最高级 RolePlatformAdmin 可用相等判定。
-func AtLeast(role, min Role) bool {
-	r, m := roleRank(role), roleRank(min)
-	if r < 0 || m < 0 {
-		return false
-	}
-	return r >= m
-}
-
 // UserStatus 用户状态。
 type UserStatus string
 

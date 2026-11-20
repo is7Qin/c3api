@@ -123,17 +123,6 @@ func apiResultSection() string {
 
 // ---- 场景表 ----
 
-// apiGet 只读 GET 场景快捷构造。
-func apiGet(path string, weight int, name string) apiScenario {
-	return apiScenario{name: name, weight: weight, build: func(*apiWorker, string, *rand.Rand) (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, *addr+path, nil)
-		if err != nil {
-			return nil, err
-		}
-		return req, nil
-	}}
-}
-
 // apiRandPage 带随机分页的列表路径（page/page_size 或 limit/offset 二选一）。
 func apiRandPage(rng *rand.Rand, pages int) string {
 	return fmt.Sprintf("page=%d&page_size=%d", rng.IntN(pages)+1, 100)

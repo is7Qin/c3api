@@ -152,10 +152,6 @@ func (c *Cell) retireCAS() bool {
 	}
 }
 
-func (c *Cell) inflight() uint64 {
-	return c.state.Load() &^ topBit
-}
-
 func (c *Cell) isRetired() bool {
 	return c.state.Load()&topBit != 0
 }

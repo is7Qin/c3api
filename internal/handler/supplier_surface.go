@@ -22,7 +22,6 @@ package handler
 //     AND 归属谓词，越域 ⇒ 404）。
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/auth"
@@ -282,13 +281,6 @@ func SupplierScopeInject(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// AccountScopeFrom 读取注入的账号作用域（缺省 = 管理面全量 {Set:false}）。
-// service/repository 层经 domain.AccountScopeFrom 读取同一键（此处为 handler 面
-// 便捷别名，保持既有引用）。
-func AccountScopeFrom(ctx context.Context) domain.AccountScope {
-	return domain.AccountScopeFrom(ctx)
 }
 
 // NewSupplierSurface 组装供应商面完整链路（挂载于 /api/user/supplier/*）：

@@ -239,7 +239,7 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 
 // toAPIStatsCapabilities 能力投影 → 用户面包内线缆类型（与
 // internal/handler/stat.go 的同名函数是**逐句同构的双份**——两面各自生成
-// schema 类型，跨包不可共用，这是本仓库既有的双面包惯例：toAPIStatTrendPoint /
+// schema 类型，跨包不可共用，这是本仓库既有的双面包惯例：
 // toAPIEntityStatTrendPoint / toAPIStatTTFTSummary 同样各有一份）。
 // 无数值字面量：上限/覆盖天数全部来自同一份 domain KIND 矩阵投影。
 func toAPIStatsCapabilities(c domain.Capabilities) StatsCapabilities {
@@ -262,28 +262,6 @@ func toAPIStatsCapabilities(c domain.Capabilities) StatsCapabilities {
 		}
 	}
 	return StatsCapabilities{BucketGridSeconds: int(c.BucketGridSeconds), Kinds: kinds}
-}
-
-func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
-	var avg float64
-	if b.TTFTCount > 0 {
-		avg = math.Round(float64(b.TTFTTotalMS) / float64(b.TTFTCount))
-	}
-	return StatTrendPoint{
-		BucketTime:          &b.BucketTime,
-		RequestCount:        &b.RequestCount,
-		ErrorCount:          &b.ErrorCount,
-		CallCount:           &b.CallCount,
-		InputTokens:         &b.InputTokens,
-		OutputTokens:        &b.OutputTokens,
-		TotalTokens:         &b.TotalTokens,
-		CacheReadTokens:     &b.CacheReadTokens,
-		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                new(float64(b.Cost) / 1e5),
-		RawCost:             new(float64(b.RawCost) / 1e5),
-		TTFTAvgMS:           new(avg),
-		TTFTMaxMS:           &b.TTFTMaxMS,
-	}
 }
 
 func toAPIEntityStatTrendPoint(b *domain.EntityStatBucket) StatTrendPoint {

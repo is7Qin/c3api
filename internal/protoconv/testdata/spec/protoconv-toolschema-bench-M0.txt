@@ -5,7 +5,7 @@ cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go ece145998a57854b1bb07a8ae629a81229809f8d968f29ccf7848d0a64edf037
+src_sha256 toolschema.go a6e9f057c96015652b501658d275e01bced39e000f6b857145141ebafc418065
 src_sha256 toolschema_bench_test.go 44cc6c4aacb0d8d4f8992e3e6da8ad77e18da0e62fed08d1bb0f0d36640ab8c0
 
 BenchmarkConvertRequestRespToMessTools20-16           2000   85835 ns/op   28899 B/op   111 allocs/op
@@ -73,3 +73,10 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 # 3) 2026-11-10 S4 收敛轮：`toolschema.go` 只有 6 行注释改动
 #    （删掉 `momus-r2 I-4 / I-5 / I-6` 这类评审标签，逐行 diff 已核对）；
 #    热路径零改动 ⇒ 数字仍有效，只刷 src_sha256，不重采。
+
+# 4) 2026-11-21 audit-cleanup U1：`toolschema.go` 删除四个不可达符号
+#    （`flattenState.classifyBranch`、`propsOf`、`requiredOf`、`flattenMessSchema`；
+#    `deadcode -test=false/-test=true` 双跑均报，生产 0 调用）。生产路径实际走的是
+#    `classifyBranchRaw` / `propsAt` / `requiredAt` / `flattenMessSchemaRoot`，
+#    被删者从未被调用 ⇒ 热路径零改动，数字仍有效，只刷 src_sha256 不重采
+#    （同机复跑 TestPerfGateToolSchemaHotPath 通过）。

@@ -7,7 +7,6 @@ package handler
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -288,29 +287,12 @@ func usdToMillisPtr(v *float64) *int64 {
 	return &i
 }
 
-// multI64ToNormalPtr *int64（万分数）→ *float64（正常值）；nil 透传（pricing
-// 矩阵 FastMultiplier 列，int64 存储）。
-func multI64ToNormalPtr(v *int64) *float64 {
-	if v == nil {
-		return nil
-	}
-	f := float64(*v) / 10000.0
-	return &f
-}
-
 // --- 图片价格 API 边界换算（单位规则与 pricings 相同，独立函数自文档化） ---
 //
 // 1 USD = 100,000 毫分。token 价：USD/1M image tokens ×1e5 → 毫分/1M——与
 // pricings 的 usdToMillis ×1e5 同系数同口径，直接复用不另设函数；per-image 价：
 // USD/张 ×1e5 → 毫分/张（系数与 usdToMillis 相同但单位语义不同：按张 flat，
 // 不走 /1e6 除法，独立函数自文档化）。
-
-// usdPerImageToMilli USD/张 → 毫分/张（×1e5；与 token 价同为 ×1e5 系数但单位
-// 语义独立——按张 flat 计费，防混用）。实现与 usdToMillis 共用（同系数同取整）。
-func usdPerImageToMilli(usd float64) int64 { return usdToMillis(usd) }
-
-// milliPerImageToUSD 毫分/张 → USD/张（/1e5；API 展示换算）。委托 httpface 共享实现。
-func milliPerImageToUSD(millis int64) float64 { return httpface.MillisToUSD(millis) }
 
 // usdPerImageToMilliPtr *float64（USD/张）→ *int64（毫分/张）；nil 透传。
 func usdPerImageToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
@@ -322,16 +304,8 @@ func milliPerImageToUSDPtr(v *int64) *float64 { return httpface.MillisToUSDPtr(v
 // --- 按单元价 API 边界换算（价格表三件套；单位规则独立，函数自文档化） ---
 //
 // 1 USD = 100,000 毫分。按单元价：USD/次 ×1e5 → 毫分/次（litellm
-// input_cost_per_query 原生口径；系数与 usdPerImageToMilli/usdToMillis 相同但
+// input_cost_per_query 原生口径；系数与 usdToMillis 相同但
 // 单位语义独立——按次 flat 计费不走 /1e6 除法，独立函数防误用）。
-
-// usdPerCallToMilli USD/次 → 毫分/次（×1e5）。实现与 usdToMillis 共用（同系数
-// 同取整）。
-func usdPerCallToMilli(usd float64) int64 { return usdToMillis(usd) }
-
-// milliPerCallToUSD 毫分/次 → USD/次（/1e5；API 展示换算，回显 litellm 原生
-// 口径 input_cost_per_query）。委托 httpface 共享实现。
-func milliPerCallToUSD(millis int64) float64 { return httpface.MillisToUSD(millis) }
 
 // usdPerCallToMilliPtr *float64（USD/次，litellm 原生口径）→ *int64（毫分/次）；
 // nil 透传。
@@ -340,15 +314,6 @@ func usdPerCallToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
 // milliPerCallToUSDPtr *int64（毫分/次）→ *float64（USD/次）；nil 透传。
 // 委托 httpface 共享实现。
 func milliPerCallToUSDPtr(v *int64) *float64 { return httpface.MillisToUSDPtr(v) }
-
-// normalToMultI64Ptr *float64（正常值）→ *int64（万分数）；nil 透传。
-func normalToMultI64Ptr(v *float64) *int64 {
-	if v == nil {
-		return nil
-	}
-	i := int64(math.Round(*v * 10000))
-	return &i
-}
 
 // toAPIUser 用户领域对象 → 契约类型（PasswordHash 永不下发；Balance 毫分 →
 // USD 展示换算；价格倍率按组挂在 group_assignment 上，User 无

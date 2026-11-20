@@ -647,24 +647,6 @@ func (st *flattenState) classifyBranchRaw(keyRaw []byte) {
 	st.reason("dropped-branch-constraint")
 }
 
-// classifyBranch 4c 三桶（解码名版，保留给需要名字的调用点）。
-func (st *flattenState) classifyBranch(keyName string) {
-	if _, ok := metaBranchKeys[keyName]; ok {
-		st.reason("dropped-branch-meta")
-		return
-	}
-	if keyName == "type" {
-		st.reason("dropped-branch-type")
-		return
-	}
-	switch keyName {
-	case "$ref", "$defs", "definitions":
-		return // 引用已被解引用、定义表不约束实例：都不算丢弃约束
-	}
-	st.lossyDrop = true
-	st.reason("dropped-branch-constraint")
-}
-
 // refString 取对象里 $ref 的**末个**值（末个胜，不用 gjson.Get 的首胜）。
 func refString(obj []byte) (string, bool) {
 	sp, ok := fieldSpan(obj, "$ref")
@@ -1093,15 +1075,6 @@ func rootRequiredEmpty(raw []byte, v verdict) bool {
 	return empty
 }
 
-// propsOf 取对象的 properties 成员（数组形式：名字 + 值原始字节），贡献者内部末个胜。
-func propsOf(obj []byte) []struct {
-	name string
-	raw  []byte
-} {
-	sp, ok := fieldSpan(obj, "properties")
-	return propsAt(obj, sp, ok)
-}
-
 // propsAt 已知 properties 的值区间时直接取值（省掉为找它再扫一遍整对象）。
 func propsAt(obj []byte, sp span, ok bool) []struct {
 	name string
@@ -1145,12 +1118,6 @@ func propsAt(obj []byte, sp span, ok bool) []struct {
 	return out
 }
 
-// requiredOf 取对象的 required 名字（末个胜）。
-func requiredOf(obj []byte) []string {
-	sp, ok := fieldSpan(obj, "required")
-	return requiredAt(obj, sp, ok)
-}
-
 // requiredAt 已知 required 的值区间时直接取值。
 func requiredAt(obj []byte, sp span, ok bool) []string {
 	if !ok || sp.lo >= len(obj) || obj[sp.lo] != '[' {
@@ -1181,13 +1148,6 @@ const (
 	maxFlattenDepth = 64
 	maxFlattenCalls = 256
 )
-
-// flattenMessSchema 第 1~9 步：把根级组合关键字压平成普通 object schema。
-// raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
-func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
-	budget := maxFlattenCalls
-	return flattenMessSchemaDepth(doc, scanRoot(raw), raw, 0, &budget)
-}
 
 // flattenMessSchemaRoot 复用调用方已经算好的根级判定（省一趟整文档扫描）。
 func flattenMessSchemaRoot(doc *schemaDoc, v verdict, raw []byte) ([]byte, *flattenState) {

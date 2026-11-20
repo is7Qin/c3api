@@ -93,8 +93,8 @@ func mapPartitionError(err error) error {
 // 不再插日志）。
 // 计费列：Cost 毫分（0 = 未计费/错误路径）；BillingTier 空 = 未计费
 // 路径（落库 NULL）；AboveHit/Overdraft 布尔直接落。RawCost（spec 2026-08-18）
-// 乘倍率前原始成本——恒落（对齐 SetCost，ent 缺省 0 无妨），COPY 路径
-// usageLogRowValues 同序（两路径列集合锚定）。
+// 乘倍率前原始成本——恒落（对齐 SetCost，ent 缺省 0 无妨），列序与 COPY
+// 列清单 usageLogCopyColumns 一致（两路径列集合锚定）。
 // 时间/价格快照列（nil = NULL 落库，SQL 不写该列）：TTFTMS 首 token 时间毫秒
 // （非流式/失败路径 nil）；Price*Millis 每 M token 毫分单价快照（未计费路径
 // /无该分量 nil）。
@@ -135,7 +135,7 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetSupplierCredited(l.SupplierCredited).
 		SetCreatedAt(l.CreatedAt)
 	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——空 = NULL
-	// 不写该列，与 COPY 路径 usageLogRowValues 条件赋值一一对应）。
+	// 不写该列，与 usageLogCopyColumns 的列定义一致）。
 	if l.ClientIP != "" {
 		c = c.SetClientIP(l.ClientIP)
 	}
@@ -210,69 +210,6 @@ var usageLogCopyColumns = []string{
 	usagelog.FieldBilled,
 	usagelog.FieldSupplierUserID, usagelog.FieldSupplierEarnMillis, usagelog.FieldSupplierCredited,
 	usagelog.FieldCreatedAt,
-}
-
-// usageLogRowValues 单行 COPY 值（与 buildUsageLogCreate 的 Set 条件一一对应：
-// 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0）；
-// cost/raw_cost 恒落（spec 2026-08-18——乘倍率前原始成本，可 0）；
-// client_ip 非空才赋值，否则 NULL；billed 恒落布尔——出生标记透传）。
-func usageLogRowValues(l *domain.UsageLog) []any {
-	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP, supplierUserID any
-	var ttft, priceIn, priceOut, priceCR, priceCC, pricePerCall any
-	if l.ClientIP != "" {
-		clientIP = l.ClientIP
-	}
-	if l.GroupID > 0 {
-		groupID = l.GroupID
-	}
-	if l.AccountID > 0 {
-		accountID = l.AccountID
-	}
-	if l.TemplateID > 0 {
-		templateID = l.TemplateID
-	}
-	if l.UserID > 0 {
-		userID = l.UserID
-	}
-	if l.KeyID > 0 {
-		keyID = l.KeyID
-	}
-	if l.MappedModel != "" {
-		mappedModel = l.MappedModel
-	}
-	if l.BillingTier != "" {
-		billingTier = l.BillingTier
-	}
-	if l.TTFTMS != nil {
-		ttft = *l.TTFTMS
-	}
-	if l.PriceInputMillis != nil {
-		priceIn = *l.PriceInputMillis
-	}
-	if l.PriceOutputMillis != nil {
-		priceOut = *l.PriceOutputMillis
-	}
-	if l.PriceCacheReadMillis != nil {
-		priceCR = *l.PriceCacheReadMillis
-	}
-	if l.PriceCacheCreationMillis != nil {
-		priceCC = *l.PriceCacheCreationMillis
-	}
-	if l.PricePerCallMillis != nil {
-		pricePerCall = *l.PricePerCallMillis
-	}
-	if l.SupplierUserID > 0 {
-		supplierUserID = l.SupplierUserID
-	}
-	return []any{
-		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
-		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.CommitState, l.LatencyMS, ttft,
-		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
-		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
-		l.CallCount, pricePerCall,
-		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.Billed,
-		supplierUserID, l.SupplierEarnMillis, l.SupplierCredited, l.CreatedAt,
-	}
 }
 
 // QueryUsages usage_logs keyset 游标分页查询（无 from/to 的全分区

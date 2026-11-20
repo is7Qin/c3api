@@ -20,14 +20,18 @@ func TestIdentityEnvelopeJSONRoundTripPreservesUnknownKeys(t *testing.T) {
 func TestIdentityEnvelopeCanonicalMergePreservesUnknownKeys(t *testing.T) {
 	raw := []byte(`{"unknown":{"keep":true},"bps":{"profile_id":"old"},"installation_id":"inst-1"}`)
 	profile := json.RawMessage(`{"z":1,"a":"new"}`)
-	got, err := MergeIdentityEnvelope(raw, IdentityPatch{BPSProfile: profile, SetBPSProfile: true})
+	env, err := ParseIdentityEnvelope(raw)
+	require.NoError(t, err)
+	merged, err := mergeIdentityEnvelope(env, IdentityPatch{BPSProfile: profile, SetBPSProfile: true})
+	require.NoError(t, err)
+	got, err := merged.CanonicalJSON()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"unknown":{"keep":true},"bps":{"z":1,"a":"new"},"installation_id":"inst-1"}`, string(got))
-	env, err := ParseIdentityEnvelope(got)
+	parsed, err := ParseIdentityEnvelope(got)
 	require.NoError(t, err)
-	require.JSONEq(t, string(profile), string(env.BPSProfile()))
+	require.JSONEq(t, string(profile), string(parsed.BPSProfile()))
 
-	withInstallation, err := env.MergeCodexInstallation("inst-2")
+	withInstallation, err := parsed.MergeCodexInstallation("inst-2")
 	require.NoError(t, err)
 	require.Equal(t, "inst-2", withInstallation.InstallationID())
 	require.JSONEq(t, string(profile), string(withInstallation.BPSProfile()))
@@ -42,9 +46,8 @@ func TestIdentityEnvelopeCanonicalMergePreservesUnknownKeys(t *testing.T) {
 func TestIdentityEnvelopeCanonicalHashIgnoresObjectOrder(t *testing.T) {
 	a := []byte(`{"b":2,"a":1}`)
 	b := []byte(` { "a": 1, "b": 2 } `)
-	require.True(t, BPSProfileJSONEqual(a, b))
 	require.Equal(t, BPSProfileHash(a), BPSProfileHash(b))
-	require.True(t, BPSProfileJSONEqual([]byte(`{"n":1.2300,"e":1e3}`), []byte(`{"e":1000,"n":1.23}`)))
+	require.Equal(t, BPSProfileHash([]byte(`{"n":1.2300,"e":1e3}`)), BPSProfileHash([]byte(`{"e":1000,"n":1.23}`)))
 	require.NoError(t, ValidateBPSProfileJSON(a))
 	require.Error(t, ValidateBPSProfileJSON([]byte(`[]`)))
 }
@@ -57,8 +60,6 @@ func TestBPSFixedEndpointAndFormatDerivedTransport(t *testing.T) {
 	require.True(t, BPSBaseURLAllowed(""))
 	require.True(t, BPSBaseURLAllowed(BPSDefaultEndpoint))
 	require.False(t, BPSBaseURLAllowed("https://example.invalid/bps"))
-	require.False(t, BPSUsesWebSocket(FormatOpenAIResponses))
-	require.True(t, BPSUsesWebSocket(FormatOpenAIResponsesWS))
 }
 
 func TestCredentialFromExtBPSProjection(t *testing.T) {

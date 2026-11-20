@@ -372,7 +372,7 @@ func TestSupplierUsageScopeDeniesForeignAccountIDs(t *testing.T) {
 
 // TestAccountScopeFromDefault 缺省 = 管理面全量。
 func TestAccountScopeFromDefault(t *testing.T) {
-	s := AccountScopeFrom(httptest.NewRequest(http.MethodGet, "/", nil).Context())
+	s := domain.AccountScopeFrom(httptest.NewRequest(http.MethodGet, "/", nil).Context())
 	require.False(t, s.Set, "缺省管理面全量")
 	require.True(t, s.MatchesOwner(0))
 	require.True(t, s.MatchesOwner(999))
@@ -399,7 +399,7 @@ func TestSupplierScopeInject(t *testing.T) {
 	users := fakeUsers{sn: domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleSupplier}}
 	var got domain.AccountScope
 	h := auth.RequireJWT(iss, users)(SupplierScopeInject(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = AccountScopeFrom(r.Context())
+		got = domain.AccountScopeFrom(r.Context())
 	})))
 	req := httptest.NewRequest(http.MethodGet, SupplierSurfaceBaseURL+"/accounts", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
