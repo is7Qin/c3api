@@ -7,6 +7,8 @@ import (
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // ManagementKey 管理 API key（前缀 mk-，spec 2026-10-09）：管理面（/api/user、
@@ -21,7 +23,7 @@ func (ManagementKey) Fields() []ent.Field {
 		field.Int64("user_id"), // owner
 		field.String("name"),
 		field.String("key_raw").Unique(), // 明文，前缀 mk-
-		field.Enum("status").Values("active", "disabled").Default("active"),
+		field.Enum("status").Values(string(domain.ManagementKeyStatusActive), string(domain.ManagementKeyStatusDisabled)).Default(string(domain.ManagementKeyStatusActive)),
 		field.Time("created_at").Default(time.Now),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）

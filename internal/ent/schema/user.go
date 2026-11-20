@@ -6,6 +6,8 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // User 用户即顶层（无租户实体）。标识 = 邮箱（无 username 字段，与 sub2api
@@ -20,7 +22,7 @@ func (User) Fields() []ent.Field {
 		field.String("email").Unique(),
 		field.String("password_hash"),
 		field.Enum("role").Values("platform_admin", "user", "supplier").Default("user"),
-		field.Enum("status").Values("active", "disabled").Default("active"),
+		field.Enum("status").Values(string(domain.UserStatusActive), string(domain.UserStatusDisabled)).Default(string(domain.UserStatusActive)),
 		field.Int("max_concurrency").Default(0),             // 0 = 不限
 		field.Int64("balance").Default(0),                   // 最小单位；Phase 5 扣费
 		field.Int64("balance_warning_threshold").Default(0), // 0 = 关闭余额预警

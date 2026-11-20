@@ -6,6 +6,8 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // RedemptionCode 兑换码：资源发放的通用载体（Phase 5 计费前基础设施）。
@@ -25,7 +27,7 @@ func (RedemptionCode) Fields() []ent.Field {
 		field.Time("resource_expires_at").Optional().Nillable(), // 兑换后资源到期；temp_balance 必填（service 校验）
 		field.Int("max_uses").Default(1),                        // 1 = 单次码；>1 = 多人码
 		field.Int("used_count").Default(0),
-		field.Enum("status").Values("active", "disabled").Default("active"),
+		field.Enum("status").Values(string(domain.RedemptionStatusActive), string(domain.RedemptionStatusDisabled)).Default(string(domain.RedemptionStatusActive)),
 		field.Int64("created_by").Default(0), // 0 = 系统（静态 admin token）；>0 = platform_admin user_id
 		field.Time("created_at").Default(time.Now),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
