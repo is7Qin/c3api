@@ -13,6 +13,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -29,11 +30,11 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	p := c.p
 	// 按凭证类型分流：codex 凭证走适配层；BPS 也必须有独立适配层，
 	// 绝不能落入下方的静态 key 原始透传路径。
-	if sel.CredentialType.IsCodex() {
+	if credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		return p.callCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream)
 	}
 	var prepared *sdkbridge.BPSPrepared
-	if sel.CredentialType.IsBPS() {
+	if credential.ChannelOf(sel.CredentialType) == credential.ChannelBPS {
 		if p.bps == nil {
 			p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, gjson.GetBytes(body, "model").String(), domain.FormatOpenAIResponses)
 			return 0, nil, true, nil

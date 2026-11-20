@@ -81,3 +81,13 @@ var capsTable = map[Type]caps{
 		responsesFormats: true,
 	},
 }
+
+// ChannelOf 返回该类型走的执行通道。
+//
+// 这是「一个凭据类型怎么分发」的唯一答案：调用方按通道分支，不再按类型谓词分支
+// （internal/proxy 里由 AST 门禁禁止直接调 IsCodex/IsBPS/IsResponsesProvider）。
+//
+// 未知/非法类型 → ChannelStaticKey（零值），与原先 if/else-if/else 的 else 分支严格
+// 等价。这不是静默 fallback：credentialFor 对非法类型先按 Valid() 显式报错，不会拿
+// 静态 key 路径把它洗白。
+func ChannelOf(t Type) Channel { return capsTable[t].ch }

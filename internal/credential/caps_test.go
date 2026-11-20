@@ -108,6 +108,34 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 	}
 }
 
+// TestChannelFrozen 独立 golden：期望表是**字面量**，不许用 IsCodex/IsBPS 反推——
+// 那会变成同源重言（表整体错时两边一起错，测试照绿）。
+func TestChannelFrozen(t *testing.T) {
+	want := map[Type]Channel{
+		TypeAPIKey:           ChannelStaticKey,
+		TypeResponsesSpecial: ChannelStaticKey,
+		TypeCustom:           ChannelStaticKey,
+		TypeCodexOAuth:       ChannelCodex,
+		TypeCodexPAT:         ChannelCodex,
+		TypeBPS:              ChannelBPS,
+	}
+	require.Len(t, capsTable, len(want), "capsTable 与 Channel golden 的类型集合必须一致")
+	for typ, ch := range want {
+		require.Equal(t, ch, ChannelOf(typ), "%q 的执行通道漂移", typ)
+	}
+}
+
+// TestChannelOfInvalidType 表外（非法）类型落到 ChannelStaticKey——与原先
+// if/else-if/else 的 else 分支严格等价，而且**不是 fallback**：通道是零值，但
+// Valid() 必须拒绝，credentialFor 会在取凭据前显式报错，不会拿静态 key 路径把非法
+// 类型洗白。
+func TestChannelOfInvalidType(t *testing.T) {
+	for _, typ := range []Type{"", "bogus", "codex_oauth"} {
+		require.Equal(t, ChannelStaticKey, ChannelOf(typ), "%q 不在表内 → 零值通道", typ)
+		require.False(t, typ.Valid(), "%q 必须被 Valid() 拒绝", typ)
+	}
+}
+
 // TestCapsColumnInvariants 表内跨列不变量，直接对 capsTable 求值——**不依赖 golden**。
 // 这是唯一能在「表 + golden 被同步改错」时仍然咬人的断言。
 func TestCapsColumnInvariants(t *testing.T) {

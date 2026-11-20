@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -71,7 +72,7 @@ func isBPSLocalReject(err error) bool {
 // left in the request for the SDK to drop. c3api deliberately does no body
 // work here (no scan/copy/marshal) — stripping is the SDK's job.
 func bpsSkipsContinuation(sel *scheduler.Selection) bool {
-	return sel != nil && sel.CredentialType.IsBPS()
+	return sel != nil && credential.ChannelOf(sel.CredentialType) == credential.ChannelBPS
 }
 
 // bpsInvalidBody builds the client-facing 400 for a pre-dial rejection. The SDK

@@ -21,6 +21,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/continuation"
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -400,7 +401,7 @@ func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID 
 	if !p.sched.PlanHasNonCodexCandidate(plan) {
 		return nil, nil
 	}
-	codexFirst := sel.CredentialType.IsCodex()
+	codexFirst := credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex
 	if codexFirst && p.cont == nil {
 		return nil, nil
 	}
@@ -432,7 +433,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
 	// （502 + 错误率污染 + 无谓失效上报 account 0）。
 	caller := st.caller
-	if st.routeFormat == domain.FormatOpenAIImages && sel.CredentialType.IsCodex() {
+	if st.routeFormat == domain.FormatOpenAIImages && credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		caller = a.p.codexImagesFor(r)
 	}
 	// 凭据每轮取：尾部 Select 后 Selection 变化，凭据随账号；
@@ -445,15 +446,16 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		handled  bool
 		callErr  error
 	)
-	if sel.CredentialType.IsCodex() {
+	switch credential.ChannelOf(sel.CredentialType) {
+	case credential.ChannelCodex:
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
-	} else if sel.CredentialType.IsBPS() {
+	case credential.ChannelBPS:
 		if st.format != domain.FormatOpenAIResponses || st.routeFormat != domain.FormatOpenAIResponses {
 			a.p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, reqModel, st.format)
 			return 0, nil, nil, true, nil
 		}
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
-	} else {
+	default:
 		cred, err := a.p.credentialFor(ctx, sel)
 		if err != nil {
 			return 0, nil, nil, false, err // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）

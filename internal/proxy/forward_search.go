@@ -13,6 +13,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -160,7 +161,7 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 		handled  bool
 		callErr  error
 	)
-	if sel.CredentialType.IsCodex() {
+	if credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		code, respBody, handled, callErr = a.p.callCodexSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
 	} else {
 		code, respBody, handled, callErr = a.p.callStaticSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)

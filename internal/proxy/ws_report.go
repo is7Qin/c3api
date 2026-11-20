@@ -8,13 +8,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 func wsCallerCategory(sel *scheduler.Selection) CallerCategory {
-	if sel.CredentialType.IsCodex() {
+	if credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		return CallerCodexWS
 	}
 	return CallerResponsesWS

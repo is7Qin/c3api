@@ -12,10 +12,14 @@
   `failoverLoopWithPlan`（共享 failover 骨架，`attemptState` 按值传入）。
 - `caller.go`：`handleFormat`（四种 REST 格式共享入口）→ 选号 →
   `resolveFormatContinuation` → failover 循环；`caller_*.go` 一格式一 `UpstreamCaller`。
-- Codex 分流（按当轮 `sel.CredentialType.IsCodex()`）：`callCodexResponses`
+- Codex 分流（按当轮 `credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex`）：
+  `callCodexResponses`
   （`codex_responses_http.go`，直连流式/非流式）、`callConvertedCodexResponses`
   （`caller_converted.go`，协议转换车道）、`codex_responses_ws.go`（WS）、
   `caller_images_codex.go`；SDK 适配在 `internal/sdkbridge`。
+  **分发只许经 `credential.ChannelOf`**：proxy 内直接调 `IsCodex`/`IsBPS`/`IsResponsesProvider`
+  （含方法值形式）、按凭据类型字符串分支、或引用凭据类型常量（白名单 `respImageDetectOn`
+  除外）都由 `credential_channel_gate_test.go` 的 AST 门禁禁止。
 - Codex 会话路径：`codexRequestPrep` / `conversationRequest`（HTTP）与 `dialCodexWS`（WS）；
   会话簿 `proxy.Deps.Conversations`（`*codexsdk.ConversationBook`，main 恒构造）。
 - SDK 本地拒绝：`codex_local_reject.go`（`isCodexInvalidBody`、`finishCodexInvalidBody`、

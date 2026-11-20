@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/tidwall/sjson"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -90,7 +91,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 零变化零开销。Codex 不绑定续接：contTag 为空使下方两处 contBind
 	// （W6 首个 id、W7 后续新 id）对 Codex 不可达。
 	contTag := ""
-	if p.cont != nil && !sel.CredentialType.IsCodex() && !sel.CredentialType.IsBPS() {
+	if p.cont != nil && credential.ChannelOf(sel.CredentialType) == credential.ChannelStaticKey {
 		contTag = contProtocolWS
 	}
 	var (
@@ -197,7 +198,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 					_ = writeCodexInvalidBodyFrame(relayCtx, client)
 					continue
 				}
-				if sel.CredentialType.IsBPS() && isBPSLocalReject(err) {
+				if credential.ChannelOf(sel.CredentialType) == credential.ChannelBPS && isBPSLocalReject(err) {
 					_ = writeBPSInvalidBodyFrame(relayCtx, client, err)
 					continue
 				}

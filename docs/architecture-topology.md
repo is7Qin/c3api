@@ -86,7 +86,7 @@ flowchart LR
 | `internal/discovery` | **Redis 实例发现**：心跳注册/续约/缩容 + 活体实例数 N（`ClusterInstances()`，proxy/scheduler 的 `InstancesProvider` 唯一实现） | main 装配 → proxy/scheduler |
 | `internal/quality` | 路由质量观测：Recorder 内存归并 + `quality-sync` worker 落实例分钟表 | main 装配；scheduler 消费 |
 | `internal/rule` | 规则引擎：事件队列 worker（Name="rule-engine"）+ 状态动作 apply | scheduler 注入 apply 回调 |
-| `internal/credential` | 凭据类型注册表 + Provider 分发（api_key/responses-special/codex-oauth/codex-pat，`internal/credential/credential.go:24-33`） | proxy/scheduler 消费 |
+| `internal/credential` | 凭据类型词表：一张 `capsTable` 回答「这个类型能做什么」（`internal/credential/caps.go:42`），`ChannelOf` 是「怎么分发」的唯一答案（`:93`）；`Registry` 只承载 static-key 直取型（api_key/responses-special/custom），codex-oauth/codex-pat/bps 由 sdkbridge 的 prepared 入口承载、不经注册表 | proxy/scheduler 消费 |
 | `internal/auth` | JWT issuer/verify + RequireJWT/RequireIdentity 中间件 | server/user handler |
 | `internal/billing` | 计费：价格矩阵纯函数、余额快照、批量扣费 Flusher | proxy/repository |
 | `internal/usage` | 明细 Recorder、err_logs 落盘 worker、retention worker、**stats-agg 离线聚合 worker** | proxy/billing/repository |
@@ -96,7 +96,7 @@ flowchart LR
 | `internal/protoconv` | 协议转换（六方向，纯标准库） | proxy（convertedCaller） |
 | `internal/worker` | worker.Worker 契约 + Manager（顺序启动/反向排空/panic 栈日志/Go 托管） | cmd/server 装配 |
 | `internal/snapshot` | 快照注册表（已合并）：Registry/ReloadAll/Status + scope 精确分发 | cmd/server 装配（dispatcher 消费） |
-| `internal/sdkbridge` | codex-sdk 适配层（生图/Responses/StreamBody/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`） | proxy |
+| `internal/sdkbridge` | SDK 适配层，两条 prepared 入口：codex（生图/Responses/StreamBody/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`）与 BPS（`Prepare` → `*BPSPrepared`，`internal/sdkbridge/bps.go:99,131`） | proxy |
 | `pkg/aiclient` | openai/anthropic SDK 客户端懒构建工厂（**非唯一引用点**——proxy 各 caller 直接 import SDK 类型，第三 SDK codex-sdk 经 sdkbridge） | proxy |
 | `pkg/httpx` | 共享上游 http.Transport（连接池参数；Proxy 默认 nil 直连） | main → aiclient/sdkbridge/pricing |
 | `pkg/sserelay` | 字节级 SSE relay（统一 Output：帧原样透传/协议转换 + 静默保活 + 写出前采样 seam） | proxy 流式路径 |

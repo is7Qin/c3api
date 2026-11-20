@@ -13,6 +13,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/rule"
@@ -54,7 +55,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	// codex 凭证分流：目标协议 = openai-responses 且账号为 codex 类型 → 上游走
 	// codex SDK 适配层（不再经通用 aiclient——codex 模板 BaseURL=="" 走 aiclient
 	// 会得空 scheme → `unsupported protocol scheme ""`）。分流在 aiclient 分支前。
-	if target == domain.FormatOpenAIResponses && sel.CredentialType.IsCodex() {
+	if target == domain.FormatOpenAIResponses && credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		return p.callConvertedCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream, c.dir)
 	}
 
