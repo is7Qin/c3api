@@ -48,29 +48,44 @@ func (t Type) Valid() bool {
 	return ok
 }
 
-// ValidTemplateExt 模板 ext 子表可用类型（api_key 类型模板无 ext 行——主列已
-// 表达静态 Key 语义）。
-func (t Type) ValidTemplateExt() bool { return capsTable[t].validTplExt }
+// 其余谓词（ValidTemplateExt / ValidAccountExt / IsCodex / IsBPS /
+// IsResponsesProvider / UsesStaticKey）形状一律是「先查表存在性，再用 c.ch 判定」，
+// 那个 `ok &&` 不能省：表外类型的 ChannelOf 是零值 ChannelStaticKey，若派生直接写
+// ChannelOf(t) == ChannelStaticKey，UsesStaticKey() 对非法类型就从 false 变 true——
+// service/account.go:45,221 拿它决定 upstream_key 是否必填，且**没有** Valid() 守卫。
+// 表外恒 false 是这些谓词对外的既有契约（见 TestPredicatesOnUnknownType）。
 
-// ValidAccountExt 账号 ext 子表可用类型（账号只两种 codex 类型）。
-func (t Type) ValidAccountExt() bool { return capsTable[t].validAcctExt }
+// ValidTemplateExt 模板 ext 子表可用类型（api_key 类型模板无 ext 行——主列已
+// 表达静态 Key 语义）。它是表里唯一不与 ch 同源的位。
+func (t Type) ValidTemplateExt() bool {
+	c, ok := capsTable[t]
+	return ok && c.validTplExt
+}
+
+// ValidAccountExt 账号 ext 子表可用类型——即非静态通道（今天：codex oauth/pat + bps）。
+func (t Type) ValidAccountExt() bool {
+	c, ok := capsTable[t]
+	return ok && c.ch != ChannelStaticKey
+}
 
 // IsCodex codex 号池类型（oauth / pat）：鉴权走 SDK；请求格式限定 resp/resp-ws。
-func (t Type) IsCodex() bool { return capsTable[t].ch == ChannelCodex }
+func (t Type) IsCodex() bool {
+	c, ok := capsTable[t]
+	return ok && c.ch == ChannelCodex
+}
 
 // IsBPS reports the independent BPS OAuth provider. It intentionally does not
 // alias IsCodex: BPS has different identity, profile and transport semantics.
-func (t Type) IsBPS() bool { return capsTable[t].ch == ChannelBPS }
+func (t Type) IsBPS() bool {
+	c, ok := capsTable[t]
+	return ok && c.ch == ChannelBPS
+}
 
 // IsResponsesProvider reports providers backed by a Responses-native SDK.
 func (t Type) IsResponsesProvider() bool {
-	ch := capsTable[t].ch
-	return ch == ChannelCodex || ch == ChannelBPS
+	c, ok := capsTable[t]
+	return ok && (c.ch == ChannelCodex || c.ch == ChannelBPS)
 }
-
-// UsesAccountExt reports credential types whose secret/profile lives in an
-// account extension rather than the static upstream_key column.
-func (t Type) UsesAccountExt() bool { return capsTable[t].usesAccountExt }
 
 // IdentityGroup returns the credential types that share one upstream identity
 // namespace with t. Codex OAuth and PAT authenticate the same upstream Codex
@@ -79,22 +94,24 @@ func (t Type) UsesAccountExt() bool { return capsTable[t].usesAccountExt }
 // endpoint, quota and device profile: the same ChatGPT e-mail/account may
 // legitimately exist as both a Codex account and a BPS account, so BPS only
 // deduplicates against BPS.
+// 表外类型（非法）走 default：ChannelOf 的零值是 ChannelStaticKey，所以它们只与
+// 自己同组——身份去重不会把非法类型并进任何真实类型。
 func (t Type) IdentityGroup() []Type {
-	switch {
-	case t.IsCodex():
+	switch ChannelOf(t) {
+	case ChannelCodex:
 		return []Type{TypeCodexOAuth, TypeCodexPAT}
-	case t.IsBPS():
+	case ChannelBPS:
 		return []Type{TypeBPS}
 	default:
 		return []Type{t}
 	}
 }
 
-// UsesStaticKey reports providers that require the account upstream_key.
-func (t Type) UsesStaticKey() bool { return capsTable[t].usesStaticKey }
-
-// RequiresFixedEndpoint reports providers that own their upstream endpoint.
-func (t Type) RequiresFixedEndpoint() bool { return capsTable[t].fixedEndpoint }
+// UsesStaticKey reports providers that require the account upstream_key——即静态通道。
+func (t Type) UsesStaticKey() bool {
+	c, ok := capsTable[t]
+	return ok && c.ch == ChannelStaticKey
+}
 
 // CredentialInput 凭据取用输入：api_key 类型用 APIKey（调度 Selection 携带
 // 的静态 Key）；oauth 等类型后续按 AccountID 从凭据扩展表加载。

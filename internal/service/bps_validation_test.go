@@ -66,5 +66,4 @@ func TestBPSValidateAccountExtUsesOAuthProfileNotCodexIdentityOrPAT(t *testing.T
 
 func TestBPSDoesNotUseStaticKeyCapability(t *testing.T) {
 	require.False(t, credential.TypeBPS.UsesStaticKey())
-	require.True(t, credential.TypeBPS.UsesAccountExt())
 }

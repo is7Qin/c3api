@@ -17,9 +17,7 @@ func TestBPSProviderCapabilities(t *testing.T) {
 	require.True(t, TypeBPS.ValidAccountExt())
 	require.True(t, TypeBPS.IsBPS())
 	require.True(t, TypeBPS.IsResponsesProvider())
-	require.True(t, TypeBPS.UsesAccountExt())
 	require.False(t, TypeBPS.UsesStaticKey())
-	require.True(t, TypeBPS.RequiresFixedEndpoint())
 	require.False(t, TypeBPS.IsCodex())
 }
 

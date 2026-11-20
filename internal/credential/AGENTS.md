@@ -16,7 +16,9 @@
   两张手抄矩阵（`TestTypeBehaviorFrozen` / `TestChannelFrozen`）。
   漏改**表行或任一 golden** → 红；但只加 `Type` 常量、不加表行 → 编译通过、全门禁绿，
   此时 `Valid()` 恒 false，该类型被上游 fail-closed 显式拒绝，不会被静默选中。
-  `TestCapsColumnInvariants` 是不依赖 golden 的第二把锁：表与 golden 一起改错时仍然咬人。
+  caps 只剩 `ch` + `validTplExt` 两列后**不存在跨列不变量**（两者无函数关系）：
+  **golden 是唯一的跨类型锁**；表外语义（7 个布尔谓词恒 false、`IdentityGroup` 自成
+  一组）由 `TestPredicatesOnUnknownType` / `TestIdentityGroupOnUnknownType` 单独咬住。
 - 身份组决定账号查重作用域，不能按名称猜。
 - 包内不许新增按类型判定的 helper（`TestCredentialPkgOwnsNoTypePredicateHelper` 反向门禁）。
 - BPS 非静态 key；BPS 模板的 `SupportedFormats` 只允许 Responses 两种格式。

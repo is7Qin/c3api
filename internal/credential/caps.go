@@ -25,55 +25,29 @@ const (
 // 为什么需要这张表：这些位原先散落在 credential.go 的 11 个逐类型 switch 里，
 // 加一个类型时漏改任何一处都**静默**落 default——编译器不报错，生产走错分支。
 // 收成一张表之后，「漏掉」变成「表里没这一行」：caps_test.go 的 golden 会红。
+//
+// 除 validTplExt 外全部能力位由 ch 派生（validAcctExt / usesAccountExt /
+// fixedEndpoint = 非静态通道；usesStaticKey = 静态通道）。加列前先回答：它是否
+// 独立于 channel？不独立就不要加——多一列就多一个能与 ch 矛盾的状态。
 type caps struct {
-	ch             Channel
-	validTplExt    bool // 模板 ext 子表可用
-	validAcctExt   bool // 账号 ext 子表可用
-	usesAccountExt bool // 秘密/profile 在 account_ext
-	usesStaticKey  bool // 需要 account.upstream_key
-	fixedEndpoint  bool // 自带上游端点
+	ch          Channel
+	validTplExt bool // 模板 ext 子表可用（唯一与 channel 无函数关系的能力位）
 }
 
 // capsTable 是唯一的能力真相：类型集合与每个能力位只在这里声明一次，方法只做
 // 只读投影。包级只读表 ⇒ 热路径纯查表，无构造、无新增分配。
 //
+// validTplExt 必须独立成列：api_key / responses-special / custom 三者 ch 同为
+// ChannelStaticKey，但只有 api_key 没有模板 ext 子表 ⇒ 它与 ch 无函数关系。
+//
 // 新增类型必须补一行并同步 caps_test.go 的 golden（golden 写死了全矩阵，漏改即红）。
 var capsTable = map[Type]caps{
-	TypeAPIKey: {
-		ch:            ChannelStaticKey,
-		usesStaticKey: true,
-	},
-	TypeResponsesSpecial: {
-		ch:            ChannelStaticKey,
-		validTplExt:   true,
-		usesStaticKey: true,
-	},
-	TypeCustom: {
-		ch:            ChannelStaticKey,
-		validTplExt:   true,
-		usesStaticKey: true,
-	},
-	TypeCodexOAuth: {
-		ch:             ChannelCodex,
-		validTplExt:    true,
-		validAcctExt:   true,
-		usesAccountExt: true,
-		fixedEndpoint:  true,
-	},
-	TypeCodexPAT: {
-		ch:             ChannelCodex,
-		validTplExt:    true,
-		validAcctExt:   true,
-		usesAccountExt: true,
-		fixedEndpoint:  true,
-	},
-	TypeBPS: {
-		ch:             ChannelBPS,
-		validTplExt:    true,
-		validAcctExt:   true,
-		usesAccountExt: true,
-		fixedEndpoint:  true,
-	},
+	TypeAPIKey:           {ch: ChannelStaticKey},
+	TypeResponsesSpecial: {ch: ChannelStaticKey, validTplExt: true},
+	TypeCustom:           {ch: ChannelStaticKey, validTplExt: true},
+	TypeCodexOAuth:       {ch: ChannelCodex, validTplExt: true},
+	TypeCodexPAT:         {ch: ChannelCodex, validTplExt: true},
+	TypeBPS:              {ch: ChannelBPS, validTplExt: true},
 }
 
 // ChannelOf 返回该类型走的执行通道。

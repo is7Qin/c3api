@@ -18,12 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 本文件的三种锁，形状刻意不同（golden 只证明「表 == 手抄副本」，不是「表 == 现实」）：
+// 本文件的两种锁，形状刻意不同（golden 只证明「表 == 手抄副本」，不是「表 == 现实」）：
 //
-//	4.1  TestTypeBehaviorFrozen      —— 经**方法**读（调用方真正消费的面），期望值手抄
-//	4.1b TestCapsColumnInvariants    —— 表内**跨列不变量**，不依赖任何副本
-//	4.4  TestCredentialPkgOwnsNoTypePredicateHelper —— **结构**门禁（反向：不许在包内
-//	     新开按类型判定的入口）
+//	4.1 TestTypeBehaviorFrozen —— 经**方法**读（调用方真正消费的面），期望值手抄
+//	4.4 TestCredentialPkgOwnsNoTypePredicateHelper —— **结构**门禁（反向：不许在包内
+//	    新开按类型判定的入口）
 //
 // credential_test.go 的 TestBPSProviderCapabilities / TestTypeValid 仍保留：它们钉的是
 // 单类型方法与非法输入，与这里的全集合矩阵不重复。
@@ -31,8 +30,7 @@ import (
 type wantBehavior struct {
 	valid, validTplExt, validAcctExt bool
 	isCodex, isBPS, isRespProvider   bool
-	usesAcctExt, usesStaticKey       bool
-	fixedEndpoint                    bool
+	usesStaticKey                    bool
 	group                            []Type
 }
 
@@ -46,43 +44,37 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 		TypeAPIKey: {
 			valid: true, validTplExt: false, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false,
+			usesStaticKey: true,
 			group:         []Type{TypeAPIKey},
 		},
 		TypeResponsesSpecial: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false,
+			usesStaticKey: true,
 			group:         []Type{TypeResponsesSpecial},
 		},
 		TypeCustom: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false,
+			usesStaticKey: true,
 			group:         []Type{TypeCustom},
 		},
 		TypeCodexOAuth: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
-			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true,
+			usesStaticKey: false,
 			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeCodexPAT: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
-			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true,
+			usesStaticKey: false,
 			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeBPS: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: false, isBPS: true, isRespProvider: true,
-			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true,
+			usesStaticKey: false,
 			group:         []Type{TypeBPS},
 		},
 	}
@@ -97,9 +89,7 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 		require.Equal(t, w.isCodex, typ.IsCodex(), "%q.IsCodex", typ)
 		require.Equal(t, w.isBPS, typ.IsBPS(), "%q.IsBPS", typ)
 		require.Equal(t, w.isRespProvider, typ.IsResponsesProvider(), "%q.IsResponsesProvider", typ)
-		require.Equal(t, w.usesAcctExt, typ.UsesAccountExt(), "%q.UsesAccountExt", typ)
 		require.Equal(t, w.usesStaticKey, typ.UsesStaticKey(), "%q.UsesStaticKey", typ)
-		require.Equal(t, w.fixedEndpoint, typ.RequiresFixedEndpoint(), "%q.RequiresFixedEndpoint", typ)
 		require.Equal(t, w.group, typ.IdentityGroup(), "%q.IdentityGroup：身份组决定账号查重作用域，不能按名称猜", typ)
 	}
 }
@@ -132,19 +122,51 @@ func TestChannelOfInvalidType(t *testing.T) {
 	}
 }
 
-// TestCapsColumnInvariants 表内跨列不变量，直接对 capsTable 求值——**不依赖 golden**。
-// 这是唯一能在「表 + golden 被同步改错」时仍然咬人的断言。
-func TestCapsColumnInvariants(t *testing.T) {
-	for typ, c := range capsTable {
-		static := c.ch == ChannelStaticKey
-		// 通道决定秘密来源：静态通道只读 upstream_key，SDK 通道只读 account_ext。
-		require.Equal(t, static, c.usesStaticKey, "%q：static 通道 ⇔ 需要 account.upstream_key", typ)
-		require.Equal(t, !static, c.usesAccountExt, "%q：SDK 通道 ⇔ 秘密/profile 在 account_ext", typ)
-		require.Equal(t, !static, c.fixedEndpoint, "%q：SDK 通道 ⇔ 自带上游端点", typ)
-		require.Equal(t, !static, c.validAcctExt, "%q：账号 ext 子表只为 SDK 通道存在", typ)
-		// 秘密只能在一个地方：两边同时为真意味着同一份凭据有两个断言来源。
-		require.False(t, c.usesAccountExt && c.usesStaticKey, "%q：account_ext 与 upstream_key 互斥", typ)
+// 这里曾有一条 TestCapsColumnInvariants（对 capsTable 求「跨列不变量」）。caps 塌到
+// 2 列（ch + validTplExt）后它不可重建：其余 4 个能力位已不存在，而剩下的两列之间
+// **没有**函数关系——api_key（validTplExt=false）与 responses-special / custom
+// （true）的 ch 同为 ChannelStaticKey。任何「ch ⇔ validTplExt」的断言都是错的，
+// 所以不接受「保留仍成立的部分」这种空话，整条删除。
+//
+// 代价与接受理由：**golden 是唯一的跨类型锁**——表与 golden 被同步改错时不再有第二
+// 把锁。补偿它的是 TestPredicatesOnUnknownType：那条锁的是表外语义（golden 不覆盖
+// 的维度），恰是 ch 派生最容易翻车的地方。
+
+// TestPredicatesOnUnknownType 表外类型（非法/未注册）上，**7 个布尔谓词全部必须
+// false**——逐谓词显式枚举，不写「全部谓词」的模糊断言。
+//
+// 为什么单独锁：caps 塌到 2 列后谓词全部由 c.ch 派生，而 ChannelOf 的零值正是
+// ChannelStaticKey。最容易的错法是把 ok 守卫丢掉、写成 ChannelOf(t) == ChannelStaticKey
+// ——那会让 UsesStaticKey() 对非法类型从 false 翻成 true；而
+// service/account.go:45,221 拿它决定 upstream_key 是否必填，**没有** Valid() 前置守卫，
+// 是真实的行为变化。golden 只覆盖表内 6 个类型，抓不到这一类。
+func TestPredicatesOnUnknownType(t *testing.T) {
+	predicates := []struct {
+		name string
+		fn   func(Type) bool
+	}{
+		{"Valid", Type.Valid},
+		{"ValidTemplateExt", Type.ValidTemplateExt},
+		{"ValidAccountExt", Type.ValidAccountExt},
+		{"IsCodex", Type.IsCodex},
+		{"IsBPS", Type.IsBPS},
+		{"IsResponsesProvider", Type.IsResponsesProvider},
+		{"UsesStaticKey", Type.UsesStaticKey},
 	}
+	for _, unknown := range []Type{"", "bogus", "codex_oauth"} {
+		for _, p := range predicates {
+			require.False(t, p.fn(unknown), "%q.%s：表外类型必须 false（ok 守卫）", unknown, p.name)
+		}
+	}
+}
+
+// TestIdentityGroupOnUnknownType IdentityGroup**不是**布尔谓词，单独一档：表外类型
+// 只与自己同组，不许被并进 Codex 组或 BPS 组（那会让非法类型的账号去重作用域命中
+// 真实账号）。
+func TestIdentityGroupOnUnknownType(t *testing.T) {
+	require.Equal(t, []Type{Type("")}, Type("").IdentityGroup())
+	require.Equal(t, []Type{Type("bogus")}, Type("bogus").IdentityGroup())
+	require.Equal(t, []Type{Type("codex_oauth")}, Type("codex_oauth").IdentityGroup())
 }
 
 // typePredicateMethods 是本轮保留签名的三个谓词（84 处调用点零改动）。它们是**只读
