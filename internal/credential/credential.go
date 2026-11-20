@@ -44,45 +44,33 @@ const (
 // 四格式任意；生态类型按 provider capability 做格式校验）。未知类型（含
 // 空串）→ false。
 func (t Type) Valid() bool {
-	switch t {
-	case TypeAPIKey, TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom, TypeBPS:
-		return true
-	}
-	return false
+	_, ok := capsTable[t]
+	return ok
 }
 
 // ValidTemplateExt 模板 ext 子表可用类型（api_key 类型模板无 ext 行——主列已
 // 表达静态 Key 语义）。
-func (t Type) ValidTemplateExt() bool {
-	switch t {
-	case TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom, TypeBPS:
-		return true
-	}
-	return false
-}
+func (t Type) ValidTemplateExt() bool { return capsTable[t].validTplExt }
 
 // ValidAccountExt 账号 ext 子表可用类型（账号只两种 codex 类型）。
-func (t Type) ValidAccountExt() bool {
-	switch t {
-	case TypeCodexOAuth, TypeCodexPAT, TypeBPS:
-		return true
-	}
-	return false
-}
+func (t Type) ValidAccountExt() bool { return capsTable[t].validAcctExt }
 
 // IsCodex codex 号池类型（oauth / pat）：鉴权走 SDK；请求格式限定 resp/resp-ws。
-func (t Type) IsCodex() bool { return t == TypeCodexOAuth || t == TypeCodexPAT }
+func (t Type) IsCodex() bool { return capsTable[t].ch == ChannelCodex }
 
 // IsBPS reports the independent BPS OAuth provider. It intentionally does not
 // alias IsCodex: BPS has different identity, profile and transport semantics.
-func (t Type) IsBPS() bool { return t == TypeBPS }
+func (t Type) IsBPS() bool { return capsTable[t].ch == ChannelBPS }
 
 // IsResponsesProvider reports providers backed by a Responses-native SDK.
-func (t Type) IsResponsesProvider() bool { return t.IsCodex() || t.IsBPS() }
+func (t Type) IsResponsesProvider() bool {
+	ch := capsTable[t].ch
+	return ch == ChannelCodex || ch == ChannelBPS
+}
 
 // UsesAccountExt reports credential types whose secret/profile lives in an
 // account extension rather than the static upstream_key column.
-func (t Type) UsesAccountExt() bool { return t.IsCodex() || t.IsBPS() }
+func (t Type) UsesAccountExt() bool { return capsTable[t].usesAccountExt }
 
 // IdentityGroup returns the credential types that share one upstream identity
 // namespace with t. Codex OAuth and PAT authenticate the same upstream Codex
@@ -103,12 +91,10 @@ func (t Type) IdentityGroup() []Type {
 }
 
 // UsesStaticKey reports providers that require the account upstream_key.
-func (t Type) UsesStaticKey() bool {
-	return t == TypeAPIKey || t == TypeResponsesSpecial || t == TypeCustom
-}
+func (t Type) UsesStaticKey() bool { return capsTable[t].usesStaticKey }
 
 // RequiresFixedEndpoint reports providers that own their upstream endpoint.
-func (t Type) RequiresFixedEndpoint() bool { return t.IsCodex() || t.IsBPS() }
+func (t Type) RequiresFixedEndpoint() bool { return capsTable[t].fixedEndpoint }
 
 // SupportsResponsesFormat reports whether a provider may serve one of the two
 // standard Responses formats. BPS is deliberately restricted to these formats.
@@ -116,7 +102,7 @@ func (t Type) SupportsResponsesFormat(format string) bool {
 	if format != "openai-responses" && format != "openai-responses-ws" {
 		return false
 	}
-	return t.IsResponsesProvider() || t == TypeResponsesSpecial || t == TypeCustom
+	return capsTable[t].responsesFormats
 }
 
 // CredentialInput 凭据取用输入：api_key 类型用 APIKey（调度 Selection 携带
@@ -156,6 +142,11 @@ func (p staticKeyProvider) Credential(_ context.Context, in CredentialInput) (st
 }
 
 // Registry 类型 → Provider 分发表。
+//
+// 只承载 static-key 直取型（api_key / responses-special / custom）：它们的凭据
+// 能压成一个字符串。codex-oauth / codex-pat / bps 的凭据是复合结构（token 组、
+// profile、prepared 句柄），由 sdkbridge 的 prepared 入口承载，**不经本表**——
+// Provider.Credential() 的 (string, error) 契约表达不了句柄，硬塞即第二个谎言。
 type Registry struct{ m map[Type]Provider }
 
 // New 构造注册表并默认注册 api_key + responses-special 两 provider。
