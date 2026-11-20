@@ -201,6 +201,22 @@ func gateSQLParens(src string, open int) (string, int) {
 	return "", -1
 }
 
+// gateStatusEntity 把一张实体表映射到它 status 列应当取的 domain 常量值。
+// 这是"哪张表存哪个实体"的映射，不是值副本：value 永远从 domain 常量现算。
+type gateStatusEntity struct {
+	table string
+	value string
+}
+
+// gateStatusEntities 是 4 组 status 枚举对应的实体表与权威值。CREATE TABLE 的
+// DEFAULT 与 ALTER ... SET DEFAULT 两条写入路径共用这份映射，避免两处各写一份。
+var gateStatusEntities = []gateStatusEntity{
+	{"users", string(domain.UserStatusActive)},
+	{"keys", string(domain.KeyStatusActive)},
+	{"management_keys", string(domain.ManagementKeyStatusActive)},
+	{"redemption_codes", string(domain.RedemptionStatusActive)},
+}
+
 // TestMigrationStatusDefaultsMatchDomain 门禁 (b)：基线 DDL 里 4 张实体表的
 // status 默认值必须等于对应 domain 常量的当前取值。
 //
@@ -223,16 +239,7 @@ func TestMigrationStatusDefaultsMatchDomain(t *testing.T) {
 		}
 	}
 
-	want := []struct {
-		table string
-		value string
-	}{
-		{"users", string(domain.UserStatusActive)},
-		{"keys", string(domain.KeyStatusActive)},
-		{"management_keys", string(domain.ManagementKeyStatusActive)},
-		{"redemption_codes", string(domain.RedemptionStatusActive)},
-	}
-	for _, entity := range want {
+	for _, entity := range gateStatusEntities {
 		blocks := byTable[entity.table]
 		require.NotEmptyf(t, blocks, "CREATE TABLE public.%q not found in %v; a missing table would make this gate vacuous", entity.table, paths)
 		for _, block := range blocks {
@@ -241,4 +248,45 @@ func TestMigrationStatusDefaultsMatchDomain(t *testing.T) {
 			require.Equalf(t, entity.value, matches[1], "%s:%d: public.%q.status DDL default drifted from the domain constant: got %q, want %q", block.file, block.line, entity.table, matches[1], entity.value)
 		}
 	}
+}
+
+// gateAlterStatusDefaultRe 匹配 `ALTER TABLE [public.]"<t>" ALTER COLUMN "status"
+// SET DEFAULT '<v>'`：表名可带/不带双引号、可带/不带 public. 前缀，空白（含换行）
+// 一律按 \s+ 吃。CREATE TABLE 的 DEFAULT 与 ALTER ... SET DEFAULT 是"status 默认
+// 值"这同一个事实的两条写入路径；只切 CREATE TABLE，ALTER 这条路径就完全隐形。
+var gateAlterStatusDefaultRe = regexp.MustCompile(`(?i)ALTER\s+TABLE\s+(?:public\s*\.\s*)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+ALTER\s+COLUMN\s+"?status"?\s+SET\s+DEFAULT\s+'([^']*)'`)
+
+// TestMigrationAlterStatusDefaultsMatchDomain 门禁 (b) 的第二条写入路径：迁移里
+// 一旦出现 `ALTER TABLE ... ALTER COLUMN "status" SET DEFAULT '<v>'`，其取值必须
+// 等于对应 domain 常量现算值（与 CREATE TABLE 门禁同一份表→常量映射）。
+//
+// 今天这四张表没有这样的 ALTER，故不要求它存在；但一旦出现就必须取值正确——
+// 否则 `CREATE TABLE` 改成 'active' 后、运行期又被 ALTER 改回漂移值，门禁全绿而
+// 线上默认值已错。别的表（如 orders）的 ALTER 不纳判据，与门禁 (b) 同口径。
+func TestMigrationAlterStatusDefaultsMatchDomain(t *testing.T) {
+	migrationsDir := filepath.Join(gateSchemaDir(t), "..", "..", "db", "migrate", "migrations")
+	paths, err := filepath.Glob(filepath.Join(migrationsDir, "*.up.sql"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "no up migrations under %s", migrationsDir)
+
+	want := make(map[string]string, len(gateStatusEntities))
+	for _, entity := range gateStatusEntities {
+		want[entity.table] = entity.value
+	}
+
+	scanned := 0
+	for _, path := range paths {
+		src, err := os.ReadFile(path)
+		require.NoError(t, err, "read %s", path)
+		scanned++
+		for _, m := range gateAlterStatusDefaultRe.FindAllStringSubmatch(string(src), -1) {
+			table, value := m[1], m[2]
+			wantValue, tracked := want[table]
+			if !tracked {
+				continue // 别的表的 ALTER 不纳判据
+			}
+			require.Equalf(t, wantValue, value, "%s: ALTER TABLE public.%q ALTER COLUMN status SET DEFAULT drifted from the domain constant: got %q, want %q", filepath.Base(path), table, value, wantValue)
+		}
+	}
+	require.NotZero(t, scanned, "gate must scan at least one up migration")
 }

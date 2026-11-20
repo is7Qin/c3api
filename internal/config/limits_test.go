@@ -5,10 +5,13 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // TestFailoverAttemptsBound：proxy.failover_attempts 的合法域 1..8 由 validate
@@ -41,7 +44,9 @@ func TestFailoverAttemptsBound(t *testing.T) {
 		cfg := defaults()
 		cfg.Proxy.FailoverAttempts = 9
 		err := validate(cfg)
-		require.ErrorContains(t, err, "proxy.failover_attempts must be <= 8 (got 9)",
-			"9 超过 attempted-ID 去重槽位，启动即拒绝（文案逐字钉死）")
+		// 期望串里的上界必须与常量同源：手抄 `<= 8` 会让"常量改了、文案没改"
+		// 无人发现（文案写死 8、常量改成 7 时此用例仍绿）。
+		require.ErrorContains(t, err, fmt.Sprintf("proxy.failover_attempts must be <= %d (got 9)", domain.MaxFailoverAttempts),
+			"9 超过 attempted-ID 去重槽位，启动即拒绝（文案必须与常量同源）")
 	})
 }

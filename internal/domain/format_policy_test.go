@@ -199,6 +199,11 @@ func TestBPSFormatGateSites(t *testing.T) {
 // countBPSFormatsOnlyCalls 统计一个文件里对 BPSFormatsOnly 的**调用**数：同时识别
 // 选择器形式（domain.BPSFormatsOnly(...)）与包内裸标识符形式（BPSFormatsOnly(...)）。
 // 函数声明不是 CallExpr，自然不计入。
+//
+// 裸标识符分支必须限定在 domain 包内（f.Name.Name == "domain"）：生产里只有
+// internal/domain/types.go 用裸调。若不加包名限制，别的包定义一个同名 no-op
+// 再加一处裸调用，就能让门禁误以为调用在位，而真正的 BPS 门已被替换——这正是
+// 整支对抗评审实测到的绕过路径。
 func countBPSFormatsOnlyCalls(f *ast.File) int {
 	count := 0
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -208,7 +213,7 @@ func countBPSFormatsOnlyCalls(f *ast.File) int {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if fn.Name == "BPSFormatsOnly" {
+			if f.Name.Name == "domain" && fn.Name == "BPSFormatsOnly" {
 				count++
 			}
 		case *ast.SelectorExpr:
