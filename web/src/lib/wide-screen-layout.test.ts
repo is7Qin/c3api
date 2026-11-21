@@ -123,3 +123,24 @@ describe('表单控件封顶：卡片保持等宽，控件的宽度上限下移'
     assert.ok(models.includes('@[2000px]/main:grid-cols-4'))
   })
 })
+
+// 运维位（ops）的 worker 卡：高度 93–1159px 差异极大，grid 每行被最高的卡顶死，
+// 短卡下面留大片空洞（实测 2560 下三列 2012/400/2122px）。改成多列砌砖 + 按可见
+// 统计项数升序，页面从 3903px 压到 2567px。这里钉住「不许退回 grid」。
+describe('运维位：worker 卡用多列砌砖 + 从小到大', () => {
+  const ops = read('../pages/ops.tsx')
+
+  it('容器是 columns（1/2/3 档）+ 子项不跨列断开', () => {
+    assert.ok(ops.includes('columns-1 gap-5 sm:columns-2 xl:columns-3'))
+    assert.ok(ops.includes('[&>*]:break-inside-avoid'))
+  })
+
+  it('只有一个 grid 残留（loading 骨架），worker 卡不得退回 grid', () => {
+    assert.equal(ops.split('xl:grid-cols-3 items-start').length - 1, 1)
+  })
+
+  it('顺序按可见统计项数升序（同数按名字稳定）', () => {
+    assert.ok(ops.includes('a.entries.length - b.entries.length'))
+    assert.ok(ops.includes('localeCompare(b.w.name)'))
+  })
+})

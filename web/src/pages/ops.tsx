@@ -79,6 +79,12 @@ export default function Ops() {
       comparable: r.incident.comparable,
     }))
 
+  // 砌砖布局的摆放顺序：卡片高度 ≈ 可见统计项数，升序让小卡先填、大卡沉底，
+  // 比按名字排再短 71px（2560 实测 2638 → 2567）；同数时按名字稳定排序。
+  const workerCards = workers
+    .map(w => ({ w, entries: Object.entries(w.stats ?? {}).filter(([k]) => isOpsStatVisible(k, supplier)) }))
+    .sort((a, b) => a.entries.length - b.entries.length || a.w.name.localeCompare(b.w.name))
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -130,57 +136,56 @@ export default function Ops() {
           <RetryCard q={retryQ} />
 
           {/* Workers：每 worker 一卡，stats 通用 key-value 渲染。
-              items-start：卡片各按内容高度，不被同行最高的一条（如 quota-deadline
-              9 项）拉齐而留大片空白 */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 items-start">
-            {workers.length === 0 ? (
-              <p className="col-span-full py-6 text-center text-sm text-muted-foreground">{t('ops.noWorkers')}</p>
-            ) : (
-              workers.map(w => {
-                // 展示的统计项：供应商专属项在开关关闭时隐去；空态与渲染同用这一份。
-                const entries = Object.entries(w.stats ?? {}).filter(([k]) => isOpsStatVisible(k, supplier))
-                return (
-                  <Card key={w.name}>
-                    <CardHeader>
-                      <CardDescription className="flex items-center gap-1.5">
-                        {/* worker 显示名走 i18n（ops.workers.<name>，缺 key 兜底原始标识符） */}
-                        <Cpu className="size-4" /> {t(`ops.workers.${w.name}`, { defaultValue: w.name })}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <dl className="space-y-1.5">
-                        {entries.map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between gap-3">
-                            {/* 标签走 i18n（ops.stats.<字段>，缺 key 兜底显示原始字段名）；
-                                title 保留原始 key（运维识别用，标签可翻译但 key 不译） */}
-                            <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
-                              {t(`ops.stats.${k}`, { defaultValue: k })}
-                            </dt>
-                            {/* title 是原始值（对象/数组为完整 JSON），单元格永不显示 JSON */}
-                            <dd className="flex min-w-0 items-center justify-end gap-2" title={statTooltip(v, k)}>
-                              {typeof v === 'boolean' ? (
-                                // 布尔观测位统一徽章：是（绿）/ 否（灰）
-                                <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
-                                  {v ? t('ops.boolYes') : t('ops.boolNo')}
-                                </Badge>
-                              ) : (
-                                <span className="min-w-0 truncate font-mono text-sm tabular-nums">
-                                  {formatStatValue(v, k, { field: kk => t(`ops.statField.${kk}`, { defaultValue: kk }), items: n => t('ops.statItems', { count: n }) })}
-                                </span>
-                              )}
-                            </dd>
-                          </div>
-                        ))}
-                        {entries.length === 0 && (
-                          <dd className="text-xs text-muted-foreground">—</dd>
-                        )}
-                      </dl>
-                    </CardContent>
-                  </Card>
-                )
-              })
-            )}
-          </div>
+              布局是**多列砌砖**（`columns-*` + `break-inside-avoid`）而不是 grid：卡片高度
+              从 93px 到 1159px（stats 行数差异极大），grid 每行被该行最高的卡顶死，短卡
+              下面留大片空洞（实测 2560 下三列空洞 2012 / 400 / 2122px）。砌砖把页面从
+              3903px 压到 2567px（−34%），只剩列尾余量。
+              摆放顺序见上面的 workerCards：按可见统计项数升序，小卡在前、大卡沉底。 */}
+          {workers.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">{t('ops.noWorkers')}</p>
+          ) : (
+            <div className="columns-1 gap-5 sm:columns-2 xl:columns-3 [&>*]:mb-5 [&>*]:break-inside-avoid">
+              {workerCards.map(({ w, entries }) => (
+                <Card key={w.name}>
+                  <CardHeader>
+                    <CardDescription className="flex items-center gap-1.5">
+                      {/* worker 显示名走 i18n（ops.workers.<name>，缺 key 兜底原始标识符） */}
+                      <Cpu className="size-4" /> {t(`ops.workers.${w.name}`, { defaultValue: w.name })}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="space-y-1.5">
+                      {entries.map(([k, v]) => (
+                        <div key={k} className="flex items-center justify-between gap-3">
+                          {/* 标签走 i18n（ops.stats.<字段>，缺 key 兜底显示原始字段名）；
+                              title 保留原始 key（运维识别用，标签可翻译但 key 不译） */}
+                          <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
+                            {t(`ops.stats.${k}`, { defaultValue: k })}
+                          </dt>
+                          {/* title 是原始值（对象/数组为完整 JSON），单元格永不显示 JSON */}
+                          <dd className="flex min-w-0 items-center justify-end gap-2" title={statTooltip(v, k)}>
+                            {typeof v === 'boolean' ? (
+                              // 布尔观测位统一徽章：是（绿）/ 否（灰）
+                              <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
+                                {v ? t('ops.boolYes') : t('ops.boolNo')}
+                              </Badge>
+                            ) : (
+                              <span className="min-w-0 truncate font-mono text-sm tabular-nums">
+                                {formatStatValue(v, k, { field: kk => t(`ops.statField.${kk}`, { defaultValue: kk }), items: n => t('ops.statItems', { count: n }) })}
+                              </span>
+                            )}
+                          </dd>
+                        </div>
+                      ))}
+                      {entries.length === 0 && (
+                        <dd className="text-xs text-muted-foreground">—</dd>
+                      )}
+                    </dl>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
 
           {/* 快照注册表：玻璃单框表 — Card 仅作标题容器，Table 自带玻璃外框，避免双层边框 */}
           <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0 gap-0 pt-4">
