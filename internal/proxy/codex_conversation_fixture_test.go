@@ -343,10 +343,26 @@ func postConv(t *testing.T, p *Proxy, key, body string, hdr map[string]string) (
 }
 
 // wsConvSession 经网关开一条 WS 会话：写 frames，每帧读到 response.completed 为止，
-// 然后正常关闭。
+// 然后正常关闭，且**等服务端 handler 真的返回**才交还控制权。
+//
+// 为什么必须等：WS 会话的并发租约在 handler 的 defer 里释放（HandleResponsesWS
+// accept 之后 `defer p.auth.Release`），而 httptest.Server.Close **不等 hijacked
+// 连接上的 handler**——WebSocket 正是 hijacked。少了这一步，调用方紧接着发的请求
+// 会撞上 maxConc=1 的 "no available account"：CI 上偶发（机器慢、handler 还没跑完），
+// 本机几乎复现不到。
 func wsConvSession(t *testing.T, p *Proxy, hdr http.Header, frames ...string) {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	// 带缓冲 + 非阻塞 send：handler 万一被调用多次（重连）也不会重复 close 崩掉。
+	done := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			select {
+			case done <- struct{}{}:
+			default:
+			}
+		}()
+		p.HandleResponsesWS(w, r)
+	}))
 	defer srv.Close()
 	h := http.Header{"Authorization": {"Bearer ck-1"}}
 	for k, vs := range hdr {
@@ -366,4 +382,9 @@ func wsConvSession(t *testing.T, p *Proxy, hdr http.Header, frames ...string) {
 		}
 	}
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, ""))
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WS handler 5s 内未返回：并发租约仍被占用，紧随其后的请求会看到 no available account")
+	}
 }
