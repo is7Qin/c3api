@@ -9,6 +9,13 @@
   （`internal/proxy` 侧由 `credential_channel_gate_test.go` 的 AST 门禁禁止）。
 - `UsesStaticKey`/`IsCodex`/`IsBPS` 仍是调用方判断凭据形态的入口（本轮不改 84 处调用点）；
   但**新**代码要分发时用 `ChannelOf`，别加新的 `Is*` 谓词。
+- 本包**不再承载凭据分发**：`Registry`/`Provider`/`New`/`For` 已删。静态通道的取值由
+  `internal/proxy` 的 `credentialFor` 按 `UsesStaticKey()` 直读 `Selection.UpstreamKey`
+  （`credential_for_test.go` 锁住返回值与两条错误文案）；别为「以后可能有 HTTP 面多头」
+  复活恒等层——真要支持时按 `ChannelOf` 加分支。
+- `ErrUnsupported` 仍常驻本包作为**跨包 sentinel**，不得随 Registry 一起删：
+  `internal/sdkbridge/bps.go` 在包它，`cmd/server/wiring_billing.go` 在 `errors.Is` 它
+  （BPS 探测的凭据不可用 → 400）。
 
 ## 不变量
 

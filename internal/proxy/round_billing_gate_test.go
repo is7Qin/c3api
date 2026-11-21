@@ -137,7 +137,7 @@ func roundBillingProxy(t *testing.T, logPath string) (*Proxy, *captureLogStore, 
 		require.NoError(t, err)
 	}
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errRows, nil)
-	p := New(cfg, sched, credential.New(), rec, clients, auth, logger, &BillingHooks{
+	p := New(cfg, sched, rec, clients, auth, logger, &BillingHooks{
 		Resolver: &fakePriceLookup{
 			entries:  map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()},
 			variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()},

@@ -359,7 +359,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		code, safe := bpsErrorResponse(fwErr)
 		return code, []byte(safe.Error()), nil, false, safe
 	}
-	cred, err := p.credentialFor(ctx, sel)
+	cred, err := p.credentialFor(sel)
 	if err != nil {
 		// 凭据获取失败，上游未消费记 not-sent 可重试，未见业务帧（观测归循环）
 		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, err

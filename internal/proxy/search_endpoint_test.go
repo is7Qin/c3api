@@ -225,7 +225,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
+	p := New(cfg, sched, rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
 
@@ -407,7 +407,7 @@ func TestSearchCodexPathPassthrough(t *testing.T) {
 }
 
 // TestSearchResponsesSpecialStatic responses-special 类型 → 静态透传（与 api_key
-// 同通道——staticKeyProvider 直读 UpstreamKey）。
+// 同通道——UsesStaticKey() 直读 UpstreamKey）。
 func TestSearchResponsesSpecialStatic(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
 	defer up.Close()

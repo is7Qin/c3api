@@ -87,7 +87,7 @@ flowchart LR
 | `internal/discovery` | **Redis 实例发现**：心跳注册/续约/缩容 + 活体实例数 N（`ClusterInstances()`，proxy/scheduler 的 `InstancesProvider` 唯一实现） | main 装配 → proxy/scheduler |
 | `internal/quality` | 路由质量观测：Recorder 内存归并 + `quality-sync` worker 落实例分钟表 | main 装配；scheduler 消费 |
 | `internal/rule` | 规则引擎：事件队列 worker（Name="rule-engine"）+ 状态动作 apply | scheduler 注入 apply 回调 |
-| `internal/credential` | 凭据类型词表：一张 `capsTable` 回答「这个类型能做什么」（`internal/credential/caps.go:42`），`ChannelOf` 是「怎么分发」的唯一答案（`:93`）；`Registry` 只承载 static-key 直取型（api_key/responses-special/custom），codex-oauth/codex-pat/bps 由 sdkbridge 的 prepared 入口承载、不经注册表 | proxy/scheduler 消费 |
+| `internal/credential` | 凭据类型词表：一张 `capsTable` 回答「这个类型能做什么」（`internal/credential/caps.go:42`），`ChannelOf` 是「怎么分发」的唯一答案（`:93`）；**不承载凭据取值**——static-key 三类型由 proxy 的 `credentialFor` 按 `UsesStaticKey()` 直读 `Selection.UpstreamKey`，codex-oauth/codex-pat/bps 由 sdkbridge 的 prepared 入口承载 | proxy/scheduler 消费 |
 | `internal/auth` | JWT issuer/verify + RequireJWT/RequireIdentity 中间件 | server/user handler |
 | `internal/billing` | 计费：价格矩阵纯函数、余额快照、批量扣费 Flusher | proxy/repository |
 | `internal/usage` | 明细 Recorder、err_logs 落盘 worker、retention worker、**stats-agg 离线聚合 worker** | proxy/billing/repository |
@@ -166,7 +166,7 @@ pkg 职责边界：
 - `internal/sdkbridge`（`internal/sdkbridge/codex.go:27`）：**codex-sdk 唯一适配层**——GenerateImage/GenerateImageStream/Responses/StreamBody/Search/Dial + 凭据派生 clientFor + 失效回调 + 轮转回写 WriteOAuthRotation；codex 非流式超时各自包 ctx WithTimeout（`codex_responses_http.go:90-92`、`caller_images_codex.go:107-112`——HTTPClient.Timeout 不可用，流式/非流式四方法共享，`forward.go:38` 注释）。
 - `pkg/httpx`：共享 `http.Transport`（连接池参数：max_idle_conns 8192、per_host 2048、force_http2、http2_shards 1（代码默认/部署模板；样例给 8；>1 且 force_http2 时按 `pkg/httpx/shard.go` 分片到 N 个独立连接池）、idle_conn_timeout 90s、dial_timeout 10s，`config.example.toml`）；openai-go/anthropic-sdk 共用同一 `*http.Client`（`cmd/server/main.go:244`）；**codex SDK 不另建 transport**：HTTP 与 WS 两条路径都注入出口池的 `eg.HTTP.Transport`（`internal/sdkbridge/codex.go`），故 `http2_shards`（以及代理出口）对它们同样生效；**httpx.Proxy 默认 nil 直连**（`pkg/httpx/httpx.go:24-28,33`——不再隐式 ProxyFromEnvironment 防 HTTP_PROXY 静默改道）。
 - `pkg/sserelay`：字节级 SSE relay——`Relay` 读循环（增量读帧/`Mapper` 挂载/写出前 `OnEvent` 采样 seam）+ 统一下行 owner `Output`（`pkg/sserelay/output.go`：自有写缓冲 + 自适应批量 Flush + 静默保活 `: keepalive\n` + 提交态/写失败/自取消态 + 终态错误帧 + 可返错 Flush）+ EOF 末帧 flush + deadline watcher（取消/超时联动写侧 deadline）+ `Config.Terminal`（正常 EOF 在 watcher 存活期内补写协议终止帧）+ normalize 错误分类 + relayBufio 池。
-- 凭据抽象 `internal/credential`：Provider 只返回凭据值，不感知请求格式（`internal/credential/credential.go:9-11` 正交原则）；未知类型显式报错不静默 fallback（`internal/proxy/forward.go:748` credentialFor）；**codex 复合凭据不进注册表**——走 `sel.Ext` → AccountCredential 直供适配层（`caller.go:344-358` 注释，单字符串表达不了）。
+- 凭据词表 `internal/credential`：只有类型 + 能力表（`Type` / `capsTable` / `ChannelOf`），**不承载凭据取值**；静态通道的 key 由 `internal/proxy` 的 `credentialFor` 按 `UsesStaticKey()` 直读 `Selection.UpstreamKey`，表外类型先按 `Valid()` 显式报错（不静默 fallback）；**codex/bps 复合凭据不走单字符串路径**——走 `sel.Ext` → AccountCredential 直供适配层（`caller.go:344-358` 注释，单字符串表达不了）。
 
 加新格式 = 1 个 caller 文件 + `internal/proxy/forward.go:76-80,151-152` 注册表一行（callers + convCallers 六方向 + images/codexImages 双调用器）+ router.go 一个端点（现 8 端点，`router.go:19-57`）；images 同格式双端点 + codex 双调用器为既有格局之外的特例。
 
@@ -242,7 +242,6 @@ pkg 职责边界：
 | pricing（`price_entries` + `price_variants` 双表） | `internal/service/pricing.go:33` ReloadPricingAndNotifyCompiler + `:59` ReloadPricingCtx | ReloadPricing（sync 成功 / 管理端改价后）+ NOTIFY Pricing → dispatcher 同步 ReloadPricingCtx（settings 同款，跨实例失效） |
 | balances（余额 + 倍率） | `internal/billing/balances.go:47`（atomic.Pointer，`Set` :132 原地 Store） | invalidate Users/Multipliers + BalanceRefreshInterval ticker（`internal/billing/flusher.go` `refreshLag`） |
 | settings | `internal/service/setting.go:109` ReloadSettings | invalidate Settings + 启动（**自身不进注册表**） |
-| credential.Registry | `internal/credential/credential.go`（类型注册表 + Provider 分发，无快照语义） | 静态注册 |
 
 **注册表装配**（`cmd/server/main.go:354-366` + `cmd/server/snapshots.go`）：五路注册 auth/scheduler/rules/pricing/balances（billing 关不注册 balances）；**启动首刷 = ReloadAll 单一入口**（`main.go:651`）。
 

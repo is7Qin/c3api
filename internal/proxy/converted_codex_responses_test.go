@@ -118,7 +118,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codex := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
+	p := New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 	return p, store
 }
 
@@ -439,5 +439,5 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
 	codex := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{Codex: codex})
+	return New(cfg, sched, rec, clients, auth, nil, nil, nil, Deps{Codex: codex})
 }

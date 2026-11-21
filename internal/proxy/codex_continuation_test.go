@@ -70,7 +70,7 @@ func newCodexContProxy(t *testing.T, credType credential.Type, accounts map[int6
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codex := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex, Continuation: s, ContBind: bind})
+	p := New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex, Continuation: s, ContBind: bind})
 	t.Cleanup(func() { _ = p.rec.Close(context.Background()) })
 	return p
 }

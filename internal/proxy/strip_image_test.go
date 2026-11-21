@@ -5,7 +5,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -243,15 +242,6 @@ func stripTpl(up string, strip bool) *domain.Template {
 	return t
 }
 
-// specialKeyProvider responses-special 类型的静态 Key provider（生产接线 =
-// codex 凭据族；测试模拟：special 模板凭据经注册表分发返回 UpstreamKey）。
-type specialKeyProvider struct{}
-
-func (specialKeyProvider) Type() credential.Type { return credential.TypeResponsesSpecial }
-func (specialKeyProvider) Credential(_ context.Context, in credential.CredentialInput) (string, error) {
-	return in.APIKey, nil
-}
-
 // TestProxyResponsesStripImageToolsOnStream 开关开启 + 流式：原始请求路径
 // （ResponseRaw）——上游收到剥离后帧（图像工具删、tool_choice 删、其余
 // 字段保留）。
@@ -259,7 +249,6 @@ func TestProxyResponsesStripImageToolsOnStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
@@ -286,7 +275,6 @@ func TestProxyResponsesStripImageToolsAllStrippedStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
@@ -330,7 +318,6 @@ func TestProxyResponsesStripImageToolsOnNonStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))

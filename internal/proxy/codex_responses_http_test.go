@@ -282,7 +282,7 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codexAdapter := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codexAdapter})
+	p := New(cfg, sched, rec, clients, auth, nil, bill, errlogW, Deps{Codex: codexAdapter})
 	return p, store, accs
 }
 

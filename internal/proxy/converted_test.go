@@ -249,7 +249,7 @@ func newConvertedTestProxyAccsLogs(t *testing.T, accs map[int64][]*domain.Accoun
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{})
+	return New(cfg, sched, rec, clients, auth, nil, nil, nil, Deps{})
 }
 
 // TestConvertedChatToRespStreaming 客户端 chat 流式 → 上游 resp 流 →

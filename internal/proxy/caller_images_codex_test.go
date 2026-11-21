@@ -213,7 +213,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	// 失效标记断言依赖真实摘除，路由"不重试同账号"才成立）。
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
 	codex := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
+	p := New(cfg, sched, rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
 
@@ -546,7 +546,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
-	}, sched, credential.New(), rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil), Deps{})
+	}, sched, rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil), Deps{})
 	// Deps 零值 —— 未装配形态
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
@@ -739,7 +739,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
-	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
+	}, sched, rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 
 	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(

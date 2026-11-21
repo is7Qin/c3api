@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/billing"
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/usage"
 )
@@ -87,7 +86,7 @@ func guardProxy(tb testing.TB, capConc int, thresholdMilli int64, userMaxConc in
 	if withBill {
 		bill = &BillingHooks{Balances: bal}
 	}
-	return New(cfg, nil, credential.New(), rec, nil, auth, nil, bill, nil, Deps{})
+	return New(cfg, nil, rec, nil, auth, nil, bill, nil, Deps{})
 }
 
 // guardOnce 单次 guardPipeline（真实门禁入口，precheckBalance=true）：返回写出

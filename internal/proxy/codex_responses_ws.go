@@ -32,12 +32,12 @@ import (
 // frameHook（见 wsAttempt 调用点）；服务端 Accept 侧 = 既有
 // *websocket.Conn 不动。
 //
-// 凭据双线分工：relay 线 = 快照（sel.Ext → AccountExt）→
-// AccountCredential 派生直供适配层（不经 credentialFor 单字符串路径——复合
-// 凭据 oauth_token+refresh_token+expires_at+pat+accountID 单字符串契约表达不
-// 了）。Registry 线（codex-oauth/codex-pat provider 注册 = 单令牌语义）仅供
-// 既有单字符串消费面（未来 HTTP 面）——本轮**明确不注册**（无既有消费方；
-// provider 无数据源可读单令牌，注册徒增死面）。
+// 凭据只有一条线：快照（sel.Ext → AccountExt）→ AccountCredential 派生直供
+// 适配层（不经 credentialFor 单字符串路径——复合凭据
+// oauth_token+refresh_token+expires_at+pat+accountID 单字符串契约表达不了）。
+// 旧的「类型 → Provider」注册表已删（它只能吐单个字符串，而 codex 没有可读的
+// 单令牌数据源）；日后要支持 codex 的 HTTP 面时按 ChannelOf 加分支，别复活
+// 恒等层。
 
 // errCodexWSNotIntegrated 501：codex 适配层未装配（SetCodex 未调用——main 装
 // 配缺失的显式拒绝，不让凭据缺失路径误报 502/network；与 images 路径同款）。

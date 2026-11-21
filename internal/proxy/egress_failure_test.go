@@ -97,7 +97,7 @@ func newEgressFailingProxy(t *testing.T, upstream, proxyAddr string, captured *c
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 2 * time.Second, UpstreamStreamTimeout: 2 * time.Second})
 	worker := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, captured, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, worker, Deps{}), worker
+	return New(cfg, sched, rec, clients, auth, nil, nil, worker, Deps{}), worker
 }
 
 func mustSplitHost(t *testing.T, addr string) string {

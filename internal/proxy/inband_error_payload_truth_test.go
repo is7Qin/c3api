@@ -158,7 +158,7 @@ func newInbandChatProxy(t *testing.T, upstream string, extraAccounts int, logs *
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errLogStoreFrom(logs), nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
+	return New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{})
 }
 
 // postChatStream 发一条 chat 流式请求（Bearer ck-1）。
@@ -543,7 +543,7 @@ func wsHealthProxy(t *testing.T, upstream string, logs *captureLogStore) (*Proxy
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errLogStoreFrom(logs), nil)
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
+	p := New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{})
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	t.Cleanup(srv.Close)
 	return p, srv

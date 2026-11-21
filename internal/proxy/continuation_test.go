@@ -146,7 +146,7 @@ func contProxyBind(t *testing.T, format domain.RequestFormat, accs []*domain.Acc
 	require.NoError(t, auth.Reload(context.Background()))
 	clients := aiclient.NewFactory(&http.Client{Transport: http.DefaultTransport}, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Continuation: store, ContBind: bind})
+	p := New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{Continuation: store, ContBind: bind})
 	t.Cleanup(func() { _ = p.rec.Close(context.Background()) })
 	return p
 }

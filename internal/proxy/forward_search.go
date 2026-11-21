@@ -251,7 +251,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 // 客户端头如实透传（x-codex-turn-metadata 不在 relayDeny ⇒ 客户端带就发；
 // 仍不转发的那条只剩上面的 SDK 路径）
 func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
-	cred, err := p.credentialFor(ctx, sel)
+	cred, err := p.credentialFor(sel)
 	if err != nil {
 		return 0, nil, false, err
 	}

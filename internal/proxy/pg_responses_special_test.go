@@ -38,11 +38,9 @@ import (
 
 // TestPGResponsesSpecialCredential responses-special 模板（主列
 // credential_type）+ 账号 upstream_key → 真实 PG 快照 → Selection →
-// credentialFor 取 key 成功（502 消灭断言：修复前 TypeResponsesSpecial 未
-// 注册 → For 兜底（现 unsupportedProvider，旧 apiKeyProvider）→ Credential
-// 类型不匹配 ErrUnsupported → 真实流量 502 unsupported credential type；本断
-// 言确定性红）。HTTP 补充：完整 resp-ws 会话正常闭环（上游校验 Authorization:
-// Bearer <账号 key>）。
+// credentialFor 直读账号 upstream_key（模板主列与静态通道取值的端到端一致性）。
+// HTTP 补充：完整 resp-ws 会话正常闭环（上游校验 Authorization: Bearer <账号
+// key>）。
 func TestPGResponsesSpecialCredential(t *testing.T) {
 	dsn := pgtest.Clone(t)
 	ctx := context.Background()
@@ -87,12 +85,10 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 
 	p := newPGTestProxy(t, sched, g.ID)
 
-	// 502 消灭断言（确定性）：credentialFor 必须取到账号 key。
-	cred, err := p.credentialFor(ctx, sel)
-	require.NoError(t, err, "responses-special 凭据取用必须成功（修复前：未注册 → 502 unsupported credential type）")
+	// 响应面凭据直读账号 upstream_key（确定性断言）。
+	cred, err := p.credentialFor(sel)
+	require.NoError(t, err, "responses-special 必须走静态通道成功取到账号 key")
 	require.Equal(t, "sk-upstream", cred)
-	require.Equal(t, credential.TypeResponsesSpecial, p.creds.For(credential.TypeResponsesSpecial).Type(),
-		"注册表必须含 responses-special provider")
 
 	// HTTP 补充：完整 resp-ws 会话正常闭环（fake 上游校验 Bearer 头=账号 key；
 	// 凭据失败 → 错误事件帧 + 非正常关闭，本断言红）。
@@ -131,5 +127,5 @@ func newPGTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int64) *Pr
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
+	return New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{})
 }

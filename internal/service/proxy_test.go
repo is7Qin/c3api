@@ -464,9 +464,9 @@ func TestProbeProxyTwoStage(t *testing.T) {
 		stub *probeEgressStub
 		// addr 第一段的落点。
 		addr func(t *testing.T) (host string, port int)
-		// creds 把 probeCredUser/probeCredPass 落到条目上（第二段的错误文本故意带同一对
-		// 字面量：去掉脱敏，NotContains 就红）。
-		creds bool
+		// withProxyAuth 把 probeCredUser/probeCredPass 落到条目上（第二段的错误文本故意
+		// 带同一对字面量：去掉脱敏，NotContains 就红）。
+		withProxyAuth bool
 		// preProbe 在注入 stub 之前跑：造「上一次探测留下旧 IP」这类前态。
 		preProbe func(t *testing.T, svc *Service, ctx context.Context, id int64)
 		// parentCanceled 为 true 时用「已取消的父 ctx」调 ProbeProxy。
@@ -512,7 +512,7 @@ func TestProbeProxyTwoStage(t *testing.T) {
 				"egress ip probe: dial socks5://%s:%s@127.0.0.1:1080: proxy refused",
 				probeCredUser, probeCredPass)},
 			addr:            reachableAddr,
-			creds:           true,
+			withProxyAuth:   true,
 			wantOK:          true,
 			wantOKMsg:       "TCP 通 ⇒ ok 仍是 true（§3.3 中间列的语义不变）",
 			wantErrMsg:      "第二段失败原因必须落库（否则用户看不出 IP 为什么是空的）",
@@ -563,7 +563,7 @@ func TestProbeProxyTwoStage(t *testing.T) {
 			svc, ctx, seed := newProbeFixture(t)
 			host, port := tc.addr(t)
 			var opts []func(*ProxyInput)
-			if tc.creds {
+			if tc.withProxyAuth {
 				opts = append(opts, withCreds(probeCredUser, probeCredPass))
 			}
 			id := seed(tc.name, host, port, opts...)

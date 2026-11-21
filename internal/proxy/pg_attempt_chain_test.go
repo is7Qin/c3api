@@ -116,7 +116,7 @@ func TestAttemptChainEndToEndPG(t *testing.T) {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second,
 		UsageCapture: true,
-	}, sched, credential.New(), rec,
+	}, sched, rec,
 		aiclient.NewFactory(&http.Client{Transport: http.DefaultTransport},
 			aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second}),
 		auth, nil, nil, errlogW, Deps{})

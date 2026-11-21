@@ -155,7 +155,7 @@ func newConvTestProxy(t *testing.T, upstream string, o convTestOpts) *Proxy {
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codexAdapter := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codexAdapter, Conversations: o.book})
+	return New(cfg, sched, rec, clients, auth, nil, nil, errlogW, Deps{Codex: codexAdapter, Conversations: o.book})
 }
 
 // convWire 是假上游收到的一次请求（HTTP 一次 POST；WS 一次握手 + 其后所有帧）。

@@ -438,7 +438,7 @@ func newTestProxyTplAccountsRec(t *testing.T, accs map[int64][]*domain.Account, 
 		errWriter = noopErrLogStore{}
 	}
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errWriter, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{})
+	return New(cfg, sched, rec, clients, auth, nil, bill, errlogW, Deps{})
 }
 
 func TestProxyStreamingChat(t *testing.T) {
@@ -1072,39 +1072,6 @@ func TestProxySelectFailLogsModel(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Empty(t, store.logs, "Select 失败不产生 usage_logs 明细")
-}
-
-// 分发实证：注册自定义 provider（覆盖 api_key 类型的默认实现）→
-// 上游收到的鉴权值必须来自 provider 返回的凭据值，而非 Selection.UpstreamKey
-// 直读——证明注册表分发路径真实生效，接线非空转。
-func TestProxyCredentialDispatchUsesRegistry(t *testing.T) {
-	gotAuth := make(chan string, 1)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth <- r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "c1", "object": "chat.completion", "model": "gpt-4o",
-			"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-		})
-	}))
-	defer up.Close()
-	p := newTestProxy(t, up.URL, 1)
-	p.creds.Register(customAPIKeyProvider{val: "sk-via-registry"})
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
-		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec := httptest.NewRecorder()
-	p.HandleChat(rec, req)
-	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
-	require.Equal(t, "Bearer sk-via-registry", <-gotAuth, "上游收到的鉴权值必须来自注册表 provider")
-}
-
-type customAPIKeyProvider struct{ val string }
-
-func (c customAPIKeyProvider) Type() credential.Type { return credential.TypeAPIKey }
-func (c customAPIKeyProvider) Credential(_ context.Context, _ credential.CredentialInput) (string, error) {
-	return c.val, nil
 }
 
 // 未知凭据类型（号池生态类型未注册）在候选指纹门即被拒（credType

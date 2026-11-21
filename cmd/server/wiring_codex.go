@@ -215,7 +215,7 @@ func newCodexFace(d codexDeps) *codexFace {
 		LowBalanceConcCap:            cfg.Proxy.LowBalanceMaxConcurrency,
 		LowBalanceConcThresholdMilli: int64(math.Round(cfg.Proxy.LowBalanceThresholdUSD * 1e5)),
 		StreamKeepaliveInterval:      cfg.Proxy.StreamKeepaliveInterval,
-	}, sched, credential.New(), rec, clients, auth, log, d.billHooks, errlogW, proxy.Deps{
+	}, sched, rec, clients, auth, log, d.billHooks, errlogW, proxy.Deps{
 		Codex:         codexAdapter,
 		BPS:           bpsAdapter,
 		Recorder:      qualityRecorder,

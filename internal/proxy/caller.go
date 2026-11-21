@@ -438,8 +438,8 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	}
 	// 凭据每轮取：尾部 Select 后 Selection 变化，凭据随账号；
 	// 循环外取一次会把旧账号 key 发给新账号上游。codex 类型跳过单字符串
-	// credentialFor（注册表无 codex provider——单字符串契约表达不了复合
-	// 凭据；codexImagesCaller 按 sel.Ext 派生 AccountCredential 直供适配层）。
+	// credentialFor（单字符串契约表达不了复合凭据；codexImagesCaller 按
+	// sel.Ext 派生 AccountCredential 直供适配层）。
 	var (
 		code     int
 		respBody []byte
@@ -456,7 +456,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		}
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
 	default:
-		cred, err := a.p.credentialFor(ctx, sel)
+		cred, err := a.p.credentialFor(sel)
 		if err != nil {
 			return 0, nil, nil, false, err // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）
 		}

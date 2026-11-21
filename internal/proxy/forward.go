@@ -60,7 +60,6 @@ type Config struct {
 type Proxy struct {
 	cfg     Config
 	sched   *scheduler.Scheduler
-	creds   *credential.Registry
 	rec     *usage.Recorder
 	clients *aiclient.Factory
 	auth    *Auth
@@ -163,14 +162,13 @@ type Deps struct {
 	Conversations *sdkbridge.Book
 }
 
-// New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
-// 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（
-// nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
-// （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
-// deps 为尾部一次性协作者（零值 = 三者皆未装配，各 nil 语义见 Deps）。
-func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker, deps Deps) *Proxy {
+// New 构造代理。bill 为计费钩子（nil = 计费全关——现有调用点/测试兼容）。
+// errlog 为错误明细落盘 worker（分表设计；nil = 未装配——拒绝/异常路径只聚
+// 统计不落 err_logs 明细）。deps 为尾部一次性协作者（零值 = 全部未装配，各
+// nil 语义见 Deps）。
+func New(cfg Config, sched *scheduler.Scheduler, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker, deps Deps) *Proxy {
 	p := &Proxy{
-		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
+		cfg: cfg, sched: sched, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
 		codex: deps.Codex, bps: deps.BPS, conversations: deps.Conversations, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
@@ -1072,14 +1070,26 @@ func setStreamAndModel(body []byte, stream bool, model string) ([]byte, error) {
 	return sjson.SetBytes(body, "model", model)
 }
 
-// credentialFor 从 Selection 取当前凭据值（注册表分发；api_key 类型直读静态 Key）。
-// 未知类型（未来号池类型未注册）→ 显式错误，不静默 fallback（
-// fallback 到 api_key 是号池类型安全隐患）。
-func (p *Proxy) credentialFor(ctx context.Context, sel *scheduler.Selection) (string, error) {
+// credentialFor 从 Selection 取静态通道的凭据值：直读账号 upstream_key。
+//
+// 两条守卫都保留、且顺序不可换（Valid 在前），因为它们对应两种不同的错，必须
+// 可区分、且永不静默把空凭据发给上游：
+//   - 表外类型（部署/配置错）：文案 "unsupported credential type %q"，**不**包裹
+//     ErrUnsupported——合进下面一条会让"配错"与"路由错"在日志/客户端里同形；
+//   - 合法但非静态通道（路由错）：ErrUnsupported 包裹，文本与旧注册表兜底逐字节
+//     一致（errors.Is 的调用方不受影响）。
+//
+// 可达性（诚实口径）：本函数只在 ChannelOf 的 default（静态）分支被调用——caller.go
+// 的 switch、caller_responses_ws.go 的 BPS 早退之后、forward_search 的静态透传。
+// 因此第二条在正常分流下**不可达**，纯防御契约；第一条形式上可达，但正常流量更早
+// 被候选指纹门拒掉（TestProxyCredentialUnknownTypeRejectsNoUpstreamCall 证明上游零
+// 请求）。两者都是纵深防御，不是常见路径。
+func (p *Proxy) credentialFor(sel *scheduler.Selection) (string, error) {
 	if !sel.CredentialType.Valid() {
 		return "", fmt.Errorf("unsupported credential type %q", sel.CredentialType)
 	}
-	return p.creds.For(sel.CredentialType).Credential(ctx, credential.CredentialInput{
-		AccountID: sel.AccountID, Type: sel.CredentialType, APIKey: sel.UpstreamKey,
-	})
+	if !sel.CredentialType.UsesStaticKey() {
+		return "", fmt.Errorf("%w: %q", credential.ErrUnsupported, sel.CredentialType)
+	}
+	return sel.UpstreamKey, nil
 }
