@@ -27,7 +27,7 @@
     "react": "^19.3.1",
     "react-day-picker": "^10.0.2",
     "react-dom": "^19.3.1",
-    "react-i18next": "^17.1.9",
+    "react-i18next": "^17.1.13",
     "react-router-dom": "^7.18.4",
     "recharts": "3.10.1",
     "shadcn": "^4.23.0",
