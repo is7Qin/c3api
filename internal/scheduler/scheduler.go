@@ -865,36 +865,54 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 	return groups, byID
 }
 
-// modelSet 组内所有账号模板的可服务模型并集（桶 key 的模型空间）。
-// 重建路径调用（buildSnapshots 在 publisher.mu 内），静态字
-// 经视图读取（评审 Critical 修复后实例不再保留裸字段）。
-func modelSet(accs []*accountSnapshot) map[string]struct{} {
-	set := make(map[string]struct{})
-	for _, a := range accs {
-		tpl := a.static.Load().tpl
-		if tpl == nil {
-			continue
-		}
-		for _, m := range tpl.Models {
-			set[m] = struct{}{}
-		}
-		for _, list := range tpl.FormatModels {
-			for _, m := range list {
-				set[m] = struct{}{}
-			}
-		}
-		for m := range tpl.ModelMapping {
-			set[m] = struct{}{}
-		}
-	}
-	return set
+// tplRouteFactsKey 是 buildRoutes 的去重键：**模板侧路由事实**的投影。
+//
+// 为什么不是整枚 planKey：planKey 里还有 accountID / upstreamKey / proxyDigest /
+// identityRevision / baseURL … 等**账号侧**字段——拿整枚 key 当去重键等于按账号
+// 去重，恰好是这个单元要消灭的东西。
+// 为什么不是 `*domain.Template` 指针：生产上每个账号各有一份独立模板
+// （repository/mapping.go 的 toDomainAccount 逐账号 toDomainTemplate，ent 的
+// eager-load 不按 ID 共享指针）⇒ 指针去重在生产恒不命中。
+// 为什么不是 tpl.ID：夹具 tplWith 不带 ID（ID=0），同组两份 ID=0 但内容不同的模板
+// 会被错误合并 ⇒ 丢桶。本键不依赖 ID，这个坑自动消失。
+//
+// 5 个维度直接取 newSnapshotStatic 构造期算好的 planKey 投影，**零额外哈希**。
+// 它们覆盖 buildRoutes 读到的全部模板字段——"拍到今天"这件事由
+// static_read_closure_test.go 的两条形状门禁机械保证（模板读点 ⊆ 白名单 6 条、
+// `$S.key.*` 读点恰好这 5 条）：谁给 buildRoutes 加第 7 个模板读点，门禁立刻红，
+// 逼他回答"去重键要不要同步"。粒度代价（已知且接受）：modelMappingKey 是 mapping
+// 键集的**保守超集**（含 MappedModel/Mode），两个键集相同、目标不同的模板不会被
+// 合并——那是"少去重"，不换来任何正确性风险。
+type tplRouteFactsKey struct {
+	credType         credential.Type
+	modelsDigest     [32]byte
+	formatModelsKey  [32]byte
+	supportedFormats [32]byte
+	modelMappingKey  [32]byte
 }
 
-// buildRoutes 生成 (format, model) 桶键集：格式硬过滤（FormatSupports）与
-// 模型硬白名单（Serves）都是静态信息，可完全在重建时计算。另为每个格式生成
-// 默认回退桶（model == ""）：仅含全模型账号（无模型空间），请求模型未知时
-// 兜底转发。桶键集是编译车道的枚举域（编译器经 fullCandidateUnion 重算候选，
-// 不消费序列）。
+// buildRoutes 生成 (format, model) 桶键集：格式硬过滤（FormatSupports）与模型硬
+// 白名单（Serves）读的都是**模板级**静态事实，与账号身份无关 —— 故按模板事实算一次，
+// 而不是按 (模型 × 格式 × 账号) 重算。桶键集是编译车道的枚举域（编译器经
+// fullCandidateUnion 重算候选，不消费序列）。
+//
+// 等价契约（旧实现逐账号重算的精确语义；化石对照与差分锚点见
+// build_routes_equiv_test.go）：
+//
+//	route(f, m) 存在  ⟺  ∃ 模板 t: t.FormatSupports(f, m) ∧ (t.Serves(m) ∨ ¬t.HasModelSpace())
+//	route(f, "") 存在  ⟺  ∃ 模板 t: tplSupportsFormat(t, f) ∧ ¬t.HasModelSpace()
+//
+// 三个推论给出下面的三段式（每一段都被形状用例钉住）：
+//   - (A) 对模板**自己的**模型空间（Models ∪ ⋃FormatModels[*] ∪ keys(ModelMapping)）
+//     逐**成员**判定：任何 m ∈ 该空间 ⇒ Serves(m) 恒真，故"白名单贡献"就是"遍历该
+//     空间"，无需再调 Serves；FormatModels[f] 已配置时只遍历它（其元素必然 Serves 真，
+//     其余模型被 FormatSupports 拒掉）。
+//   - (B) ¬HasModelSpace ⇒ FormatModels 空 ⇒ FormatSupports(f,m) ≡ tplSupportsFormat(t,f)，
+//     与 m 无关 ⇒ 全模型账号在该格式上贡献的是**全组模型并集 × {f}** 加默认桶 (f,"")，
+//     两者同源（blanket[f]）。展开必须放在"累计完全组"之后：就地展开只会拿到当时
+//     已见模板的模型集，漏掉后排模板（形状 4/5 的正反序就是钉这个的）。
+//   - (C) 键集只依赖模板事实 ⇒ 同事实模板可去重（生产上每账号一份独立指针）⇒
+//     成本从 O(账号 × 模板事实) 降到 O(去重模板 × 模板事实)。
 //
 // 分桶语义（模板模型硬白名单）：
 //   - Serves(model) 命中 → tier1（不变）；
@@ -908,46 +926,90 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 //
 // mapping 交互：白名单只查请求模型（mapping key 即白名单别名，∈ Serves 空间），
 // 映射目标（上游模型名）不复查（选号内映射）。
+//
+// 纯函数（输入 accs，输出 map）：不加缓存、不加锁、不跨 reload 复用。迭代顺序不
+// 影响结果（map 内容相同；编译期 sortedRouteKeys 负责排序）。
 func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	routes := make(map[routeKey]*route)
 	formats := domain.RoutableFormats()
-	for model := range modelSet(accs) {
-		for _, format := range formats {
-			var t1, t2 []*accountSnapshot
-			for _, a := range accs {
-				tpl := a.static.Load().tpl
-				if tpl == nil || !tpl.FormatSupports(format, model) {
-					continue
-				}
-				if tpl.Serves(model) {
-					t1 = append(t1, a)
-				} else if !tpl.HasModelSpace() {
-					t2 = append(t2, a) // 全模型账号：tier2 兜底
-				}
-				// 白名单账号未命中 → 跳过（不建路由 → 404）
-			}
-			if len(t1) == 0 && len(t2) == 0 {
-				continue
-			}
-			routes[routeKey{format, model}] = &route{}
-		}
-	}
-	for _, format := range formats {
-		var t2 []*accountSnapshot
-		for _, a := range accs {
-			tpl := a.static.Load().tpl
-			if tpl == nil || !tplSupportsFormat(tpl, format) {
-				continue
-			}
-			if tpl.HasModelSpace() {
-				continue // 白名单账号不参与未知模型回落（默认桶仅全模型账号）
-			}
-			t2 = append(t2, a)
-		}
-		if len(t2) == 0 {
+	// 三个 map 都**不按 len(accs) 预分配**：3000 个账号通常只承载 1–2 份模板事实，
+	// 按账号数预分配等于把"按账号重算"换成"按账号预留"。
+	seen := make(map[tplRouteFactsKey]struct{})
+	models := make(map[string]struct{}) // 全组模型并集：只服务 blanket 展开
+	blanket := make(map[domain.RequestFormat]bool, len(formats))
+
+	for _, a := range accs {
+		av := a.static.Load()
+		tpl := av.tpl
+		if tpl == nil {
 			continue
 		}
-		routes[routeKey{format, ""}] = &route{}
+		k := av.key
+		fk := tplRouteFactsKey{
+			credType:         k.credentialType,
+			modelsDigest:     k.modelsDigest,
+			formatModelsKey:  k.formatModelsKey,
+			supportedFormats: k.supportedFormats,
+			modelMappingKey:  k.modelMappingKey,
+		}
+		if _, dup := seen[fk]; dup {
+			continue
+		}
+		seen[fk] = struct{}{}
+
+		// 模板模型空间（推论 A 的"该空间"）：去重后累计，成本 = Σ 去重模板模型数。
+		for _, m := range tpl.Models {
+			models[m] = struct{}{}
+		}
+		for _, list := range tpl.FormatModels {
+			for _, m := range list {
+				models[m] = struct{}{}
+			}
+		}
+		for m := range tpl.ModelMapping {
+			models[m] = struct{}{}
+		}
+
+		space := tpl.HasModelSpace()
+		for _, format := range formats {
+			// tplSupportsFormat 就是"BPS 门 ∧ SupportedFormats"，即 FormatSupports 在
+			// FormatModels[f] 未配置时的特例 —— blanket 与白名单两个分支共用它，
+			// 不许在这里再写一遍 BPS 门（那会是格式白名单的第 10 把锁）。
+			if !tplSupportsFormat(tpl, format) {
+				continue
+			}
+			if !space {
+				blanket[format] = true
+				continue
+			}
+			if list, ok := tpl.FormatModels[format]; ok {
+				// 该格式有逐格式白名单：只有列表成员可服务（空非 nil 列表 = 全禁）。
+				for _, m := range list {
+					routes[routeKey{format, m}] = &route{}
+				}
+				continue
+			}
+			// 未配置逐格式白名单：整个模板模型空间都可在该格式服务。
+			for _, m := range tpl.Models {
+				routes[routeKey{format, m}] = &route{}
+			}
+			for _, list := range tpl.FormatModels {
+				for _, m := range list {
+					routes[routeKey{format, m}] = &route{}
+				}
+			}
+			for m := range tpl.ModelMapping {
+				routes[routeKey{format, m}] = &route{}
+			}
+		}
+	}
+	// blanket 展开必须在累计完全组模型并集之后（推论 B）：全模型账号贡献的是
+	// 全组并集，不是它与某个白名单模板的交集。默认桶 (f,"") 与之同源。
+	for f := range blanket {
+		routes[routeKey{f, ""}] = &route{}
+		for m := range models {
+			routes[routeKey{f, m}] = &route{}
+		}
 	}
 	return routes
 }

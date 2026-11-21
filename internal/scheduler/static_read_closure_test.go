@@ -61,7 +61,7 @@ var staticReaderFuncs = map[string]string{
 	"Runtimes":                   "运行时视图：并发上限与名字",
 	"attachCompilerFacts":        "把逐账号编译事实挂到静态根",
 	"buildIdentityPools":         "按静态叶重建 codex 槽位池：凭据类型、K、installation",
-	"buildRoutes":                "路由索引：模板的格式集",
+	"buildRoutes":                "路由索引：模板的格式集/模型集（按模板事实去重）",
 	"buildSnapshots":             "构造快照：复用判定需读旧叶子",
 	"deriveCompilerAccountFacts": "编译事实派生（决策输入）",
 	"eventGID":                   "事件组 ID（group_ids 的确定性派生）",
@@ -69,7 +69,6 @@ var staticReaderFuncs = map[string]string{
 	"fullLocked":                 "账号配置快照（全量）：账号全集 → 当前出口（读叶子 egress）",
 	"indexRoutesForAccount":      "账号的组引用集登记",
 	"mergedLocked":               "账号配置快照（组级增量）：用工作根叶子 egress 覆盖基线",
-	"modelSet":                   "模型集合：模板的模型/映射/格式",
 	"newAccountSnapshot":         "叶子构造：账号 ID",
 	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey（读全部源字段，写 $S.key）",
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
@@ -153,6 +152,18 @@ var staticReadPaths = map[string]staticReadSpec{
 
 	// --- 派生缓存位点（写目标 + 读回；非源字段） ---
 	"$S.key": {staticPathDerived, "canonical digest 复用位点：newSnapshotStatic 单次 av.key=k 写入、planKeyOf 读回；源字段读经 $S.acc.*/$S.tpl.*/$S.groupIDs 完整登记"},
+
+	// --- planKey 的**逐字段**消费（buildRoutes 的路由事实去重键） ---
+	//
+	// 基线里 `$S.key` 只有整结构体一条派生登记（planKeyOf 读回整枚键比较）。buildRoutes
+	// 把 5 项模板侧投影逐字段读进 tplRouteFactsKey，读点于是从"整体交出去比较"变成
+	// "逐字段消费"——必须逐条登记，这是门禁正确履职，不是绕开：少一条即红。
+	// detail 写成对应的 planKey 字段名，于是 ③（键字段集 ≡ 消费字段集）仍然成立。
+	"$S.key.credentialType":   {staticPathField, "credentialType"},
+	"$S.key.modelsDigest":     {staticPathField, "modelsDigest"},
+	"$S.key.formatModelsKey":  {staticPathField, "formatModelsKey"},
+	"$S.key.supportedFormats": {staticPathField, "supportedFormats"},
+	"$S.key.modelMappingKey":  {staticPathField, "modelMappingKey"},
 }
 
 // payloadProjectionFuncs 是允许读**载荷**字段（OAuth 三元组）的函数全集：载荷只用于
@@ -856,4 +867,179 @@ func TestPayloadProjectionIsTheOnlyCredentialReader(t *testing.T) {
 		require.NotEmpty(t, strings.TrimSpace(why), "载荷投影白名单必须写明理由：%s", f)
 		require.Contains(t, staticReaderFuncs, f, "载荷投影函数必须是声明的静态读者：%s", f)
 	}
+}
+
+// --- buildRoutes 的形状门禁（spec §4.3 末的两条） ---
+//
+// 上面 ①–⑤ 管"读点落在哪枚键的哪个字段"，管不了"某枚键的某个字段被删/被改摘要之后
+// 消费面会不会静默走样"。buildRoutes 的代价模型把这两件事绑在一起：它按
+// tplRouteFactsKey（planKey 的 5 项模板侧投影）去重，于是
+//
+//   - 正方向（新增读点）：模板多读一个字段 ⇒ 去重键不再覆盖消费面 ⇒ 错合并、丢桶；
+//   - 反方向（planKey 被删/改）：去重键少一维 ⇒ 两个本该分开的模板被合并 ⇒ 同样丢桶，
+//     而 15 条形状用例喂的是**模板**、不是 planKey，一行都不会红。
+//
+// 所以两侧各一条形状门禁，判据都在 buildRoutesShapeViolations 里（纯函数，负例喂真实
+// 扫描结果才不是自证）。
+
+// buildRoutesTemplateReadWhitelist 是 buildRoutes 允许读到的模板路径全集。
+//
+// `tplRouteFactsKey` 的 5 项覆盖面 = 这条白名单。谁给 buildRoutes 加第 7 个模板读点
+// （例如 StripImageTools / BaseURL），门禁立刻红，逼他回答"去重键要不要同步"。
+// CredentialType / SupportedFormats 在 tplSupportsFormat 里被读（扫描器不追进形参），
+// 列在这里是因为**语义上**它们就是白名单的一部分：谁把它内联进来也不该变红。
+var buildRoutesTemplateReadWhitelist = []string{
+	"$S.tpl",
+	"$S.tpl.Models",
+	"$S.tpl.FormatModels",
+	"$S.tpl.SupportedFormats",
+	"$S.tpl.ModelMapping",
+	"$S.tpl.CredentialType",
+}
+
+// buildRoutesPlanKeyReadWhitelist 是 buildRoutes 允许读到的 planKey 子路径：**恰好**
+// tplRouteFactsKey 的 5 项，一条不多一条不少。
+var buildRoutesPlanKeyReadWhitelist = []string{
+	"$S.key.credentialType",
+	"$S.key.modelsDigest",
+	"$S.key.formatModelsKey",
+	"$S.key.supportedFormats",
+	"$S.key.modelMappingKey",
+}
+
+// buildRoutesShapeViolations 是两条形状门禁的判据本体（空 = 合规）：
+//   - 模板读点 ⊆ buildRoutesTemplateReadWhitelist；
+//   - planKey 子路径集**恰好**等于 buildRoutesPlanKeyReadWhitelist；
+//   - buildRoutes 的 `$S.*` 读点全集 ⊆ 上面两者的并 ∪ {`$S.key`}（"只许读这些"）。
+//
+// `$S.key` 自身（不带子路径）是允许的：`k := av.key` 把投影整体取出来一次，逐字段
+// 消费是那 5 条子路径；挡住整枚键的**比较**没有意义（planKeyOf 本来就这么用），挡住的
+// 是"读了一个没登记的维度"。
+func buildRoutesShapeViolations(paths []string) []string {
+	tplAllow := make(map[string]bool, len(buildRoutesTemplateReadWhitelist))
+	for _, p := range buildRoutesTemplateReadWhitelist {
+		tplAllow[p] = true
+	}
+	keyAllow := make(map[string]bool, len(buildRoutesPlanKeyReadWhitelist))
+	for _, p := range buildRoutesPlanKeyReadWhitelist {
+		keyAllow[p] = true
+	}
+
+	var out []string
+	keyed := make(map[string]bool, len(keyAllow))
+	for _, p := range paths {
+		switch {
+		case keyAllow[p]:
+			keyed[p] = true
+		case p == snapRootAlias+".key":
+			// 投影整体取用（k := av.key）；逐字段消费由下面那 5 条覆盖。
+		case strings.HasPrefix(p, snapRootAlias+".key."):
+			out = append(out, fmt.Sprintf("未登记的 planKey 子路径：%s——去重键是那 5 项的投影，多读一维就要先回答「去重键要不要同步」", p))
+		case tplAllow[p]:
+		case strings.HasPrefix(p, snapRootAlias+".tpl."):
+			out = append(out, fmt.Sprintf("越界模板读点：%s——tplRouteFactsKey 的 5 项覆盖面 = 模板白名单，新增读点必须同步去重键", p))
+		default:
+			out = append(out, fmt.Sprintf("越界静态读点：%s——buildRoutes 只许读模板白名单 6 条与 planKey 的 5 项投影", p))
+		}
+	}
+	for _, p := range buildRoutesPlanKeyReadWhitelist {
+		if !keyed[p] {
+			out = append(out, fmt.Sprintf("去重键维度消失：buildRoutes 不再读 %s——planKey 字段被删或被改摘要（例如 modelMappingKey 只对键取摘要）会让路由侧静默错合并，而形状用例喂的是模板，一行都不会红", p))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// staticPathsOfFunc 用**同一个扫描器**（snapRoots / snapAliases / snapPaths）枚举指定
+// 顶层函数读到的静态路径。正例与负例因此测的是同一件东西：扫描器 × 判据。
+func staticPathsOfFunc(t *testing.T, srcs []gateFile, name string) []string {
+	t.Helper()
+	var fn *ast.FuncDecl
+	for _, src := range srcs {
+		for _, decl := range src.file.Decls {
+			d, ok := decl.(*ast.FuncDecl)
+			if ok && d.Body != nil && d.Name.Name == name {
+				fn = d
+			}
+		}
+	}
+	require.NotNil(t, fn, "扫描面上必须存在函数 %s", name)
+	roots := snapRoots(fn)
+	paths := snapPaths(fn, roots, snapAliases(fn, roots))
+	out := make([]string, 0, len(paths))
+	for p := range paths {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestBuildRoutesReadsOnlyItsDedupedTemplateFacts 正例：buildRoutes 的实际读点必须
+// 落在"模板白名单 6 条 ∪ planKey 5 项投影"内，且 planKey 那 5 项**恰好**全在。
+func TestBuildRoutesReadsOnlyItsDedupedTemplateFacts(t *testing.T) {
+	root := gateRoot(t)
+	srcs := gateSources(t, root, []string{"internal/scheduler"})
+	paths := staticPathsOfFunc(t, srcs, "buildRoutes")
+
+	require.Empty(t, buildRoutesShapeViolations(paths),
+		"buildRoutes 的静态读点越界：%v", paths)
+	// 非空性：判据不能靠"什么都没读到"通过。
+	tplReads := 0
+	for _, p := range paths {
+		if strings.HasPrefix(p, snapRootAlias+".tpl") {
+			tplReads++
+		}
+	}
+	require.Greater(t, tplReads, 1, "buildRoutes 必须真的读模板事实（读点：%v）", paths)
+}
+
+// TestBuildRoutesShapeGateRejectsDrift 负例：把绕过的函数体当真实源码走完整扫描链，再
+// 交给同一条判据。只加正例等于自证——判据写反或两侧恒空时正例一样是绿的。
+func TestBuildRoutesShapeGateRejectsDrift(t *testing.T) {
+	pathsOf := func(body string) []string {
+		t.Helper()
+		got := proxyMaterialReadsOf(t, body)
+		out := make([]string, 0, len(got))
+		for p := range got {
+			out = append(out, p)
+		}
+		sort.Strings(out)
+		return out
+	}
+	compliant := `
+	_ = av.tpl
+	_ = av.tpl.Models
+	_ = av.tpl.FormatModels
+	_ = av.tpl.SupportedFormats
+	_ = av.tpl.ModelMapping
+	_ = av.tpl.CredentialType
+	k := av.key
+	_ = k.credentialType
+	_ = k.modelsDigest
+	_ = k.formatModelsKey
+	_ = k.supportedFormats
+	_ = k.modelMappingKey`
+	require.Empty(t, buildRoutesShapeViolations(pathsOf(compliant)),
+		"对照：恰好落在白名单内的读点不得被拒")
+
+	t.Run("第 7 个模板读点", func(t *testing.T) {
+		got := buildRoutesShapeViolations(pathsOf(compliant + "\n\t_ = av.tpl.StripImageTools"))
+		require.Len(t, got, 1, "只该报一条越界模板读点：%v", got)
+		require.Contains(t, got[0], "$S.tpl.StripImageTools")
+		require.Contains(t, got[0], "越界模板读点")
+	})
+
+	t.Run("多读一条 planKey 子路径", func(t *testing.T) {
+		got := buildRoutesShapeViolations(pathsOf(compliant + "\n\t_ = k.upstreamKey"))
+		require.Len(t, got, 1, "只该报一条未登记子路径：%v", got)
+		require.Contains(t, got[0], "$S.key.upstreamKey")
+	})
+
+	t.Run("去重键维度消失", func(t *testing.T) {
+		got := buildRoutesShapeViolations(pathsOf(strings.Replace(compliant, "\n\t_ = k.modelMappingKey", "", 1)))
+		require.Len(t, got, 1, "只该报一条维度消失：%v", got)
+		require.Contains(t, got[0], "$S.key.modelMappingKey")
+		require.Contains(t, got[0], "去重键维度消失")
+	})
 }
