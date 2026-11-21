@@ -1,4 +1,20 @@
 version: 2
+
+# Dependabot 的凭证是**另一套存储**：仓库的 Actions secrets 在这里读不到
+# （GitHub 把 Dependabot secrets 与 Actions secrets 分开管理）。go.mod 里的
+# github.com/is7Qin/{codex-sdk,bps-sdk} 是私有仓库，没有凭证时解析依赖会以
+# git_dependencies_not_reachable 失败，整个 update_files 步骤退出 1 —— 结果是
+# 既 rebase 不了老 PR，也不会开新 PR。
+#
+# 令牌放在 Dependabot secrets 的 PRIVATE_MODULE_TOKEN（需要两个 SDK 仓库的读
+# 权限）；这里只声明"谁用哪把钥匙"，不写任何值。
+registries:
+  is7qin-git:
+    type: git
+    url: https://github.com
+    username: x-access-token
+    password: ${{secrets.PRIVATE_MODULE_TOKEN}}
+
 updates:
   # Go 模块（根 go.mod）
   - package-ecosystem: gomod
@@ -6,6 +22,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # 只有 gomod 会去 clone 私有仓库；npm 与 github-actions 不碰，不挂这把钥匙。
+    registries:
+      - is7qin-git
     groups:
       go-patch:
         update-types:
