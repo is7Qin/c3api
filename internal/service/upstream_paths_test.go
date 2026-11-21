@@ -85,33 +85,35 @@ func TestValidateUpstreamPathsMatrix(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
-// TestValidateTemplateCustomAcceptsAllFormats custom 与 api_key 一样支持全部格式；
-// 生态类型仍被限制（现有约束不能被这次放开顺带削弱）。
-func TestValidateTemplateCustomAcceptsAllFormats(t *testing.T) {
-	all := []domain.RequestFormat{
-		domain.FormatOpenAIChat,
-		domain.FormatOpenAIResponses,
-		domain.FormatOpenAIResponsesWS,
-		domain.FormatAnthropic,
-		domain.FormatOpenAISearch,
-		domain.FormatOpenAIImages,
-	}
-	require.NoError(t, validateTemplate(&domain.Template{
-		Name: "custom-all", BaseURL: "https://u",
-		CredentialType: credential.TypeCustom, SupportedFormats: all,
-	}))
-
-	require.NoError(t, validateTemplate(&domain.Template{
-		Name: "api-key-all", BaseURL: "https://u",
-		CredentialType: credential.TypeAPIKey, SupportedFormats: all,
-	}))
-
-	// 生态类型仍然只允许 resp/resp-ws/images/search（chat 被拒）。
+// TestValidateTemplateKeepsEcosystemFormatLimit custom 与 api_key 的「全部格式都收」
+// 由 domain 的格式矩阵 + validateFormatsForType 承担，这里不再逐行复述；
+// 本用例只守**本函数**独有的判断：生态类型（ResponsesSpecial）仍然只允许
+// resp/resp-ws/images/search，chat 被拒——这次放开不能顺带削弱既有约束。
+func TestValidateTemplateKeepsEcosystemFormatLimit(t *testing.T) {
 	require.ErrorIs(t, validateTemplate(&domain.Template{
 		Name: "special-chat", BaseURL: "https://u",
 		CredentialType:   credential.TypeResponsesSpecial,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	}), ErrInvalidInput)
+}
+
+// TestValidateTemplateCustomAcceptsAllFormats 走的是**接线**而不是裸谓词：
+// validateTemplate → dedupFormats → validateFormatsForType → domain.FormatsAllowedFor。
+// custom 收窄（例如只认 anthropic）时这条断言必须红——矩阵用例只钉谓词，钉不住
+// 模板校验有没有真的把 custom 交给它。
+func TestValidateTemplateCustomAcceptsAllFormats(t *testing.T) {
+	require.NoError(t, validateTemplate(&domain.Template{
+		Name:           "custom-all",
+		CredentialType: credential.TypeCustom,
+		SupportedFormats: []domain.RequestFormat{
+			domain.FormatOpenAIChat,
+			domain.FormatOpenAIResponses,
+			domain.FormatOpenAIResponsesWS,
+			domain.FormatOpenAIImages,
+			domain.FormatOpenAISearch,
+			domain.FormatAnthropic,
+		},
+	}))
 }
 
 // TestValidateUpstreamPathsNormalizes 校验必须**回写归一结果**：只判定不归一，
