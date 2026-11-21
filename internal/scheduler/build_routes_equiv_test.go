@@ -438,11 +438,15 @@ func routeFactsBaseTemplate() *domain.Template {
 	}
 }
 
-// TestTplRouteFactsKeyCoversEveryRoutingFact 去重键的两条性质：内容相同 ⇒ 键相等；
-// 任一 routing fact 不同 ⇒ 键不等（5 维各注入一次）。
+// TestTplRouteFactsKeyCoversEveryRoutingFact 生产构造链（`newSnapshotStatic`）上的五维
+// 性质：内容相同 ⇒ 键相等；任一 routing fact 不同 ⇒ 键不等（5 维各注入一次）。
+//
+// 口径（oracle Important-3）：这**不是**独立的摘要 oracle——它复用生产构造链算出的摘要，
+// 故摘要算法本身写错时它也可能一起绿；独立语义网是化石实现上的形状用例与随机差分。
+// 这条只回答"当前生产摘要的粒度是否分得开这 5 个维度"，而那正是去重键的前提。
 //
 // 反方向（planKey 字段被删/改）由 static_read_closure_test.go 的形状门禁守；
-// 这一条守的是"摘要粒度真的分得开这 5 个维度"——两条合起来才排除"错合并"。
+// 两条合起来才排除"错合并"。
 func TestTplRouteFactsKeyCoversEveryRoutingFact(t *testing.T) {
 	base := routeFactsBaseTemplate()
 	k0 := routeFactsKeyOf(base)

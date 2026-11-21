@@ -89,6 +89,16 @@ func BenchmarkGroupRebuildA3000M100(b *testing.B) {
 
 // TestBuildRoutesPerformanceGates 把三个门做成断言（基准是给人看的，门是给 CI 的）：
 // allocs/op ≤ 64、B/op ≤ 1 MB（绝对门，与机器无关）、时间 ≥50×（相对门，同机相邻测量）。
+//
+// **各门守什么，写清楚免得被当成独立保护**（oracle Important-2）：
+//   - allocs/op 守的是"每个 (format, model) 桶都 append 一个切片"这一类**分配病**
+//     （旧实现按格子 append，6958 allocs/op）；它抓不住**去重失效（M7）**——实测失效
+//     实现仍是 28 allocs/op，因为 `routes`/`models` 早已建好，重复插入只是改写已有键；
+//   - B/op 守的是同一类病的字节量（36.5 MB → ~99 KB）；
+//   - M7 这类"结果对、只是白干"的退化只有**相对时间门**抓得住（实测 62.3 ms vs 0.20 ms
+//     ⇒ 7.35× ≪ 50×）。
+//
+// 时间门依赖同机相邻测量，机器噪声会让余量变小，故只作 50×（相对 1731× 实测留 30× 余量）。
 func TestBuildRoutesPerformanceGates(t *testing.T) {
 	pool := routeBenchPool(t)
 	after := testing.Benchmark(func(b *testing.B) {
@@ -108,7 +118,7 @@ func TestBuildRoutesPerformanceGates(t *testing.T) {
 		before.NsPerOp(), before.AllocedBytesPerOp(), before.AllocsPerOp())
 
 	require.LessOrEqual(t, allocs, int64(routeBenchMaxAllocsPerOp),
-		"绝对门：去重后每组建 3 个 map 应当只花 ~27 allocs/op")
+		"绝对门：每桶 append 的分配病（旧实现 6958 allocs/op）必须消失；注意它不守去重失效（M7 仍是 ~28）")
 	require.LessOrEqual(t, bytesPerOp, int64(routeBenchMaxBytesPerOp),
 		"绝对门：按账号 append 的垃圾必须消失（36.5 MB → ~99 KB）")
 	require.NotZero(t, before.NsPerOp(), "化石参照必须有可测耗时")

@@ -880,7 +880,8 @@ func TestPayloadProjectionIsTheOnlyCredentialReader(t *testing.T) {
 //     而 15 条形状用例喂的是**模板**、不是 planKey，一行都不会红。
 //
 // 所以两侧各一条形状门禁，判据都在 buildRoutesShapeViolations 里（纯函数，负例喂真实
-// 扫描结果才不是自证）。
+// 扫描结果才不是自证）。这两条只看 buildRoutes **自己**的读点；"把读点搬进 helper"这条
+// 跨函数逃逸面由下面的调用面门禁（TestBuildRoutesCallsNoHelperOutsideItsWhitelist）守。
 
 // buildRoutesTemplateReadWhitelist 是 buildRoutes 允许读到的模板路径全集。
 //
@@ -951,9 +952,8 @@ func buildRoutesShapeViolations(paths []string) []string {
 	return out
 }
 
-// staticPathsOfFunc 用**同一个扫描器**（snapRoots / snapAliases / snapPaths）枚举指定
-// 顶层函数读到的静态路径。正例与负例因此测的是同一件东西：扫描器 × 判据。
-func staticPathsOfFunc(t *testing.T, srcs []gateFile, name string) []string {
+// funcDeclOf 在扫描面上按名字取顶层函数声明（多条同名声明取最后一条，与解析序一致）。
+func funcDeclOf(t *testing.T, srcs []gateFile, name string) *ast.FuncDecl {
 	t.Helper()
 	var fn *ast.FuncDecl
 	for _, src := range srcs {
@@ -965,6 +965,14 @@ func staticPathsOfFunc(t *testing.T, srcs []gateFile, name string) []string {
 		}
 	}
 	require.NotNil(t, fn, "扫描面上必须存在函数 %s", name)
+	return fn
+}
+
+// staticPathsOfFunc 用**同一个扫描器**（snapRoots / snapAliases / snapPaths）枚举指定
+// 顶层函数读到的静态路径。正例与负例因此测的是同一件东西：扫描器 × 判据。
+func staticPathsOfFunc(t *testing.T, srcs []gateFile, name string) []string {
+	t.Helper()
+	fn := funcDeclOf(t, srcs, name)
 	roots := snapRoots(fn)
 	paths := snapPaths(fn, roots, snapAliases(fn, roots))
 	out := make([]string, 0, len(paths))
@@ -1041,5 +1049,231 @@ func TestBuildRoutesShapeGateRejectsDrift(t *testing.T) {
 		require.Len(t, got, 1, "只该报一条维度消失：%v", got)
 		require.Contains(t, got[0], "$S.key.modelMappingKey")
 		require.Contains(t, got[0], "去重键维度消失")
+	})
+}
+
+// --- buildRoutes 的调用面门禁（spec §4.4 末：不得把阅读点搬进 helper） ---
+//
+// 上面两条形状门禁只看 buildRoutes **一个函数体**里出现的 `$S.*` 路径。这把"把模板读点
+// 搬进 helper"留成了一条近乎免费的绕过面——oracle Important-1 的变异：
+//
+//	for _, m := range tpl.Models { models[m] = struct{}{} }
+//
+// 抽成 `func addModels(tpl *domain.Template, dst map[string]struct{})` 之后，buildRoutes
+// 里只剩 `tpl := av.tpl`（container，在白名单里）与几处 dummy 子读：路径集照样合规，
+// 而真正的消费面已经在门禁之外。扫描器不追进被调函数（也不该追——那就是写第二个编译器）。
+//
+// 所以这里守**资格**而不是**追值**：buildRoutes 直接调用到的每个名字都必须显式登记，
+// 并写明它为什么可以出现。断言是相等（双向）：多一个 ⇒ 红（可能就是新的逃逸面）；
+// 少一个 ⇒ 红（白名单腐化：有人删了调用却留着旧条目）。
+//
+// 只做**一层**（buildRoutes 的直接调用），不做全调用图传播：
+//   - 一层已经堵死"抽一个 helper 把读点带走"这条实际路径——任何新 helper 都必然出现在
+//     这一层，因为 Go 没有隐式调用；
+//   - 全调用图会把门禁变成第二个编译器（指针别名、接口派发、泛型实例化都要建模），维护
+//     成本远高于它挡住的剩余风险。
+//
+// 边界（说清，否则会被当成"证明了消费闭包"）：**领域方法**（`tpl.HasModelSpace()`）读
+// 什么字段由 `domain` 包自己的测试守；本门禁守的是"模板事实被搬出 buildRoutes"这条
+// 包内 helper 逃逸面，不是 `domain.Template` 的内部实现。
+
+// buildRoutesCall 的可调用者形态：未限定标识符 = 包内/同包函数，选择器 = 方法或跨包函数。
+const (
+	buildRoutesCallFunc   = "func"
+	buildRoutesCallMethod = "method"
+)
+
+type buildRoutesCall struct {
+	kind string
+	name string
+}
+
+// buildRoutesCallSpec 是白名单的一条：kind 必须对上（同名换形态 = 换被调者），why 必填。
+type buildRoutesCallSpec struct {
+	kind string
+	why  string
+}
+
+// buildRoutesCallWhitelist 是 buildRoutes 允许直接调用到的名字全集。理由写在这里，因为
+// 下一个人只会读这一张表——"为什么它可以出现"比"它出现了"更重要。
+var buildRoutesCallWhitelist = map[string]buildRoutesCallSpec{
+	"tplSupportsFormat": {buildRoutesCallFunc,
+		"BPS 门 ∧ SupportedFormats：唯一允许的模板判定入口（spec §4.4 第 3 条），只读 CredentialType/SupportedFormats"},
+	"HasModelSpace": {buildRoutesCallMethod,
+		"`domain.Template` 的领域方法：模板模型空间是否非空。领域方法读哪些字段由 domain 包自己的测试守（本门禁不追进领域方法）"},
+	"Load": {buildRoutesCallMethod,
+		"`a.static.Load()`：静态视图的唯一取用入口，取视图本身不读模板；每个取用点另由 TestEveryStaticLoadSiteIsDeclared 守"},
+	"RoutableFormats": {buildRoutesCallMethod,
+		"`domain.RoutableFormats()`：全仓唯一的可路由格式枚举（不是快照事实），只调一次、不进循环"},
+}
+
+// goBuiltinCalls 是 Go 内建（含预声明类型名的转换）：它们不是包内函数，永远不可能是逃逸
+// 面，故不进集合——否则白名单要为每次 make/len 加一行噪音。
+var goBuiltinCalls = map[string]bool{
+	"append": true, "cap": true, "clear": true, "close": true, "complex": true,
+	"copy": true, "delete": true, "imag": true, "len": true, "make": true,
+	"max": true, "min": true, "new": true, "panic": true, "print": true,
+	"println": true, "real": true, "recover": true,
+	// 预声明类型名的转换（语法上是 CallExpr）。
+	"bool": true, "byte": true, "complex64": true, "complex128": true,
+	"error": true, "float32": true, "float64": true, "int": true, "int8": true,
+	"int16": true, "int32": true, "int64": true, "rune": true, "string": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
+	"uintptr": true,
+}
+
+// collectBuildRoutesCalls 枚举一个函数体里**直接**出现的调用。函数字面量内部的调用也算
+// （闭包里照样能读 tpl），这正是"一层"该覆盖的范围：只看被调名字，不看调用深度。
+func collectBuildRoutesCalls(body *ast.BlockStmt) []buildRoutesCall {
+	seen := map[buildRoutesCall]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch fn := unwrapCallFun(call.Fun).(type) {
+		case *ast.Ident:
+			if !goBuiltinCalls[fn.Name] {
+				seen[buildRoutesCall{buildRoutesCallFunc, fn.Name}] = true
+			}
+		case *ast.SelectorExpr:
+			// 只记方法名，不记接收者表达式：接收者是谁由读点门禁（`$S.*` 路径集）守，
+			// 这里若记整串表达式，改一个局部变量名就会让门禁红——那是噪音，不是保护。
+			seen[buildRoutesCall{buildRoutesCallMethod, fn.Sel.Name}] = true
+		}
+		return true
+	})
+	out := make([]buildRoutesCall, 0, len(seen))
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// unwrapCallFun 剥掉括号与泛型实例化，拿到真正的被调表达式。
+func unwrapCallFun(e ast.Expr) ast.Expr {
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.IndexExpr: // f[T](...)
+			e = x.X
+		case *ast.IndexListExpr: // f[T1, T2](...)
+			e = x.X
+		default:
+			return e
+		}
+	}
+}
+
+// buildRoutesCallViolations 是调用面门禁的判据本体（空 = 合规）：观测集与白名单**相等**。
+//
+// 红点信息必须直接给出处置办法，否则下一个人只会去白名单里加一行——那正是这条门禁要
+// 拦下来的反射动作。
+func buildRoutesCallViolations(calls []buildRoutesCall) []string {
+	var out []string
+	observed := make(map[string]bool, len(calls))
+	for _, c := range calls {
+		observed[c.name] = true
+		spec, known := buildRoutesCallWhitelist[c.name]
+		switch {
+		case !known:
+			out = append(out, fmt.Sprintf(
+				"给 buildRoutes 加了新的包内调用 `%s`：若 %s 接收 *domain.Template/planKey，模板读点就逃出了本门禁——"+
+					"要么别抽这个 helper（spec §4.4 的默认选择），要么把 %s 的读路径补进 staticReadPaths 并把这里当成有意变更",
+				c.name, c.name, c.name))
+		case spec.kind != c.kind:
+			out = append(out, fmt.Sprintf(
+				"buildRoutes 调用 `%s` 的形态变了（白名单登记为 %s，实际是 %s）：同名换形态等于换了被调者，请重答一次「这会不会把模板读点搬出去」",
+				c.name, spec.kind, c.kind))
+		}
+	}
+	names := make([]string, 0, len(buildRoutesCallWhitelist))
+	for name := range buildRoutesCallWhitelist {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if observed[name] {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"白名单陈旧：buildRoutes 不再调用 `%s`（原登记：%s）——有意删除请删掉这条登记；被改名请把新名字补进来并重答一次逃逸面问题",
+			name, buildRoutesCallWhitelist[name].why))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestBuildRoutesCallsNoHelperOutsideItsWhitelist 正例：buildRoutes 的直接调用集必须
+// **恰好**等于显式白名单（多一个靠 buildRoutesCallViolations 的未知分支，少一个靠陈旧
+// 分支——两者都是相等断言的一半）。
+func TestBuildRoutesCallsNoHelperOutsideItsWhitelist(t *testing.T) {
+	root := gateRoot(t)
+	srcs := gateSources(t, root, []string{"internal/scheduler"})
+	calls := collectBuildRoutesCalls(funcDeclOf(t, srcs, "buildRoutes").Body)
+	require.NotEmpty(t, calls, "扫描面必须真的抓到 buildRoutes 的调用（否则下面的相等断言是空转）")
+	require.Empty(t, buildRoutesCallViolations(calls),
+		"buildRoutes 的调用面越界；观测到：%v", calls)
+	for name, spec := range buildRoutesCallWhitelist {
+		require.NotEmpty(t, strings.TrimSpace(spec.why), "调用白名单必须写明理由：%s", name)
+	}
+}
+
+// TestBuildRoutesCallGateRejectsNewHelper 负例：把 oracle 实际描述的绕过（把模型空间
+// 循环抽成 `addModels(tpl, dst)`）当成**真源码**解析出来，走同一条判据。只加正例等于
+// 自证——判据写反、或两侧恒空时正例一样是绿的。
+func TestBuildRoutesCallGateRejectsNewHelper(t *testing.T) {
+	callsOf := func(body string) []buildRoutesCall {
+		t.Helper()
+		src := "package scheduler\n\nfunc injected(a *accountSnapshot, tpl *domain.Template, models map[string]struct{}) {\n" +
+			body + "\n}\n"
+		f, err := parser.ParseFile(token.NewFileSet(), "injected.go", src, parser.SkipObjectResolution)
+		require.NoError(t, err)
+		require.Len(t, f.Decls, 1)
+		fn, ok := f.Decls[0].(*ast.FuncDecl)
+		require.True(t, ok, "注入的源码必须只有一处函数声明")
+		return collectBuildRoutesCalls(fn.Body)
+	}
+
+	compliant := `
+	formats := domain.RoutableFormats()
+	av := a.static.Load()
+	_ = av
+	_ = formats
+	space := tpl.HasModelSpace()
+	_ = space
+	for _, format := range formats {
+		if !tplSupportsFormat(tpl, format) {
+			continue
+		}
+	}`
+	require.Empty(t, buildRoutesCallViolations(callsOf(compliant)),
+		"对照：恰好落在白名单内的调用不得被拒")
+
+	t.Run("模型空间循环抽成 helper", func(t *testing.T) {
+		got := buildRoutesCallViolations(callsOf(compliant + "\n\taddModels(tpl, models)"))
+		require.Len(t, got, 1, "只该报一条越界调用：%v", got)
+		require.Contains(t, got[0], "addModels")
+		require.Contains(t, got[0], "*domain.Template", "红点必须点明逃逸面长什么样")
+		require.Contains(t, got[0], "staticReadPaths", "红点必须给出处置办法")
+	})
+
+	t.Run("白名单陈旧", func(t *testing.T) {
+		got := buildRoutesCallViolations(callsOf("\tav := a.static.Load()\n\t_ = av"))
+		require.NotEmpty(t, got, "少调用也必须红：否则白名单会烂成注释")
+		joined := strings.Join(got, "\n")
+		require.Contains(t, joined, "白名单陈旧")
+		require.Contains(t, joined, "tplSupportsFormat")
+	})
+
+	t.Run("同名换形态", func(t *testing.T) {
+		// 白名单把 RoutableFormats 登记为方法（`domain.RoutableFormats()`）；不限定调用
+		// 是另一回事（同包内真有这么个函数时），必须重新回答一次。
+		got := buildRoutesCallViolations(callsOf(compliant + "\n\tRoutableFormats()"))
+		joined := strings.Join(got, "\n")
+		require.Contains(t, joined, "形态变了")
+		require.Contains(t, joined, "RoutableFormats")
 	})
 }
