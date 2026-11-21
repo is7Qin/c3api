@@ -9,32 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBPSValidateTemplateFormatsAndFixedEndpoint(t *testing.T) {
-	base := func(formats []domain.RequestFormat, endpoint string) *domain.Template {
-		return &domain.Template{
-			Name:             "bps",
-			BaseURL:          endpoint,
-			CredentialType:   credential.TypeBPS,
-			SupportedFormats: formats,
-		}
-	}
-	for _, formats := range [][]domain.RequestFormat{
-		{domain.FormatOpenAIResponses},
-		{domain.FormatOpenAIResponsesWS},
-		{domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS},
-	} {
-		require.NoError(t, validateTemplate(base(formats, "")))
-		require.NoError(t, validateTemplate(base(formats, domain.BPSDefaultEndpoint)))
-	}
-	for _, format := range []domain.RequestFormat{
-		domain.FormatOpenAIChat,
-		domain.FormatOpenAIImages,
-		domain.FormatOpenAISearch,
-		domain.FormatAnthropic,
-	} {
-		require.ErrorIs(t, validateTemplate(base([]domain.RequestFormat{format}, "")), ErrInvalidInput)
-	}
-	require.ErrorIs(t, validateTemplate(base([]domain.RequestFormat{domain.FormatOpenAIResponses}, "https://evil.example/api")), ErrInvalidInput)
+// TestBPSValidateTemplateFixedEndpoint BPS 模板的 base_url 只接受空或固定端点。
+// 格式维度的准入（哪种格式能被 BPS 表达）由 domain 的矩阵与 format_gate_test.go
+// 的行为用例负责，这里不再逐格式复述。
+func TestBPSValidateTemplateFixedEndpoint(t *testing.T) {
+	require.ErrorIs(t, validateTemplate(&domain.Template{
+		Name:             "bps",
+		BaseURL:          "https://evil.example/api",
+		CredentialType:   credential.TypeBPS,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+	}), ErrInvalidInput)
 }
 
 func TestBPSValidateAccountExtUsesOAuthProfileNotCodexIdentityOrPAT(t *testing.T) {

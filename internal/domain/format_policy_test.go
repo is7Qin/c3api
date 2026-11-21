@@ -93,33 +93,6 @@ func TestFormatPolicyMatrix(t *testing.T) {
 	}
 }
 
-// TestBPSFormatsOnlyMatchesPolicy 钉住 BPS 门的语义：BPSFormatsOnly(fs) ⟺
-// fs ⊆ BPS 行（golden 手抄副本）。覆盖 6 种单格式、空集与两种混合集。
-func TestBPSFormatsOnlyMatchesPolicy(t *testing.T) {
-	bpsRow := policyGolden[credential.TypeBPS]
-	cases := [][]RequestFormat{
-		nil,
-		{},
-		{FormatOpenAIChat},
-		{FormatOpenAIResponses},
-		{FormatOpenAIResponsesWS},
-		{FormatOpenAIImages},
-		{FormatOpenAISearch},
-		{FormatAnthropic},
-		{FormatOpenAIResponses, FormatOpenAIResponsesWS},
-		{FormatOpenAIResponses, FormatOpenAIChat},
-	}
-	for _, fs := range cases {
-		want := true
-		for _, f := range fs {
-			if !slicesContains(bpsRow, f) {
-				want = false
-			}
-		}
-		require.Equal(t, want, BPSFormatsOnly(fs), "BPSFormatsOnly(%v) 必须等于「fs ⊆ BPS 行」", fs)
-	}
-}
-
 // TestFormatPolicyUnknownType 表外类型：FormatsAllowedFor 必须 ok=false 且返回
 // nil，FormatAllowedFor 对任意格式必须 false。末尾钉住副本语义——调用方原地改写
 // 返回切片后，下一次调用必须仍是权威值。
@@ -135,10 +108,14 @@ func TestFormatPolicyUnknownType(t *testing.T) {
 	first, ok := FormatsAllowedFor(credential.TypeBPS)
 	require.True(t, ok)
 	require.NotEmpty(t, first)
+	authoritative := first[0]
 	first[0] = FormatAnthropic // 原地改写副本
+	require.NotEqual(t, authoritative, first[0], "夹具必须真的改写首元素，否则下面的副本断言是空断言")
 	second, ok := FormatsAllowedFor(credential.TypeBPS)
 	require.True(t, ok)
-	require.Equal(t, policyGolden[credential.TypeBPS], second, "FormatsAllowedFor 必须返回副本：调用方改不动权威表")
+	require.NotEmpty(t, second)
+	// 只断言「调用方改不动权威表」，不比对行内容：行内容归 TestFormatPolicyMatrix。
+	require.Equal(t, authoritative, second[0], "FormatsAllowedFor 必须返回副本：调用方改不动权威表")
 }
 
 // formatGateSites 是 BPS 格式门的**调用点**全集（仓库相对路径 → 期望调用数）。

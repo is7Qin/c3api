@@ -15,13 +15,20 @@ import (
 // TestTplSupportsFormatBPSGate 站点 5 的纯函数单测（无需 PG）：BPS 模板对非
 // responses/ws 格式恒 false（即便 supported_formats 里写了它）；其余类型不受此门
 // 收紧，只看 supported_formats 是否包含。
+//
+// 夹具里 responses-ws 必须**同时**出现在 supported_formats 与断言里：只写「加成员」
+// 方向（anthropic 被拒）时，BPS 行缩掉 responses-ws 也不会有任何信号——路由编译器
+// 会把 ws 请求悄悄判成不支持。两个方向各一行。
 func TestTplSupportsFormatBPSGate(t *testing.T) {
 	bps := &domain.Template{
-		CredentialType:   credential.TypeBPS,
-		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses, domain.FormatAnthropic},
+		CredentialType: credential.TypeBPS,
+		SupportedFormats: []domain.RequestFormat{
+			domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS, domain.FormatAnthropic,
+		},
 	}
 	require.False(t, tplSupportsFormat(bps, domain.FormatAnthropic), "BPS 模板 + anthropic：即便在 supported_formats 里也必须 false")
 	require.True(t, tplSupportsFormat(bps, domain.FormatOpenAIResponses))
+	require.True(t, tplSupportsFormat(bps, domain.FormatOpenAIResponsesWS), "BPS 行缩掉 responses-ws 时这里必须红（编译面缩行敏感）")
 	require.False(t, tplSupportsFormat(bps, domain.FormatOpenAIChat), "不在 supported_formats → false")
 
 	apiKey := &domain.Template{
