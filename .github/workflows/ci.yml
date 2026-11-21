@@ -6,6 +6,9 @@ on:
 jobs:
   test:
     name: test
+    # dependabot 推送的分支拿不到 secrets（GitHub 按 fork PR 对待），这条 job 在那里
+    # 必然拉不到私有模块；它的校验由 dependabot-ci.yml 的 pull_request_target 接手。
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -30,12 +33,13 @@ jobs:
           CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${CODEX_SDK_TOKEN}" ]; then
-            # 按属主前缀授权，覆盖 is7Qin 名下**全部**私有模块（codex-sdk、bps-sdk，
-            # 以及下一个）：逐包列举漏过一次——bps-sdk 并进来时 CI 全线拉不到包。
-            go env -w GOPRIVATE=github.com/is7Qin
-            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
+          if [ -z "${CODEX_SDK_TOKEN:-}" ]; then
+            echo "::error::private module token is unavailable to this run (event=${GITHUB_EVENT_NAME}, actor=${GITHUB_ACTOR}). go.mod requires private modules under github.com/is7Qin; vet, build and test cannot resolve them without a credential. Dependabot-triggered runs never get secrets — dependabot-ci.yml covers those via pull_request_target."
+            exit 1
           fi
+          # 按属主前缀授权，覆盖 is7Qin 名下全部私有模块（codex-sdk、bps-sdk，以及下一个）。
+          go env -w GOPRIVATE=github.com/is7Qin
+          git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
       - name: vet
         run: go vet ./...
       - name: no static admin token residue
@@ -72,6 +76,8 @@ jobs:
 
   contract-gen:
     name: contract-gen
+    # 同上：dependabot 分支没有 secrets，交给 dependabot-ci.yml。
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -83,12 +89,13 @@ jobs:
           CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${CODEX_SDK_TOKEN}" ]; then
-            # 按属主前缀授权，覆盖 is7Qin 名下**全部**私有模块（codex-sdk、bps-sdk，
-            # 以及下一个）：逐包列举漏过一次——bps-sdk 并进来时 CI 全线拉不到包。
-            go env -w GOPRIVATE=github.com/is7Qin
-            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
+          if [ -z "${CODEX_SDK_TOKEN:-}" ]; then
+            echo "::error::private module token is unavailable to this run (event=${GITHUB_EVENT_NAME}, actor=${GITHUB_ACTOR}). go.mod requires private modules under github.com/is7Qin; vet, build and test cannot resolve them without a credential. Dependabot-triggered runs never get secrets — dependabot-ci.yml covers those via pull_request_target."
+            exit 1
           fi
+          # 按属主前缀授权，覆盖 is7Qin 名下全部私有模块（codex-sdk、bps-sdk，以及下一个）。
+          go env -w GOPRIVATE=github.com/is7Qin
+          git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
       - name: go generate (handler + ent)
         run: go generate ./internal/handler/ ./internal/ent/
       - name: no drift in api.gen.go / ent generated code

@@ -1,0 +1,68 @@
+name: Dependabot CI
+
+# 为什么单开一个文件：dependabot 触发的那次 run 被 GitHub 按 **fork PR** 对待，
+# secrets 一律不注入，`on: push` 的 test / contract-gen 在它的分支上必然拉不到
+# 私有模块（报错还落在 vet 的 "invalid version"，极难定位）。
+#
+# `pull_request_target` 是唯一能把 secrets 送进去的形态：它在**基分支**上下文里
+# 跑，用的是 main 上的 workflow 文件——PR 改不动它。但它会让**整个文件**的所有
+# job 挂到这个事件上，所以它不能和 ci.yml 混在一起（那样 test/contract-gen 就会
+# 对所有 PR 生效）；独立成文件，事件面只剩这一个 job。
+#
+# 入口再用作者白名单限死到机器人自己：别人的 PR 直接 skipped，压根进不到执行路径。
+# 拿到的令牌是 fine-grained、仅两个 SDK 仓库的 Contents:read，泄露半径也仅限于此。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    name: dependabot-test
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    # 被测代码是外部依赖，只给它一个只读的 GITHUB_TOKEN；token 不进 .git/config。
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: c3api_test
+          POSTGRES_PASSWORD: c3api
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: authorise private modules
+        env:
+          CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_SDK_TOKEN:-}" ]; then
+            echo "::error::private module token is unavailable to this run (event=${GITHUB_EVENT_NAME}). go.mod requires private modules under github.com/is7Qin; vet, build and test cannot resolve them without a credential."
+            exit 1
+          fi
+          # 属主前缀授权，覆盖 is7Qin 名下全部私有模块（codex-sdk、bps-sdk，以及下一个）。
+          go env -w GOPRIVATE=github.com/is7Qin
+          git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
+      - name: vet
+        run: go vet ./...
+      - name: build
+        run: go build ./...
+      - name: test
+        env:
+          TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:5432/c3api_test?sslmode=disable"
+          TEST_REQUIRE_PG: "1"
+        run: scripts/test.sh -count=1
+        timeout-minutes: 30
