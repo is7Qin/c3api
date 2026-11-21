@@ -234,3 +234,54 @@ func slicesContains(haystack []RequestFormat, needle RequestFormat) bool {
 	}
 	return false
 }
+
+// TestBPSFormatsOnlySubsetAlgebra 钉住 BPSFormatsOnly 作为**切片子集判定**的语义。
+//
+// 为什么在 TestBPSFormatsOnlyMatchesPolicy 被删掉之后本条仍需存在：那条 golden
+// 副本断言的是「BPS 行恰好是这两个格式」，那件事已经由 TestFormatPolicyMatrix
+// 逐格覆盖；但 BPSFormatsOnly 的**调用形状**是切片，不是单格式谓词。生产里目前
+// 只有 Template.FormatSupports 用**单元素**切片调它（domain/types.go:382），
+// 多元素与空切片的语义没有任何别的读者——删掉旧测试后就是零覆盖。这正是 S11
+// 「循环从未进第 2 次迭代」的同类缺陷面：实现退化成只看 fs[0]、或退化成「任一
+// 元素允许即 true」、或干脆恒 true/恒 false，现有的矩阵与门禁全部照绿。
+//
+// 三组断言都**与表行内容无关**：
+//  1. 空切片恒 true（∅ ⊆ 任何集合）；
+//  2. 单元素 ⟺ FormatAllowedFor(TypeBPS, f)（两个视图同源，同一个数据源）；
+//  3. 双元素 ⟺ 逐元素都允许。因为对照的是 FormatAllowedFor 的逐元素合取，而不是
+//     手抄的格式白名单，所以改 allowedFormats 的 BPS 行不会让它变红——它不是锁，
+//     只是代数性质。
+//
+// 双元素的**有序**全组合（含 a==b）同时覆盖两种病态：允许 + 不允许（首元素语义
+// 会误报 true）与 不允许 + 允许（任一允许语义会误报 true）。
+func TestBPSFormatsOnlySubsetAlgebra(t *testing.T) {
+	// 1) 空切片：空集是任何集合的子集。nil 与空切片两种字面形状都必须真。
+	require.True(t, BPSFormatsOnly(nil), "nil 切片必须恒 true")
+	require.True(t, BPSFormatsOnly([]RequestFormat{}), "空切片必须恒 true")
+
+	// 2) 单元素：与单格式视图 FormatAllowedFor 必须逐格同源。
+	for _, a := range allRequestFormats {
+		require.Equal(t,
+			FormatAllowedFor(credential.TypeBPS, a),
+			BPSFormatsOnly([]RequestFormat{a}),
+			"单元素 %q：BPSFormatsOnly 必须与 FormatAllowedFor(TypeBPS, ·) 同源", a,
+		)
+	}
+
+	// 3) 双元素：全集 × 全集的有序组合，期望值 = 逐元素允许的合取。
+	for _, a := range allRequestFormats {
+		for _, b := range allRequestFormats {
+			want := FormatAllowedFor(credential.TypeBPS, a) && FormatAllowedFor(credential.TypeBPS, b)
+			require.Equal(t, want, BPSFormatsOnly([]RequestFormat{a, b}),
+				"双元素 [%q, %q]：必须是逐元素合取，不能只看首元素也不能任一即真", a, b)
+		}
+	}
+
+	// 长度 > 2 的同一性质（一次全量，防止实现只在 len<=2 时正确）。
+	wantAll := true
+	for _, f := range allRequestFormats {
+		wantAll = wantAll && FormatAllowedFor(credential.TypeBPS, f)
+	}
+	require.Equal(t, wantAll, BPSFormatsOnly(allRequestFormats),
+		"6 个格式的全量切片：必须是逐元素合取")
+}
