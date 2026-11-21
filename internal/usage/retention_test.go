@@ -201,6 +201,10 @@ func (f *fakePartitionManager) entityStatsCounts() (int, int) {
 }
 
 // waitCounts 轮询直到 drops/ensures 达到目标（短 ticker 调度断言）。
+//
+// 注意它只看 usage_logs 这一对计数。一个 tick 里四张表是**先后**走完的，所以
+// “usage_logs 已到 2”不等于“后面几张表也到 2”——要断言后面的表，用
+// waitTableCounts。
 func waitCounts(t *testing.T, f *fakePartitionManager, wantDrops, wantEnsures int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -215,6 +219,33 @@ func waitCounts(t *testing.T, f *fakePartitionManager, wantDrops, wantEnsures in
 	require.Failf(t, "worker did not tick in time", "drops=%d ensures=%d (want %d/%d)", d, e, wantDrops, wantEnsures)
 }
 
+// waitTableCounts 轮询直到**指定各表**的 drop/ensure 都到 want 才返回。
+//
+// 为什么要按表指定、而不是随便等一张：runOnce 在同一个 tick 内依次处理
+// usage_logs → err_logs → usage_stats → usage_entity_stats。只等第一张表会读到
+// “本轮前几张表已记、后面还没走”的中间态——断言后面几张表的用例于是在 CI 负载下
+// 看到 drop=2 / ensure=1（TestRetentionWorkerEntityStatsFailureIsolated 就这么红的）。
+//
+// 传进来的表必须真的会 drop：StatsRetentionDays<=0 的表不 drop，等它会等成超时。
+func waitTableCounts(t *testing.T, want int, tables ...func() (int, int)) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ok := true
+		for _, get := range tables {
+			d, e := get()
+			if d < want || e < want {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Failf(t, "worker did not tick in time", "want %d per table", want)
+}
 func TestRetentionWorkerTicks(t *testing.T) {
 	pm := &fakePartitionManager{}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
@@ -305,7 +336,7 @@ func TestRetentionWorkerStatsFailureIsolated(t *testing.T) {
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
-	waitCounts(t, pm, 2, 2)
+	waitTableCounts(t, 2, pm.counts, pm.errCounts, pm.statsCounts, pm.entityStatsCounts)
 	sd, se := pm.statsCounts()
 	require.GreaterOrEqual(t, sd, 2, "usage_stats drop 失败仍每轮重试")
 	require.GreaterOrEqual(t, se, 2, "usage_stats ensure 不受 drop 失败影响")
@@ -326,7 +357,7 @@ func TestRetentionWorkerErrLogsFailureIsolated(t *testing.T) {
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, TickerInterval: 20 * time.Millisecond}, pm, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
-	waitCounts(t, pm, 2, 2)
+	waitTableCounts(t, 2, pm.counts, pm.errCounts)
 	ed, ee := pm.errCounts()
 	require.GreaterOrEqual(t, ed, 2, "err_logs drop 失败仍每轮重试")
 	require.GreaterOrEqual(t, ee, 2, "err_logs ensure 不受 drop 失败影响")
@@ -383,7 +414,7 @@ func TestRetentionWorkerEntityStatsFailureIsolated(t *testing.T) {
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
-	waitCounts(t, pm, 2, 2)
+	waitTableCounts(t, 2, pm.counts, pm.errCounts, pm.statsCounts, pm.entityStatsCounts)
 	esd, ese := pm.entityStatsCounts()
 	require.GreaterOrEqual(t, esd, 2, "usage_entity_stats drop 失败仍每轮重试")
 	require.GreaterOrEqual(t, ese, 2, "usage_entity_stats ensure 不受 drop 失败影响")
