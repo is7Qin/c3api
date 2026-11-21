@@ -97,6 +97,25 @@ func TestValidateTemplateKeepsEcosystemFormatLimit(t *testing.T) {
 	}), ErrInvalidInput)
 }
 
+// TestValidateTemplateCustomAcceptsAllFormats 走的是**接线**而不是裸谓词：
+// validateTemplate → dedupFormats → validateFormatsForType → domain.FormatsAllowedFor。
+// custom 收窄（例如只认 anthropic）时这条断言必须红——矩阵用例只钉谓词，钉不住
+// 模板校验有没有真的把 custom 交给它。
+func TestValidateTemplateCustomAcceptsAllFormats(t *testing.T) {
+	require.NoError(t, validateTemplate(&domain.Template{
+		Name:           "custom-all",
+		CredentialType: credential.TypeCustom,
+		SupportedFormats: []domain.RequestFormat{
+			domain.FormatOpenAIChat,
+			domain.FormatOpenAIResponses,
+			domain.FormatOpenAIResponsesWS,
+			domain.FormatOpenAIImages,
+			domain.FormatOpenAISearch,
+			domain.FormatAnthropic,
+		},
+	}))
+}
+
 // TestValidateUpstreamPathsNormalizes 校验必须**回写归一结果**：只判定不归一，
 // "/v1/messages" 与带空白的值会通过校验但在上游拼成 /v1/v1/messages 或 %20…。
 func TestValidateUpstreamPathsNormalizes(t *testing.T) {
