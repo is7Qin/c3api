@@ -524,6 +524,12 @@ func TestContinuationLookupKeyDeletedReturnsNotFound(t *testing.T) {
 
 // batchHook counts pipeline executions (Exec) and queued commands separately —
 // the batch API proof is one pipeline Exec + N commands, not "N commands".
+//
+// 只统计 EVAL：go-redis 建连时会额外发 HELLO，随后用一条独立 pipeline 发 CLIENT
+// （9.23.0 实测顺序 [eval eval] → hello → [client client]）。这些是客户端自己的
+// 握手与自报，不属于本仓库的批量语义；把它们算进去，"batch 只占一次 pipeline"
+// 这条断言会因为依赖升级凭空失败，而真正的回归（把一次批次拆成多次 EVAL
+// pipeline）反而被淹没。
 type batchHook struct {
 	pipelines atomic.Int64
 	cmds      atomic.Int64
@@ -532,14 +538,21 @@ type batchHook struct {
 func (h *batchHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (h *batchHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		h.cmds.Add(1)
 		return next(ctx, cmd)
 	}
 }
 func (h *batchHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
-		h.pipelines.Add(1)
-		h.cmds.Add(int64(len(cmds)))
+		evals := 0
+		for _, c := range cmds {
+			if c.Name() == "eval" {
+				evals++
+			}
+		}
+		if evals > 0 {
+			h.pipelines.Add(1)
+			h.cmds.Add(int64(evals))
+		}
 		return next(ctx, cmds)
 	}
 }
