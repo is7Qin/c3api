@@ -13,7 +13,7 @@
 
 import * as React from "react"
 import { useTranslation } from "react-i18next"
-import type { DynamicKey } from "@/lib/i18n"
+import { asPlainKey } from "@/lib/i18n"
 import {
   DayPicker,
   getDefaultClassNames,
@@ -65,10 +65,10 @@ function Calendar({
       formatters={{
         formatWeekdayName: (d) => t(`calendar.day.${WEEKDAYS[d.getDay()]}`),
         formatCaption: (m) => {
-          const month = t(`calendar.month.${m.getMonth()}` as DynamicKey)
+          const month = t(asPlainKey(`calendar.month.${m.getMonth()}`))
           return zh ? `${m.getFullYear()}年${month}` : `${month} ${m.getFullYear()}`
         },
-        formatMonthDropdown: (m) => t(`calendar.month.${m.getMonth()}` as DynamicKey),
+        formatMonthDropdown: (m) => t(asPlainKey(`calendar.month.${m.getMonth()}`)),
         ...formatters,
       }}
       classNames={{

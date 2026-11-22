@@ -8,7 +8,7 @@ import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, ScrollText, Ban, CircleCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -271,7 +271,7 @@ const TEMPLATES: TemplatePreset[] = [
 function WhenSummary({ w, t }: { w: Rule['When']; t: TFunction }) {
   if (!w || Object.keys(w).length === 0) return <span className="text-muted-foreground">—</span>
   const parts: string[] = []
-  if (typeof w.kind === 'string') parts.push(t(`rules.kind.${w.kind}` as DynamicKey))
+  if (typeof w.kind === 'string') parts.push(t(asPlainKey(`rules.kind.${w.kind}`)))
   if (typeof w.http_status === 'number') parts.push(`HTTP ${w.http_status}`)
   if (Array.isArray((w as Record<string, unknown>).http_status_in)) parts.push(`HTTP [${((w as Record<string, unknown>).http_status_in as unknown[]).join(',')}]`)
   if (typeof w.error_message_contains === 'string') parts.push(t('rules.when.errorContains') + ` "${w.error_message_contains}"`)
@@ -461,7 +461,7 @@ export default function Rules() {
         }
       } else {
         for (const v of arr as string[]) {
-          if (v === '') { setWhenErr(t('rules.whenErrEmpty') || `${s.key} must not contain empty string`); return }
+          if (v === '') { setWhenErr(t('rules.whenErrEmpty', { field: s.key }) || `${s.key} must not contain empty string`); return }
         }
       }
       if (new Set(arr).size !== arr.length) {

@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
 import { userAuth } from '@/lib/auth'
-import { setLang, type AppLang, type DynamicKey } from '@/lib/i18n'
+import { setLang, type AppLang, type PlainKey } from '@/lib/i18n'
 import { adminNavFor, isSupplierPath, showSupplierNav } from '@/lib/supplier-visibility'
 import { isPaymentPath, paymentNavFor } from '@/lib/payment-visibility'
 import { CUSTOM_PAGES_QUERY_KEY, iconForCustomPage, pagesForConsole } from '@/lib/custom-pages'
@@ -37,7 +37,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 // 静态菜单表只放内置项（联合的左分支）：显式把 key 收窄成必填，`breadcrumbFor` 才能
 // 直接读 `item.key` 而不用在每个拐点处理 `undefined`（自定义项只会在 AppShell 运行时
 // 追加，从不进这三张表）。
-type StaticNavItem = NavItem & { key: DynamicKey }
+type StaticNavItem = NavItem & { key: PlainKey }
 
 // 用户中心菜单组（个人中心入口在底部用户卡内，不放导航）
 const userNav: readonly StaticNavItem[] = [
@@ -98,8 +98,8 @@ const LANGS: { code: AppLang; label: string }[] = [
 // 页名是用户输入的 label。两者不能混进同一个字段——把 label 当 key 传给 `t()` 会渲染成
 // key 本身（甚至空白），而类型系统在这里就能挡住：`pageKey` 与 `pageText` 互斥。
 type Breadcrumb =
-  | { root: string; section: DynamicKey; pageKey: DynamicKey } // 静态页：i18n key
-  | { root: string; section: DynamicKey; pageText: string } // 自定义页：用户 label
+  | { root: string; section: PlainKey; pageKey: PlainKey } // 静态页：i18n key
+  | { root: string; section: PlainKey; pageText: string } // 自定义页：用户 label
 
 // 自定义内嵌页路径（与 App.tsx 的 `custom/:id` 子路由同形）。
 const CUSTOM_PAGE_PATH = /^\/(app|user)\/custom\/([^/]+)$/

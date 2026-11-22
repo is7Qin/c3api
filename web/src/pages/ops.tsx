@@ -4,7 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey, type DynamicKey } from '@/lib/i18n'
 import { RefreshCw, Cpu } from 'lucide-react'
 import { api } from '@/App'
 import type { components } from '@/lib/api/schema'
@@ -366,7 +366,7 @@ function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; plan
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4 items-start">
           {lanes.map(l => (
             <div key={l.key} className="min-w-0">
-              <div className="mb-1.5 text-sm font-medium">{t(`ops.routing.lane.${l.key}` as DynamicKey)}</div>
+              <div className="mb-1.5 text-sm font-medium">{t(asPlainKey(`ops.routing.lane.${l.key}`))}</div>
               <dl className="space-y-1">
                 {l.rows.map(([label, value]) => (
                   <div key={label} className="flex items-center justify-between gap-2">

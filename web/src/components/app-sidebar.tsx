@@ -5,9 +5,10 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { ChevronDown, ChevronsUpDown, type LucideIcon } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import type { DynamicKey } from '@/lib/i18n'
+import type { PlainKey } from '@/lib/i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AccountMenuItems } from '@/components/account-menu-items'
 import {
@@ -29,16 +30,16 @@ interface NavItemBase {
 
 export type NavItem = NavItemBase &
   (
-    | { key: DynamicKey; text?: never } // 内置项：i18n 键
+    | { key: PlainKey; text?: never } // 内置项：i18n 键（标签文案不带插值变量）
     | { text: string; key?: never } // 自定义项：用户输入的标签
   )
 
 // 唯一标签取法：有 text 用 text，否则把 key 交给 t()。所有渲染点（桌面侧栏、
 // 移动端下拉、未来新增入口）都走这里，避免任何一处再直接解构 key。
-export const navLabel = (item: NavItem, t: (k: DynamicKey) => string) => ('text' in item ? item.text : t(item.key))
+export const navLabel = (item: NavItem, t: TFunction) => ('text' in item ? item.text : t(item.key))
 
 export interface NavGroup {
-  titleKey?: DynamicKey
+  titleKey?: PlainKey
   items: readonly NavItem[]
 }
 

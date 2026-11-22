@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ArrowDownUp, CircleCheck, Filter, Lock, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiError } from '@/lib/api/client'
 import { Pagination } from '@/components/pagination'
@@ -79,7 +79,7 @@ function FailReasonBadge({ reason }: { reason?: string | null }) {
       className={cn('gap-1', urgent ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400')}
     >
       {urgent && <AlertTriangle className="size-3" />}
-      {t(`orders.failReason.${reason}` as DynamicKey)}
+      {t(asPlainKey(`orders.failReason.${reason}`))}
     </Badge>
   )
 }

@@ -7,7 +7,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Ellipsis, Filter, SlidersHorizontal, Upload, LogIn, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -1880,7 +1880,7 @@ export default function Accounts() {
         <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 px-6 pt-6">
             <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID ?? 0 })}</DialogTitle>
-            <DialogDescription>{t(`accounts.usageDetail.range.${activeKey}` as DynamicKey)}</DialogDescription>
+            <DialogDescription>{t(asPlainKey(`accounts.usageDetail.range.${activeKey}`))}</DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 flex-1 px-6 py-4">
             <div className="space-y-4">
