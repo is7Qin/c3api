@@ -14,7 +14,7 @@ require (
 	github.com/is7Qin/bps-sdk v0.0.0-20261119124833-91c0da6ff1ae
 	github.com/is7Qin/codex-sdk v0.0.0-20261116134023-3f82416a265d
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/klauspost/compress v1.17.11
+	github.com/klauspost/compress v1.20.4
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.2
 	github.com/knadh/koanf/providers/env/v2 v2.0.2
 	github.com/knadh/koanf/providers/file v1.2.1
