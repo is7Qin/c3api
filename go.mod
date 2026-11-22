@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	entgo.io/ent v0.14.6
-	github.com/adhocore/gronx v1.20.5
+	github.com/adhocore/gronx v1.20.7
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/coder/websocket v1.8.15
@@ -26,8 +26,8 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.20.4
-	github.com/tidwall/sjson v1.2.5
-	github.com/wneessen/go-mail v0.8.1
+	github.com/tidwall/sjson v1.2.10
+	github.com/wneessen/go-mail v0.8.2
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sync v0.25.0
