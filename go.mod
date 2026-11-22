@@ -25,7 +25,7 @@ require (
 	github.com/pashagolub/pgxmock/v5 v5.2.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stretchr/testify v1.12.1
-	github.com/tidwall/gjson v1.19.0
+	github.com/tidwall/gjson v1.20.4
 	github.com/tidwall/sjson v1.2.5
 	github.com/wneessen/go-mail v0.8.1
 	go.uber.org/zap v1.28.0
@@ -65,7 +65,7 @@ require (
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/pretty v1.3.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
