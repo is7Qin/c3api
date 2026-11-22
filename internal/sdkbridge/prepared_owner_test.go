@@ -12,6 +12,18 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+// mustPrepare 取测试用例的准备句柄。夹具凭据恒可准备，`Prepare` 报错就是夹具坏了
+// （被忽略的那种错误会在下游退化成 errUnprepared，离真正的原因很远），所以就地判红。
+//
+// 存在的理由不只是省几行：显式 `Prepare` 再调 `*Prepared` 是本包**唯一**的调用形状
+// （未 Prepared 的 `Responses/StreamBody/Dial` 已删除），测试必须和生产走同一道门。
+func mustPrepare(t *testing.T, a *Codex, cred *domain.AccountCredential) Prepared {
+	t.Helper()
+	p, err := a.Prepare(cred)
+	require.NoError(t, err, "Prepare 夹具凭据")
+	return p
+}
+
 // TestPreparedOwnerComesFromEntry owner 从**准备好的条目句柄**读，不对请求里的凭据
 // 快照重新散列：同一句柄 ⟺ 同一 owner/auth/client。
 //

@@ -73,7 +73,8 @@ func TestCodexEgressTransportNoAutoGzip(t *testing.T) {
 	payload := []byte(`{"model":"gpt-5.6","input":[]}`)
 
 	for _, tr := range []domain.CodexResponsesTransport{domain.CodexResponsesTransportHTTP, domain.CodexResponsesTransportWS} {
-		resp, err := a.StreamBody(ctx, transportTestCred(), a.DirectEgress(), payload, codexsdk.Identity{}, tr)
+		p := mustPrepare(t, a, transportTestCred())
+		resp, err := a.StreamBodyPrepared(ctx, p, a.DirectEgress(), payload, codexsdk.Identity{}, tr)
 		require.NoError(t, err, "transport=%s", tr)
 		require.Contains(t, readAndCloseBody(t, resp.Body), "response.completed")
 	}

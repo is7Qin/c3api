@@ -208,18 +208,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if s.reserveHook != nil {
 			s.reserveHook()
 		}
-		used := s.timeNow()
-		for {
-			curSt := a.runtime.state.Load()
-			if curSt == nil {
-				break
-			}
-			next := *curSt
-			next.lastUsedAt = &used
-			if a.runtime.state.CompareAndSwap(curSt, &next) {
-				break
-			}
-		}
+		// 使用时刻的观测写：独立原子字上一次 Store（0 alloc）。它不是 accState
+		// 的一部分——写 state 要 copy-modify-CAS，复制品取地址（`&next`）逃逸，
+		// 每请求多一次堆分配，而这只是管理端展示用的观测值。
+		a.runtime.markUsed(s.timeNow())
 		admittedFinance = admittedFin
 		return true
 	})

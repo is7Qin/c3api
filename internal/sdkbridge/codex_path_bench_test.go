@@ -120,7 +120,11 @@ func benchCodexResponses(b *testing.B, transport domain.CodexResponsesTransport)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resp, err := a.Responses(ctx, cred, a.DirectEgress(), payload, id, transport)
+		p, err := a.Prepare(cred)
+		if err != nil {
+			b.Fatal(err)
+		}
+		resp, err := a.ResponsesPrepared(ctx, p, a.DirectEgress(), payload, id, transport)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -148,7 +152,11 @@ func BenchmarkCodexStreamBodyWS(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resp, err := a.StreamBody(ctx, cred, a.DirectEgress(), payload, id, domain.CodexResponsesTransportWS)
+		p, err := a.Prepare(cred)
+		if err != nil {
+			b.Fatal(err)
+		}
+		resp, err := a.StreamBodyPrepared(ctx, p, a.DirectEgress(), payload, id, domain.CodexResponsesTransportWS)
 		if err != nil {
 			b.Fatal(err)
 		}
