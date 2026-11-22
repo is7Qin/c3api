@@ -5,6 +5,7 @@
 package domain
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,9 +131,26 @@ var formatGateSites = map[string]int{
 	"internal/scheduler/routing_compiler_support.go": 1,
 }
 
+// gateScanSkipDirs 是门禁遍历的**目录级**排除项（按目录名匹配，模块根自身永远不跳）。
+//
+// 放进这个名单 = 承认门禁不覆盖该目录；加目录必须说明它为什么不是产品源码。
+//
+//   - .git：版本库内部对象，没有源码语义；
+//   - .omo：本地的计划/报告/一次性探针（gitignore）——留在里面的 0 字节 .go 曾让整个
+//     internal/domain 红，而"这台机器上还留着什么"不该决定门禁的红绿；
+//   - tmp：构建/调试产物（根级 gitignore）；
+//   - node_modules / vendor：第三方依赖副本，出现即工具产物（本仓不是 vendor 布局）。
+//
+// 刻意**不**收录 tools/ 与 web/：它们是仓库真实的产品/工具源码树（tools/ 是可直接
+// `go build` 的 Go 包），BPS 格式门在那里出现调用点同样必须被数到。
+var gateScanSkipDirs = []string{".git", ".omo", "tmp", "node_modules", "vendor"}
+
 // TestBPSFormatGateSites 存在性门禁：扫**仓库全部非测试 .go**，`BPSFormatsOnly`
 // 的调用文件集合必须**恰好**等于 formatGateSites，每文件恰好 1 处调用；扫到 0 处
 // 必须失败（空转的门禁比没有门禁更危险）。
+//
+// 扫描面 = 模块根减去 gateScanSkipDirs 里的非源码树（名单理由见该变量注释）；解析
+// 失败必须**点名文件**——只说"扫描仓库源码失败"等于把定位成本推给下一个人。
 //
 // 为什么是存在性而非否定式：把整块调用删掉不产生任何格式字面量，否定式 AST 拦
 // 不住；「调用数恰好为 1」既能抓删除，也能抓「改写成字面量」（调用消失）。
@@ -143,7 +162,7 @@ func TestBPSFormatGateSites(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			if path != root && slices.Contains(gateScanSkipDirs, d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -152,20 +171,19 @@ func TestBPSFormatGateSites(t *testing.T) {
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			return nil
 		}
-		fset := token.NewFileSet()
-		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if perr != nil {
-			return perr
-		}
-		n := countBPSFormatsOnlyCalls(f)
-		if n == 0 {
-			return nil
-		}
 		rel, rerr := filepath.Rel(root, path)
 		if rerr != nil {
 			return rerr
 		}
-		got[filepath.ToSlash(rel)] = n
+		rel = filepath.ToSlash(rel)
+		fset := token.NewFileSet()
+		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if perr != nil {
+			return fmt.Errorf("解析 %s 失败：%w", rel, perr)
+		}
+		if n := countBPSFormatsOnlyCalls(f); n > 0 {
+			got[rel] = n
+		}
 		return nil
 	})
 	require.NoError(t, err, "扫描仓库源码失败")
