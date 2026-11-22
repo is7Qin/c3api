@@ -131,9 +131,18 @@ var formatGateSites = map[string]int{
 	"internal/scheduler/routing_compiler_support.go": 1,
 }
 
-// gateScanSkipDirs 是门禁遍历的**目录级**排除项（按目录名匹配，模块根自身永远不跳）。
+// gateScanSkipTopDirs 是门禁遍历的排除项，按**模块根下的顶层路径**匹配：相对路径的
+// 首段 ∈ 名单才剪枝（`<root>/tmp` 剪，`<root>/internal/scheduler/tmp` 照扫）。
 //
-// 放进这个名单 = 承认门禁不覆盖该目录；加目录必须说明它为什么不是产品源码。
+// 为什么不是按目录名匹配：按名字匹配时，任意深度的同名目录都被跳过——在
+// `internal/scheduler/tmp/` 下藏第 5 个调用点，门禁仍然绿。跳过名单承认的是"这个
+// **顶层**目录不是产品源码树"，它不对深层同名目录作任何断言；把匹配面收紧到首段，
+// 深层目录就回到扫描面内，藏不住。
+//
+// 模块根自身**在结构上**不可能被跳过：它的相对路径是 "."，首段 "." 不在名单里，
+// 所以"检出目录恰好叫 tmp"这种事故也不会把整棵树剪空。
+//
+// 放进这个名单 = 承认门禁不覆盖该顶层目录；加目录必须说明它为什么不是产品源码。
 //
 //   - .git：版本库内部对象，没有源码语义；
 //   - .omo：本地的计划/报告/一次性探针（gitignore）——留在里面的 0 字节 .go 曾让整个
@@ -143,14 +152,15 @@ var formatGateSites = map[string]int{
 //
 // 刻意**不**收录 tools/ 与 web/：它们是仓库真实的产品/工具源码树（tools/ 是可直接
 // `go build` 的 Go 包），BPS 格式门在那里出现调用点同样必须被数到。
-var gateScanSkipDirs = []string{".git", ".omo", "tmp", "node_modules", "vendor"}
+var gateScanSkipTopDirs = []string{".git", ".omo", "tmp", "node_modules", "vendor"}
 
 // TestBPSFormatGateSites 存在性门禁：扫**仓库全部非测试 .go**，`BPSFormatsOnly`
 // 的调用文件集合必须**恰好**等于 formatGateSites，每文件恰好 1 处调用；扫到 0 处
 // 必须失败（空转的门禁比没有门禁更危险）。
 //
-// 扫描面 = 模块根减去 gateScanSkipDirs 里的非源码树（名单理由见该变量注释）；解析
-// 失败必须**点名文件**——只说"扫描仓库源码失败"等于把定位成本推给下一个人。
+// 扫描面 = 模块根减去 gateScanSkipTopDirs 里的顶层非源码树（首段匹配，深层同名目录
+// 照扫；名单理由见该变量注释）；解析失败必须**点名文件**（仓库相对路径 + 解析器的
+// 行列号），不让定位成本落在下一个人身上。
 //
 // 为什么是存在性而非否定式：把整块调用删掉不产生任何格式字面量，否定式 AST 拦
 // 不住；「调用数恰好为 1」既能抓删除，也能抓「改写成字面量」（调用消失）。
@@ -161,21 +171,23 @@ func TestBPSFormatGateSites(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if path != root && slices.Contains(gateScanSkipDirs, d.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
 		rel, rerr := filepath.Rel(root, path)
 		if rerr != nil {
 			return rerr
 		}
 		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			// 只剪**顶层**目录：相对路径首段（root 自身 rel == "."，首段 "." 命中不了
+			// 名单）∈ 名单才 SkipDir。深层同名目录（internal/scheduler/tmp 之类）
+			// 的首段是 internal，照扫。
+			if top, _, _ := strings.Cut(rel, "/"); slices.Contains(gateScanSkipTopDirs, top) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
+			return nil
+		}
 		fset := token.NewFileSet()
 		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if perr != nil {
