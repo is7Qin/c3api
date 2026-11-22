@@ -22,7 +22,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^14.14.0",
-    "i18next": "^26.5.11",
+    "i18next": "^27.1.5",
     "lucide-react": "^1.75.0",
     "react": "^19.3.1",
     "react-day-picker": "^10.0.2",

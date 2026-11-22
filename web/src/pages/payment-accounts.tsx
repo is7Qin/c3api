@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CreditCard, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiError } from '@/lib/api/client'
 import {
@@ -596,7 +596,7 @@ function AccountDialog({
                   const id = `pay-account-cfg-${f.name}`
                   const control = controlFor(f)
                   const value = config[f.name] ?? ''
-                  const label = fieldLabel(f, k => t(k as DynamicKey))
+                  const label = fieldLabel(f, k => t(asPlainKey(k)))
                   const placeholder = f.example ?? ''
                   const required = f.required === true
                   const onChange = (v: string) => setConfig(prev => ({ ...prev, [f.name]: v }))
@@ -761,7 +761,7 @@ function ChannelSection({
     if (!draft) return
     const issue = channelIssue(draft)
     if (issue) {
-      setRowErr(t(`paymentAccounts.${issue}` as DynamicKey))
+      setRowErr(t(asPlainKey(`paymentAccounts.${issue}`)))
       return
     }
     upsert.mutate(draft)

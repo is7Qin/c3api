@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Settings as SettingsIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { FEATURES_QUERY_KEY } from '@/lib/use-features'
@@ -138,15 +138,15 @@ function SettingRow({ setting }: { setting: Setting }) {
   const controlId = `setting-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const control =
     typ === 'switch' ? (
-      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}` as DynamicKey)} />
+      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(asPlainKey(`settings.labels.${key}`))} />
     ) : isTier ? (
       <Select items={{ passthrough: t('settings.policies.passthrough'), strip: t('settings.policies.strip'), reject: t('settings.policies.reject') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(asPlainKey(`settings.labels.${key}`))}><SelectValue /></SelectTrigger>
         <SelectContent>{TIER_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.policies.${v}`)}>{t(`settings.policies.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : isTls ? (
       <Select items={{ starttls: t('settings.tlsOptions.starttls'), implicit: t('settings.tlsOptions.implicit'), none: t('settings.tlsOptions.none') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(asPlainKey(`settings.labels.${key}`))}><SelectValue /></SelectTrigger>
         <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : typ === 'number' ? (
@@ -159,8 +159,8 @@ function SettingRow({ setting }: { setting: Setting }) {
   return (
     <div className="grid gap-3 border-b border-border py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start lg:gap-x-8">
       <div className="min-w-0 max-w-[72ch]">
-        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}` as DynamicKey)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
-        <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}` as DynamicKey)}</p>
+        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(asPlainKey(`settings.labels.${key}`))}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
+        <p className="text-xs text-muted-foreground">{t(asPlainKey(`settings.descs.${key}`))}</p>
         {isUsd && !err && <p className="text-xs text-muted-foreground"><span className="whitespace-nowrap">{t('settings.usdHint')}</span></p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
@@ -225,7 +225,7 @@ function MailTemplateCard({ purpose }: { purpose: 'register_code' | 'reset_code'
       <div className="font-medium">{t(`settings.mailTemplate.${purpose}`)}</div>
       <div className="space-y-1"><Label htmlFor={subjectId} className="text-sm">{t('settings.mailTemplate.subject')}</Label><Input id={subjectId} value={subject} onChange={e => setSubject(e.target.value)} placeholder={subjectPh} aria-describedby={hintId} /></div>
       <div className="space-y-1"><Label htmlFor={bodyId} className="text-sm">{t('settings.mailTemplate.body')}</Label><textarea id={bodyId} className="w-full min-h-24 rounded-md border border-input bg-black/[0.04] px-3 py-2 text-sm" value={body} onChange={e => setBody(e.target.value)} placeholder={bodyPh} aria-describedby={hintId} /></div>
-      <p id={hintId} className="text-xs text-muted-foreground">{t(hintKey)}</p>
+      <p id={hintId} className="text-xs text-muted-foreground">{t(asPlainKey(hintKey))}</p>
       <div className="flex gap-2"><Button onClick={() => { if (busy) return; save.mutate() }} disabled={busy}>{t('common.save')}</Button><Button variant="outline" onClick={() => { if (busy) return; restore.mutate() }} disabled={busy}>{t('settings.restoreDefault')}</Button></div>
     </Card>
   )

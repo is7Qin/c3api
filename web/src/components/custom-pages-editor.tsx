@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Plus, Trash2, TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { api } from '@/App'
 import {
   CUSTOM_PAGE_ICONS,
@@ -123,7 +123,7 @@ export function CustomPagesEditor({ value }: { value: string }) {
     user: t('settings.customPages.visibilityUser'),
   }
   const iconItems = Object.fromEntries(
-    CUSTOM_PAGE_ICONS.map(key => [key, t(`settings.customPages.icons.${key}` as DynamicKey)]),
+    CUSTOM_PAGE_ICONS.map(key => [key, t(asPlainKey(`settings.customPages.icons.${key}`))]),
   ) as Record<CustomPageIconKey, string>
 
   const pending = save.isPending
@@ -131,7 +131,7 @@ export function CustomPagesEditor({ value }: { value: string }) {
   // 一条问题的展示文案（条目级带「#序号 ·」，列表级只有文案）。行内错误与顶部横幅共用，
   // 免得两处措辞分叉。
   const issueText = (item: CustomPageIssue) =>
-    `${item.index >= 0 ? `#${item.index + 1} · ` : ''}${t(`settings.customPages.issue.${item.code}` as DynamicKey)}`
+    `${item.index >= 0 ? `#${item.index + 1} · ` : ''}${t(asPlainKey(`settings.customPages.issue.${item.code}`))}`
 
   if (corrupt) {
     return (

@@ -28,7 +28,7 @@ import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Radar, Lock, Network, CircleCheck, Ban, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import type { DynamicKey } from '@/lib/i18n'
+import { asPlainKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -350,7 +350,7 @@ export default function ProxyPoolPage() {
   const fieldErr = (k: ProxyField) => {
     const code = errors[k]
     if (!code) return null
-    return <p className="text-xs text-destructive">{t(`proxies.errors.${code}` as DynamicKey)}</p>
+    return <p className="text-xs text-destructive">{t(asPlainKey(`proxies.errors.${code}`))}</p>
   }
   const schemeItems = useMemo(() => Object.fromEntries(PROXY_SCHEMES.map(s => [s, s])), [])
   const schemaErr = save.isError && save.error instanceof ApiError && save.error.status === 409
@@ -635,7 +635,7 @@ export default function ProxyPoolPage() {
                         <td className="max-w-[16rem] truncate px-2 py-1 font-mono" title={r.raw}>{r.raw}</td>
                         <td className="px-2 py-1">
                           {r.error
-                            ? <span className="text-destructive">{t(`proxies.importErrors.${r.error}` as DynamicKey)}</span>
+                            ? <span className="text-destructive">{t(asPlainKey(`proxies.importErrors.${r.error}`))}</span>
                             : <span className="text-muted-foreground">{r.config?.name}</span>}
                         </td>
                       </tr>
