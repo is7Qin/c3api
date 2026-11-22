@@ -96,7 +96,7 @@ func buildRoutesReference(accs []*accountSnapshot) map[routeKey]*route {
 // routeAccount 造一个已挂静态叶的账号快照（tpl 可为 nil）。
 func routeAccount(id int64, tpl *domain.Template) *accountSnapshot {
 	return newAccountSnapshot(
-		newSnapshotStatic(domain.Account{ID: id}, tpl, nil, directEgress()),
+		newSnapshotStatic(domain.Account{ID: id}, tpl, nil, directEgress(), nil),
 		&accState{status: domain.StatusActive},
 	)
 }
@@ -423,7 +423,7 @@ func TestBuildRoutesRandomizedDifferential(t *testing.T) {
 // 这条真实链路，而不是手搓的 struct。位置参数**故意**与 tplRouteFactsKey 的字段顺序
 // 对齐：谁往键里加第 6 维，这里编译失败，逼他补一条注入用例。
 func routeFactsKeyOf(tpl *domain.Template) tplRouteFactsKey {
-	av := newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress())
+	av := newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress(), nil)
 	k := av.key
 	return tplRouteFactsKey{k.credentialType, k.modelsDigest, k.formatModelsKey, k.supportedFormats, k.modelMappingKey}
 }

@@ -41,8 +41,8 @@ func TestSharedTemplatePointerFreezesDerivedFacts(t *testing.T) {
 	require.Same(t, a1.Template, a2.Template, "前提：两个账号共享同一枚模板指针")
 
 	eg := directEgress()
-	s1 := newSnapshotStatic(a1, a1.Template, []int64{10}, eg)
-	s2 := newSnapshotStatic(a2, a2.Template, []int64{10}, eg)
+	s1 := newSnapshotStatic(a1, a1.Template, []int64{10}, eg, nil)
+	s2 := newSnapshotStatic(a2, a2.Template, []int64{10}, eg, nil)
 	published1, published2 := planKeyOf(s1), planKeyOf(s2)
 
 	// 发布后就地写共享模板字段——这正是共享指针引入的唯一风险面。
@@ -62,7 +62,7 @@ func TestSharedTemplatePointerFreezesDerivedFacts(t *testing.T) {
 		"另一个共享该指针的账号，派生事实同样不得变")
 
 	// 反证（防"永远相等"的空断言）：同样一次写若发生在构造前，键必须变。
-	later := planKeyOf(newSnapshotStatic(a2, a2.Template, []int64{10}, eg))
+	later := planKeyOf(newSnapshotStatic(a2, a2.Template, []int64{10}, eg, nil))
 	require.NotEqual(t, published2.baseURL, later.baseURL,
 		"模板 BaseURL 改动必须进入 planKey——否则本条防护没有可观测面")
 	require.NotEqual(t, published2.modelsDigest, later.modelsDigest,

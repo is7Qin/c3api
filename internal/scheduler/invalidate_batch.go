@@ -68,6 +68,10 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	s.refreshProbeBaseline(ctx)
 	m, byID, pools := s.workingRootLocked()
 	prevPools := pools
+	// 批次作用域的模板摘要表：**一批**一张，不是一组一张。生产上载入器的模板
+	// 作用域同样贯穿整批（group_repo 的批量入口），同一模板因此在跨组时仍是同
+	// 一枚指针——缓存若建在 per-group 的 buildSnapshots 里，同一模板会被派生 G 次。
+	digests := newTemplateDigestCache()
 	var scope []int64
 	succeeded := false
 	for _, gid := range gids {
@@ -85,7 +89,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 		}
 		succeeded = true
 		var stepScope []int64
-		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, reclaim)
+		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, digests, reclaim)
 		scope = unionScope(scope, stepScope)
 	}
 	if !succeeded {
@@ -143,11 +147,15 @@ func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*ac
 // groups' fix-ups read the CURRENT step's working m (seeing prior groups and
 // this step's removed-group replacement); pools are rebuilt once per successful
 // group (step-wise buildIdentityPools over the updated working byID).
-func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
+//
+// digests 是**批次作用域**的模板摘要表（由 invalidateGroupsLocked 建、整批共享）：
+// 它必须一路传到这里，否则 :188/:245 两个单叶构造点会各自退回逐次计算——
+// 功能不变，但批次内"每模板一次"的收益只剩 buildSnapshots 那一半。
+func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, digests *templateDigestCache, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress)
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress, digests)
 	newAccs := gs[gid].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
@@ -185,7 +193,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			// 不变量，事件投递归组会指向一个该账号已不属于的组。
 			// 出口 client 直接沿用旧叶的指针（不查池）：acc.Proxy 未变 ⇒ 规格摘要未变
 			// ⇒ 池里必是同一个 client；组归属变化与出口无关，多一次池查找只是白白加锁。
-			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids, ost.egress)
+			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids, ost.egress, digests)
 			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			byID[ost.acc.ID] = newLeaf
@@ -242,7 +250,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 		}
 		// New leaf is local (not yet published), safe to mutate static before publish.
 		// 同款：出口指针随组归属重派生原样接续（本步只改 groupIDs，不动出口）。
-		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...), nst.egress))
+		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...), nst.egress, digests))
 		byID[nst.acc.ID] = ns
 		for _, og := range otherGids {
 			if _, ok := otherRefs[og]; ok {

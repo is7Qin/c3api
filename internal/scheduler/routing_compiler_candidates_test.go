@@ -12,7 +12,7 @@ import (
 // --- T4: small-allocation elimination tests ---
 
 func t4Snapshot(a *domain.Account) (*accountSnapshot, compilerAccountFacts) {
-	st := newSnapshotStatic(*a, a.Template, []int64{10}, directEgress())
+	st := newSnapshotStatic(*a, a.Template, []int64{10}, directEgress(), nil)
 	snap := newAccountSnapshot(st, &accState{status: domain.StatusActive})
 	return snap, deriveCompilerAccountFacts(snap, st)
 }

@@ -183,11 +183,49 @@ type staticKey struct {
 	payloadKey
 }
 
+// tplDigests 是模板侧的 5 项摘要——**只**依赖模板内容，与账号/组归属无关
+// （缓存单位是"一枚模板对象"，混进任何账号侧事实都会让同模板的第二个账号
+// 读到第一个账号的结果）。
+type tplDigests struct {
+	modelsDigest     [32]byte
+	formatModelsKey  [32]byte
+	supportedFormats [32]byte
+	modelMappingKey  [32]byte
+	upstreamPathsKey [32]byte
+}
+
+// templateDigestCache 是**一次 reload / 一个失效批次**作用域内的模板摘要表。
+// 键 = *domain.Template 指针：第一步（35142e74）之后，同一次载入里同一个
+// template_id 只有一枚 domain 对象，指针因此是免费且精确的键（templateID 在
+// 手工夹具里会撞——同 ID 不同内容不得合并，见 build_routes_equiv_test.go）。
+//
+// 生命周期必须与作用域同寿，不能更长：摘要是模板内容的函数。跨作用域复用
+// 同一张表，模板对象一旦被换内容（或同 ID 换了一枚新对象），命中就返回**陈旧
+// 摘要** ⇒ planKey 与指针内容分叉 ⇒ 旧叶被复用而消费者读到新内容。作用域 =
+// 一次构建，与 repository.TemplateLoadScope 同寿命。
+//
+// 计数器是验收仪器（spec §4.3）：misses = 不同模板数，hits = 构造次数 − 不同
+// 模板数。没有它们，"收下缓存但从不读"（cheat_noop）会让全部不变量绿。
+type templateDigestCache struct {
+	entries map[*domain.Template]tplDigests
+	hits    int
+	misses  int
+}
+
+// newTemplateDigestCache 建一张空的摘要表。写成 var 而非 func **只为**让验收
+// 用例抓住 invalidateGroupsLocked 内部建的那一张：批次作用域无法从外部观测，
+// :188/:245 若漏传缓存，唯一可观测面就是命中数少一截。生产路径从不改写它。
+var newTemplateDigestCache = func() *templateDigestCache {
+	return &templateDigestCache{entries: make(map[*domain.Template]tplDigests)}
+}
+
 // newSnapshotStatic 是 snapshotStatic 的**唯一构造函数**：一次派生全部 planKey
 // 并随不可变叶持有（planKeyOf 直接返回 av.key）。派生**内联**在本函数内（不得抽
 // 独立函数——否则静态读闭包门禁的读者归属变为该函数名）；先组装局部 k 再**单次**
 // av.key = k 赋值（不得逐字段写 av.key.x = …，否则门禁新增 $S.key.* 读路径）。
 // tpl 可为 nil：模板侧摘要取零值（保留零键契约，不 panic）。
+// digests 可为 nil：nil = 逐次计算（不缓存、不计数，既有语义逐字节不变）；非 nil =
+// 该作用域内每枚模板只派生一次（5 项摘要占每叶 214 allocs 的 209）。
 //
 // 生效 baseURL 与编译器同源（routing_compiler_candidates.go 的 baseURL 派生）：模板
 // 值为底，账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为
@@ -195,7 +233,7 @@ type staticKey struct {
 //
 // eg 是**已解析好的**出口 client（buildSnapshots 解析、恒非 nil）：把"解析"留在
 // 根不在静态读观测集内的 buildSnapshots，把"使用"留在热路径（spec §4.3）。
-func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64, eg *egress.Client) *snapshotStatic {
+func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64, eg *egress.Client, digests *templateDigestCache) *snapshotStatic {
 	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...), egress: eg}
 	// 唯一决策位在**构造期一次定型**（不是装载器的活儿，也不是热路径的判断）：
 	// 之后候选过滤与计划 fence 都只读这一个 bool。放在 key 派生之前，使
@@ -253,11 +291,36 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	if tpl := av.tpl; tpl != nil {
 		k.credentialType = tpl.CredentialType
 		k.stripImageTools = tpl.StripImageTools
-		k.modelsDigest = digestStrings(tpl.Models)
-		k.formatModelsKey = digestFormatModels(tpl.FormatModels)
-		k.supportedFormats = digestFormats(tpl.SupportedFormats)
-		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
-		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
+		// 模板侧 5 项摘要：作用域内每枚模板只算一次。命中路径必须与逐次计算
+		// **逐字节**相同；miss 分支就是 nil 语义本身（同一份代码，不另写一份）。
+		d, hit := tplDigests{}, false
+		if digests != nil {
+			d, hit = digests.entries[tpl]
+		}
+		if !hit {
+			d = tplDigests{
+				modelsDigest:     digestStrings(tpl.Models),
+				formatModelsKey:  digestFormatModels(tpl.FormatModels),
+				supportedFormats: digestFormats(tpl.SupportedFormats),
+				modelMappingKey:  digestModelMapping(tpl.ModelMapping),
+				upstreamPathsKey: digestUpstreamPaths(tpl.UpstreamPaths),
+			}
+			if digests != nil {
+				digests.entries[tpl] = d
+			}
+		}
+		if digests != nil {
+			if hit {
+				digests.hits++
+			} else {
+				digests.misses++
+			}
+		}
+		k.modelsDigest = d.modelsDigest
+		k.formatModelsKey = d.formatModelsKey
+		k.supportedFormats = d.supportedFormats
+		k.modelMappingKey = d.modelMappingKey
+		k.upstreamPathsKey = d.upstreamPathsKey
 		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
 		if tpl.CredentialType.IsBPS() {
 			k.bpsProfileDigest = av.bpsProfileDigest

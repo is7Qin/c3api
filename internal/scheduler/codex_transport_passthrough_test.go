@@ -39,7 +39,7 @@ func TestPlanKeyCodexResponsesTransportEquivalence(t *testing.T) {
 	keyFor := func(tr domain.CodexResponsesTransport) staticKey {
 		tp := *base
 		tp.CodexResponsesTransport = tr
-		return staticKeyOf(newSnapshotStatic(*a, &tp, nil, directEgress()))
+		return staticKeyOf(newSnapshotStatic(*a, &tp, nil, directEgress(), nil))
 	}
 
 	def := keyFor(domain.CodexResponsesTransportDefault)

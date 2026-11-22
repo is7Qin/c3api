@@ -228,7 +228,7 @@ func TestStaticKeyBPSProfileDigestInvalidatesSemanticProfileChanges(t *testing.T
 			MaxConcurrency: 1, IdentityRevision: 4,
 			Ext: &domain.AccountExt{AccountID: 7, CredentialType: credential.TypeBPS, BPSProfile: profile},
 		}
-		return newSnapshotStatic(acc, tpl, nil, directEgress())
+		return newSnapshotStatic(acc, tpl, nil, directEgress(), nil)
 	}
 	old := makeSnapshot(profileA)
 	same := makeSnapshot([]byte(` { "device_id": "d", "profile_id": "p" } `))
@@ -274,7 +274,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 	}
 	build := func() *snapshotStatic {
 		a, tp, gids := inputs()
-		return newSnapshotStatic(a, tp, gids, directEgress())
+		return newSnapshotStatic(a, tp, gids, directEgress(), nil)
 	}
 
 	oldAv, newAv := build(), build()
@@ -289,7 +289,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 
 	// 顺序无关：groupIDs 排列不同、集合相同 ⇒ 键相等（规范序）。
 	a2, tp2, _ := inputs()
-	reordered := newSnapshotStatic(a2, tp2, []int64{9, 3}, directEgress())
+	reordered := newSnapshotStatic(a2, tp2, []int64{9, 3}, directEgress(), nil)
 	require.True(t, staticKeyOf(oldAv) == staticKeyOf(reordered), "groupIDs order must not affect the key")
 
 	// 但**真的**变了就要不等。逐项验证键对这些事实是敏感的——每例**先变更输入
@@ -330,7 +330,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, tp, gids := inputs()
 			tc.mutate(&a, tp, &gids)
-			m := newSnapshotStatic(a, tp, gids, directEgress())
+			m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 			require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "key must be sensitive to %s", tc.name)
 		})
 	}
@@ -345,7 +345,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		a, tp, gids := inputs()
 		other := "pat-rotated"
 		a.Ext.CodexPATKey = &other
-		m := newSnapshotStatic(a, tp, gids, directEgress())
+		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated credential must change the key (it is consumed from the leaf)")
 		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "pat rotation changes the candidate fingerprint, so it must invalidate in-flight plans")
 	})
@@ -353,7 +353,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		a, tp, gids := inputs()
 		tok := "at-rotated"
 		a.Ext.CodexOAuthToken = &tok
-		m := newSnapshotStatic(a, tp, gids, directEgress())
+		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated OAuth token must change the key (upstream auth consumes it)")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated OAuth token must NOT invalidate in-flight plans (payload only)")
 	})
@@ -361,14 +361,14 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		a, tp, gids := inputs()
 		rt := "rt-rotated"
 		a.Ext.CodexOAuthRefreshToken = &rt
-		m := newSnapshotStatic(a, tp, gids, directEgress())
+		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated refresh token must change the key")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated refresh token must NOT invalidate in-flight plans (payload only)")
 	})
 	t.Run("codexEmail edit MUST change the key", func(t *testing.T) {
 		a, tp, gids := inputs()
 		a.Ext.CodexEmail = new("e@example.com")
-		m := newSnapshotStatic(a, tp, gids, directEgress())
+		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "email is reachable via Selection.Ext, so it must not be served stale")
 		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "email is a decision input (read by the fingerprint path), so it invalidates in-flight plans")
 	})
@@ -379,7 +379,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 func TestStaticKeyNilSnapshotIsZeroKey(t *testing.T) {
 	var zero staticKey
 	require.True(t, staticKeyOf(nil) == zero)
-	require.False(t, staticKeyOf(nil) == staticKeyOf(newSnapshotStatic(domain.Account{ID: 1}, nil, nil, directEgress())))
+	require.False(t, staticKeyOf(nil) == staticKeyOf(newSnapshotStatic(domain.Account{ID: 1}, nil, nil, directEgress(), nil)))
 }
 
 // TestMinGIDIsDeterministic 锁住 gid 的确定性派生：多组账号取最小组 ID，
@@ -405,7 +405,7 @@ func TestBuildSnapshotsGIDIsMinOfGroupIDs(t *testing.T) {
 		2: {a},
 		5: {a},
 	}
-	_, byID := buildSnapshots(m, nil, testEgressPool)
+	_, byID := buildSnapshots(m, nil, testEgressPool, nil)
 	leaf, ok := byID[1]
 	require.True(t, ok)
 	st := leaf.static.Load()
@@ -426,7 +426,7 @@ func TestPlanKeyCarriesEgressSpec(t *testing.T) {
 		a := base
 		a.Proxy = p
 		a.IdentityRevision = 5 // 同值：K 不得成为唯一承载
-		return planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress()))
+		return planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress(), nil))
 	}
 
 	direct := withProxy(nil)

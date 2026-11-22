@@ -68,7 +68,7 @@ func BenchmarkGroupRebuildA3000M100(b *testing.B) {
 	b.Run("after/buildSnapshots+facts", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			groups, byID := buildSnapshots(byGroup, nil, testEgressPool)
+			groups, byID := buildSnapshots(byGroup, nil, testEgressPool, nil)
 			routeBenchSink.groups = groups
 			routeBenchSink.facts = attachCompilerFacts(byID)
 		}
@@ -76,7 +76,7 @@ func BenchmarkGroupRebuildA3000M100(b *testing.B) {
 	b.Run("before/leaf+facts+buildRoutesReference", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			groups, byID := buildSnapshots(byGroup, nil, testEgressPool)
+			groups, byID := buildSnapshots(byGroup, nil, testEgressPool, nil)
 			facts := attachCompilerFacts(byID)
 			for _, gs := range groups {
 				gs.routes = buildRoutesReference(gs.accounts)
