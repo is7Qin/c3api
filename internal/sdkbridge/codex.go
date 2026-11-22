@@ -343,29 +343,20 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 	return nil
 }
 
-// Responses 非流式 responses 合成调用（§1）：cred → 缓存取 HTTPClient
-// （clientFor——机制复用）→ c.Responses(ctx, payload, id)（SDK 合成非流式——
-// 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
-// 原样转发；网关从合成体顶层 usage 计费）。
+// ResponsesPrepared 用**已准备句柄**发起非流式 responses 调用（生产热路径）：
+// 条目来自该句柄，auth/client 与 owner 同版（§3.2 凭据替换）。调用方必须先
+// `Prepare`——未 Prepared 的入口已删除，绕过这条边界在类型层不可表达。
 //
-// id 是**请求级身份**（§2.1）：Session/Meta 进握手头与 client_metadata、TurnState
-// 是本次要带的 ts、Sink 是签发值落点。上游签发值（握手头/响应头/事件）只经 Sink
-// 写入会话——本函数既不在请求前改 ts，也不在返回后回写：那是把事件签发的新值
-// 倒退成请求开始时的快照。
+// 语义（§1）：响应是 SDK **合成**的非流式体（内部无条件 stream:true + SSE 事件
+// 聚合重组完整响应体；网关以非流式语义消费，原样转发；网关从合成体顶层 usage
+// 计费）。id 是**请求级身份**（§2.1）：Session/Meta 进握手头与 client_metadata、
+// TurnState 是本次要带的 ts、Sink 是签发值落点。上游签发值（握手头/响应头/事件）
+// 只经 Sink 写入会话——本函数既不在请求前改 ts，也不在返回后回写：那是把事件签发
+// 的新值倒退成请求开始时的快照。
 //
 // 错误翻译同 GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类
 // 统一回调双源去重；RefreshError/网络原样）。transport 为出站传输开关（spec §5：
 // 构造期参数 ⇒ 走 clientFor 的键维度；映射点只有 codexTransport 一处）。
-func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
-	p, err := a.Prepare(cred)
-	if err != nil {
-		return nil, err
-	}
-	return a.ResponsesPrepared(ctx, p, eg, payload, id, transport)
-}
-
-// ResponsesPrepared 用**已准备句柄**发起非流式 responses 调用（生产热路径）：
-// 条目来自该句柄，auth/client 与 owner 同版（§3.2 凭据替换）。语义同 Responses。
 func (a *Codex) ResponsesPrepared(ctx context.Context, p Prepared, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
 	if p.entry == nil {
 		return nil, errUnprepared
@@ -401,25 +392,16 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 	return resp, nil
 }
 
-// StreamBody 流式 responses **raw body** 透传：cred → 缓存取 HTTPClient →
-// c.StreamBody(ctx, payload, id) 返回**未关闭**的 *http.Response（body 归调用方，
-// proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。身份语义同 Responses
-// （TurnState 是本次要带的 ts、Sink 是签发值落点）。**本方法不写签发值**：本次
-// resp.Header 的 ts 与流式取帧期间 `response.metadata` 事件的新值都由 SDK 经 Sink
-// 写会话（后者才是更新的值；回写响应头只会把新值倒退成快照）。
-// 错误翻译同
-// Responses（translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
-// transport 语义同 Responses（构造期参数 ⇒ 换值换 client 条目）。
-func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*http.Response, error) {
-	p, err := a.Prepare(cred)
-	if err != nil {
-		return nil, err
-	}
-	return a.StreamBodyPrepared(ctx, p, eg, payload, id, transport)
-}
-
 // StreamBodyPrepared 用**已准备句柄**发起流式 responses 调用（生产热路径）：
-// 条目来自该句柄，auth/client 与 owner 同版。语义同 StreamBody。
+// 条目来自该句柄，auth/client 与 owner 同版。调用方必须先 `Prepare`。
+//
+// 语义（§1）：返回**未关闭**的 *http.Response（body 归调用方，proxy 侧经
+// sserelay.Relay 消费后**恰好关闭一次**）。身份语义同 ResponsesPrepared
+// （TurnState 是本次要带的 ts、Sink 是签发值落点）。**本方法不写签发值**：本次
+// resp.Header 的 ts 与流式取帧期间 `response.metadata` 事件的新值都由 SDK 经
+// Sink 写会话（后者才是更新的值；回写响应头只会把新值倒退成快照）。
+// 错误翻译同 ResponsesPrepared；transport 语义同 ResponsesPrepared（构造期
+// 参数 ⇒ 换值换 client 条目）。
 func (a *Codex) StreamBodyPrepared(ctx context.Context, p Prepared, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*http.Response, error) {
 	if p.entry == nil {
 		return nil, errUnprepared
@@ -1108,29 +1090,21 @@ func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	return s
 }
 
-// Dial 建立到上游的 Responses WebSocket 连接（§2 接线）：cred → Auth 缓存
-// 取（entryFor——账号级长存：at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；
-// WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, id, opts...)。id 是本次
-// 连接的身份（握手头 + 帧内 metadata + ts 落点）；opts 由网关侧组装
-// （codex_responses_ws.go——WithPingInterval(0) 等；SDK 侧按 codex 形状归一 WS
-// 帧）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
+// DialPrepared 用**已准备句柄**拨号（生产 WS 车道热路径）：auth 来自该句柄，与 owner
+// 同版（§3.2 凭据替换）。调用方必须先 `Prepare`——未 Prepared 的入口已删除。
+//
+// 语义（§2 接线）：建立到上游的 Responses WebSocket 连接——Auth 是账号级长存的
+// 句柄（at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；WS 连接本身 per-请求不
+// 缓存）。id 是本次连接的身份（握手头 + 帧内 metadata + ts 落点）；opts 由网关侧
+// 组装（codex_responses_ws.go——WithPingInterval(0) 等；SDK 侧按 codex 形状归一
+// WS 帧）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
 // transport 观察为 https）。错误翻译（translateDialError）：
 //   - *DialError → 信封包装（EnvelopeError——StatusCode()/RawJSON()/Unwrap
 //     链，Refreshed 语义保留：已轮转重连一次仍失败 → 网关避免双份刷新）
-//   - 裸错误（Dial 401 轮转路径 refresh 失败——client.go:391-394 透传，不包
+//   - 裸错误（401 轮转路径 refresh 失败——client.go:391-394 透传，不包
 //     DialError）→ translateError 既有双分支：fatal 类（RefreshOAuthError /
 //     AccountDisabledError）→ 统一回调单次上报 + 原样透传（网关"该请求不转
 //     移"，IsFatal 判定）；RefreshError/网络 → 原样透传（网关正常 failover）
-func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, id codexsdk.Identity, opts ...codexsdk.Option) (*codexsdk.Client, error) {
-	p, err := a.Prepare(cred)
-	if err != nil {
-		return nil, err
-	}
-	return a.DialPrepared(ctx, p, eg, id, opts...)
-}
-
-// DialPrepared 用**已准备句柄**拨号（生产 WS 车道热路径）：auth 来自该句柄，与 owner
-// 同版（§3.2 凭据替换）。语义同 Dial。
 //
 // 读帧空闲上限（仅 WS）不在这里设：SDK 默认 5 分钟（对齐上游
 // DEFAULT_STREAM_IDLE_TIMEOUT_MS；只计"一次取帧等待里没有任何可交付帧"，Ping/Pong

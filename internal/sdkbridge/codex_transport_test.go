@@ -169,7 +169,8 @@ func TestCodexStreamBodyTransportReachesChosenLeg(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			resp, err := a.StreamBody(ctx, transportTestCred(), a.DirectEgress(),
+			p := mustPrepare(t, a, transportTestCred())
+			resp, err := a.StreamBodyPrepared(ctx, p, a.DirectEgress(),
 				[]byte(`{"model":"gpt-5.6","input":[]}`), codexsdk.Identity{}, tc.transport)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -211,7 +212,8 @@ func TestCodexResponsesTransportReachesChosenLeg(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			resp, err := a.Responses(ctx, transportTestCred(), a.DirectEgress(),
+			p := mustPrepare(t, a, transportTestCred())
+			resp, err := a.ResponsesPrepared(ctx, p, a.DirectEgress(),
 				[]byte(`{"model":"gpt-5.6","input":[]}`), codexsdk.Identity{}, tc.transport)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -268,10 +270,11 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	payload := []byte(`{"model":"gpt-5.6","input":[]}`)
+	p := mustPrepare(t, a, cred)
 
 	call := func(transport domain.CodexResponsesTransport) {
 		t.Helper()
-		resp, err := a.StreamBody(ctx, cred, a.DirectEgress(), payload, codexsdk.Identity{}, transport)
+		resp, err := a.StreamBodyPrepared(ctx, p, a.DirectEgress(), payload, codexsdk.Identity{}, transport)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		_ = readAndCloseBody(t, resp.Body)

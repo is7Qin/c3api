@@ -357,7 +357,7 @@ func wsReuseStream(t *testing.T, a *Codex, cred *domain.AccountCredential, id co
 	t.Helper()
 	// ctx 必须活到 body 读完（exchange 的取帧走 ctx）：用 t.Context()，不要在这里
 	// defer cancel——那会把刚返回的 body 直接读成 context canceled。
-	resp, err := a.StreamBody(t.Context(), cred, a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":[]}`), id, transport)
+	resp, err := a.StreamBodyPrepared(t.Context(), mustPrepare(t, a, cred), a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":[]}`), id, transport)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	return resp
@@ -409,14 +409,15 @@ func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 	cred := wsReuseCred()
 	sess := newWSReuseSess("inst")
 
-	_, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+	p := mustPrepare(t, a, cred)
+	_, err := a.ResponsesPrepared(t.Context(), p, a.DirectEgress(),
 		[]byte(`{"model":"gpt-5.6","input":[]}`), sess.identity(), domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 	require.Equal(t, []string{"T2"}, sess.issued(), "握手头 T1 不进 Sink；只有事件 T2（返回阶段不回写旧快照）")
 	require.Equal(t, "T2", sess.turnState(), "会话保留事件签发值")
 
 	// 黑盒面：下一次同会话请求必须带 T2（不是 T1）。
-	_, err = a.Responses(t.Context(), cred, a.DirectEgress(),
+	_, err = a.ResponsesPrepared(t.Context(), p, a.DirectEgress(),
 		[]byte(`{"model":"gpt-5.6","input":[]}`), sess.identity(), domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 	require.Equal(t, []string{"", "T2"}, up.wsRequestTS(),
@@ -562,7 +563,7 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 				t.Helper()
 				next := *cred
 				next.PATKey = "pat-reuse-rotated"
-				resp, err := a.StreamBody(t.Context(), &next, a.DirectEgress(),
+				resp, err := a.StreamBodyPrepared(t.Context(), mustPrepare(t, a, &next), a.DirectEgress(),
 					[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 				require.NoError(t, err)
 				// 必须读尽关掉：否则这条底层连接被占用，第 4 步的"不新增 dial"
@@ -597,7 +598,7 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			sess := newWSReuseSess("inst")
 
 			// 1) 预热：HTTP 腿一次请求（占一条底层空闲连接）
-			resp, err := a.StreamBody(t.Context(), cred, a.DirectEgress(),
+			resp, err := a.StreamBodyPrepared(t.Context(), mustPrepare(t, a, cred), a.DirectEgress(),
 				[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 			require.NoError(t, err)
 			readAndCloseBody(t, resp.Body)
@@ -618,9 +619,10 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			}
 			require.Equal(t, 1, up.closedCount())
 
-			// 4) 紧接一次 HTTP 腿请求：底层连接池不受影响 ⇒ 不新增 dial
+			// 4) 紧接一次 HTTP 腿请求：底层连接池不受影响 ⇒ 不新增 dial（请求自带新句柄：
+			// drop 路径可能已换掉旧条目，拿旧句柄就不是"下一次请求"了）
 			before := dials.Load()
-			resp, err = a.StreamBody(t.Context(), cred, a.DirectEgress(),
+			resp, err = a.StreamBodyPrepared(t.Context(), mustPrepare(t, a, cred), a.DirectEgress(),
 				[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 			require.NoError(t, err)
 			readAndCloseBody(t, resp.Body)
@@ -714,7 +716,7 @@ func TestCodexRetireThreadG7ClosedClientDoesNotReviveIdle(t *testing.T) {
 	// 凭据替换 ⇒ 旧条目弃用 + CloseWSIdleConnections（在飞连接不受影响）。
 	next := *oldCred
 	next.PATKey = "pat-reuse-rotated"
-	resp, err := a.StreamBody(t.Context(), &next, a.DirectEgress(),
+	resp, err := a.StreamBodyPrepared(t.Context(), mustPrepare(t, a, &next), a.DirectEgress(),
 		[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 	require.NoError(t, err)
 	readAndCloseBody(t, resp.Body)
@@ -793,7 +795,7 @@ func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 
 	// 聚合臂同理：调用返回（= 内部 Close 完成）后计数冻结。
 	aggSess := newWSReuseSess("inst")
-	_, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+	_, err := a.ResponsesPrepared(t.Context(), mustPrepare(t, a, cred), a.DirectEgress(),
 		[]byte(`{"model":"gpt-5.6","input":[]}`), aggSess.identity(), domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 	aggCount := len(aggSess.issued())

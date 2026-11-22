@@ -131,7 +131,7 @@ func TestIdentityAdvanceKeepsAuthFatalDisabling(t *testing.T) {
 	require.Same(t, first.entry, promoted.entry, "同签名复用同一条目（判死回调仍是最早那次构造的）")
 
 	// 真实交换：上游 401 判死码 → SDK 分类为 AuthPermanentlyRevokedError → OnAuthFatal。
-	_, err = a.Responses(context.Background(), oauthCredWithRev(7, "at-1", "rt-1", 2),
+	_, err = a.ResponsesPrepared(context.Background(), promoted,
 		a.DirectEgress(), []byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
 	require.Error(t, err)
 	require.Equal(t, int64(1), reqs.Load(), "判死不重试")
