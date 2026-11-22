@@ -102,6 +102,11 @@ func newHealthFace(d healthDeps) *healthFace {
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
 	f.ruleEngine = ruleEngine
+	// 编译期 fail-fast（U22 §2.1 第三步）：生产载入器必须保持 **scoped 组载入**
+	// 能力。丢了它不会让别处编译失败——invalidateGroupsLocked 会静默退化（每组各
+	// 建一枚模板指针，按指针键的摘要缓存只剩「每组每模板一次」，跨组零命中）。
+	// 这一行是那条退化唯一的静态闸门；删掉它不会有任何测试变红，只能靠评审。
+	var _ scheduler.ScopedGroupLoader = repos.Groups
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
