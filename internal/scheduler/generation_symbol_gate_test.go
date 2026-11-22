@@ -80,18 +80,18 @@ var cReadsAllowedInFlight = []string{
 // （`dir/file#func`），值是该站点保留 C 的理由。断言是**相等**（双向）：新增一处
 // C 读取 ⇒ 失败；把某处 C 读取修掉 ⇒ 该条目变陈旧 ⇒ 同样失败，强制显式收缩。
 var cReadWhitelist = map[string]string{
-	"internal/handler/account.go#PostAccountsBatchUpdate":          "回显：批量更新响应逐账号携带新 C，供客户端下次 CAS",
-	"internal/handler/account.go#PostAccountsIdRecover":            "前置条件：recover body 的 expected_revision（对 C）",
-	"internal/handler/convert.go#toAPIAccount":                     "回显：账号响应携带 C",
-	"internal/handler/convert.go#toAPIAccountView":                 "回显：账号视图携带 C",
-	"internal/repository/account_repo.go#CreateAccount":            "写入：创建时把入参 C 投影到行",
-	"internal/repository/batch.go#updateAccountsBatch":             "回显：批量写把行锁内重取的新 C 回传",
-	"internal/repository/group_repo.go#CompileStalenessSnapshot":   "水位：MAX(lifecycle_revision) 是重编译触发量",
-	"internal/repository/mapping.go#toDomainAccount":               "回显：行 → 域映射携带 C",
-	"internal/scheduler/compile_backstop.go#snapshotToProbeCounts": "水位：编译兜底探针的 C 上界",
-	"internal/service/account.go#PatchAccount":                     "前置条件：If-Match 对 C（陈旧 → 412）",
-	"internal/service/ext_codex.go#UpsertAccountExt":               "前置条件：凭据写乐观重试环以 C 作活性守卫（幂等 PUT 不推进 K，故守卫不能用 K）",
-	"internal/service/ext_codex_import.go#updateCodexCredentials":  "前置条件：导入写对 C",
+	"internal/handler/account.go#PostAccountsBatchUpdate":             "回显：批量更新响应逐账号携带新 C，供客户端下次 CAS",
+	"internal/handler/account.go#PostAccountsIdRecover":               "前置条件：recover body 的 expected_revision（对 C）",
+	"internal/handler/convert.go#toAPIAccount":                        "回显：账号响应携带 C",
+	"internal/handler/convert.go#toAPIAccountView":                    "回显：账号视图携带 C",
+	"internal/repository/account_repo.go#CreateAccount":               "写入：创建时把入参 C 投影到行",
+	"internal/repository/batch.go#updateAccountsBatch":                "回显：批量写把行锁内重取的新 C 回传",
+	"internal/repository/group_repo.go#CompileStalenessSnapshot":      "水位：MAX(lifecycle_revision) 是重编译触发量",
+	"internal/repository/mapping.go#toDomainAccountWithTemplateScope": "回显：行 → 域映射携带 C",
+	"internal/scheduler/compile_backstop.go#snapshotToProbeCounts":    "水位：编译兜底探针的 C 上界",
+	"internal/service/account.go#PatchAccount":                        "前置条件：If-Match 对 C（陈旧 → 412）",
+	"internal/service/ext_codex.go#UpsertAccountExt":                  "前置条件：凭据写乐观重试环以 C 作活性守卫（幂等 PUT 不推进 K，故守卫不能用 K）",
+	"internal/service/ext_codex_import.go#updateCodexCredentials":     "前置条件：导入写对 C",
 }
 
 // structFieldSpec 钉住承载身份/内容代际的结构体字段名：更名后的拼写必须在位，
