@@ -144,9 +144,11 @@ func TestSchedulerNewAttemptPlanPlanNotReady(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable)
 }
 
-// TestReserveAttemptPreservesConcurrentFailAccount 回归：并发 CAS 屏障下，
-// ReserveAttempt 的 lastUsedAt 写与 FailAccount 的 disabled 写互不覆盖——
-// 两者各经独立 CAS，最终态同时携带 disabled + lastUsedAt。
+// TestReserveAttemptPreservesConcurrentFailAccount 回归：两处写点互不覆盖。
+// ReserveAttempt 在写「使用时刻」，FailAccount 在写 disabled——两条写路径落在
+// 两个**独立**的原子位点（sharedRuntime.lastUsedNano / accState 的 CAS 链），
+// 最终态同时携带 disabled + 使用时刻。本例把两个时钟分开注入，因此不是只证
+// 「有个时刻」，而是证明预留的那次写没有被 FailAccount 的写吞掉。
 func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	tpl := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tpl, 10)})
@@ -154,9 +156,11 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-race", UserID: 1}, route)
 	require.NoError(t, err)
-	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	s.timeNow = func() time.Time { return fixed }
-	// Barrier between concurrency CAS and state CAS
+	failAt := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	reserveAt := failAt.Add(time.Minute)
+	clock := failAt
+	s.timeNow = func() time.Time { return clock }
+	// Barrier between the concurrency CAS and the last-used write
 	barrier := make(chan struct{})
 	unblock := make(chan struct{})
 	reserveHook := func() {
@@ -172,7 +176,9 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 		done <- sel
 	}()
 	<-barrier
-	s.FailAccount(1) // 并发失效摘除（disabled 终态 CAS）
+	s.FailAccount(1) // 并发失效摘除（disabled 终态 CAS），此刻时钟 = failAt
+	// 屏障两侧有 happens-before（close(barrier) / close(unblock)），换钟无需再加锁。
+	clock = reserveAt
 	close(unblock)
 	var sel *Selection
 	select {
@@ -186,5 +192,91 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	require.True(t, ok)
 	st := accSnap.statePtr()
 	require.Equal(t, domain.StatusDisabled, st.status, "concurrent FailAccount must be retained after reservation")
-	require.NotNil(t, st.lastUsedAt, "reservation lastUsedAt write retained")
+	ri, ok := s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, ri.Status, "展示面与 statePtr 同源")
+	require.NotNil(t, ri.LastUsedAt, "reservation lastUsed write retained")
+	require.Equal(t, reserveAt.UnixNano(), ri.LastUsedAt.UnixNano(),
+		"预留的写必须落在 FailAccount 的写之后：两处写各自独立，不得互相覆盖")
+}
+
+// TestLastUsedWriteIsAllocationFree 钉住写点的**分配形状**：markUsed 传值进、
+// 单次 Store 出 ⇒ 0 alloc/写。
+//
+// 历史形状（accState.lastUsedAt *time.Time + copy-modify-CAS）每次写 2 次分配
+// （&now 装箱 + &next 逃逸）；只把字段换成结构体内 int64 仍留 1 次（&next 逃逸），
+// 所以这条断言必须落在「写点这一句」的形态上——「结构体里不用指针」不足以证明
+// 零分配。
+func TestLastUsedWriteIsAllocationFree(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 10)})
+	snap, ok := s.View().Account(1)
+	require.True(t, ok)
+	rt := snap.runtime
+	at := time.Date(2026, 11, 22, 8, 30, 0, 42, time.UTC)
+	allocs := testing.AllocsPerRun(1000, func() { rt.markUsed(at) })
+	require.Zero(t, allocs,
+		"写点必须 0 分配：装箱（&t 逃逸到原子指针）或 copy-modify-CAS（&next 逃逸）都会在这里留下 1 次")
+}
+
+// TestRuntimeLastUsedAtProjection 展示面用例：管理端读到的必须是正确时刻。
+//
+// 三件事分开钉：
+//  1. 从未使用 → nil（不是 1970，也不是零时刻——那两者都是真实可记录的时刻，
+//     拿来当代值就是把「没发生过」说成「很久以前发生过」）；
+//  2. 使用过 → 与注入时钟逐纳秒相等的 time.Time；
+//  3. 写使用时刻**不得**替换 accState（替换 = 值拷贝 + &next 逃逸 = 1 alloc/写，
+//     与上面的分配断言互为表里：一条管分配次数，一条管形态）。
+func TestRuntimeLastUsedAtProjection(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 10), acc(2, tplx, 10)})
+
+	// 1) 从未使用 → nil。
+	ri, ok := s.Runtime(1)
+	require.True(t, ok)
+	require.Nil(t, ri.LastUsedAt, "从未使用必须投影成 nil，不得是 1970 / 零时刻")
+
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+	usedAt := time.Date(2026, 11, 22, 9, 15, 0, 123456789, time.UTC)
+	s.timeNow = func() time.Time { return usedAt }
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-last-used", UserID: 1}, route)
+	require.NoError(t, err)
+	accSnap, ok := s.View().Account(1)
+	require.True(t, ok)
+	stateBefore := accSnap.statePtr()
+	require.NotNil(t, stateBefore)
+	sel, _, err := s.ReserveAttempt(&plan)
+	require.NoError(t, err)
+	defer sel.Release()
+	require.Same(t, stateBefore, accSnap.statePtr(),
+		"写使用时刻不得替换 accState：替换就是值拷贝 + &next 逃逸（1 alloc/写）")
+
+	// 2) 使用过 → 正确时刻；同一次写不得波及其它账号。
+	ri, ok = s.Runtime(1)
+	require.True(t, ok)
+	require.NotNil(t, ri.LastUsedAt, "使用过的账号必须有值")
+	require.Equal(t, usedAt.UnixNano(), ri.LastUsedAt.UnixNano(), "展示面必须逐纳秒还原注入时刻")
+	require.True(t, usedAt.Equal(*ri.LastUsedAt), "instants must match: got %v want %v", ri.LastUsedAt, usedAt)
+	require.False(t, ri.LastUsedAt.Equal(time.Unix(0, 0)), "展示面不得把有效值渲染成 1970")
+	require.False(t, ri.LastUsedAt.IsZero(), "展示面不得把有效值渲染成零时刻")
+	untouched, ok := s.Runtime(2)
+	require.True(t, ok)
+	require.Nil(t, untouched.LastUsedAt, "写点只写本次放行的账号")
+
+	// 3) FailAccount 的触碰写同样经展示面可见；disabled 幂等早退不刷时间。
+	failAt := usedAt.Add(time.Hour)
+	s.timeNow = func() time.Time { return failAt }
+	s.FailAccount(2)
+	ri2, ok := s.Runtime(2)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, ri2.Status)
+	require.NotNil(t, ri2.LastUsedAt, "FailAccount 的触碰写 retained")
+	require.Equal(t, failAt.UnixNano(), ri2.LastUsedAt.UnixNano())
+	s.timeNow = func() time.Time { return failAt.Add(time.Hour) }
+	s.FailAccount(2)
+	ri2, ok = s.Runtime(2)
+	require.True(t, ok)
+	require.Equal(t, failAt.UnixNano(), ri2.LastUsedAt.UnixNano(),
+		"已 disabled 的幂等早退不得刷新触碰时刻")
 }

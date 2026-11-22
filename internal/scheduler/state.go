@@ -17,12 +17,28 @@ const errRateScale = 1_000_000
 
 // accState 运行时账号状态。status = 运行时调度状态（active/disabled——
 // disabled 来自 FailAccount 或 failed_at 装载；临时健康细分在 RuntimeHealth）；
-// errCount/lastUsedAt 为运行时观测投影（管理端展示面，不参与选号判定）。
+// errCount 为运行时观测投影（管理端展示面，不参与选号判定）。
+//
+// 「最后一次使用时刻」**不**在这个结构里：它每请求写一次，而 accState 的每次转换
+// 都要复制出值再取地址做 CAS（`&next` 逃逸 ⇒ 每次 1 次堆分配）。观测字段改存
+// sharedRuntime 的独立原子字（lastUsedNano），写点因此零分配。
 type accState struct {
-	status     domain.AccountStatus
-	errCount   int
-	lastUsedAt *time.Time
+	status   domain.AccountStatus
+	errCount int
 }
+
+// lastUsedNever 是 lastUsedNano 里「从未使用」的取值，就是原子字的**零值**。
+//
+// 为什么用零值而不是某个哨兵（比如 -1）或另一枚 set 位：
+//   - 零值不靠构造函数赋初值：sharedRuntime 的零值本身就是合法形态（每账号一枚，
+//     构造即用），「未使用」必须是默认状态本身，而不是未来某个构造点忘了写才
+//     会错的隐性契约；
+//   - set 位与值必须落在**同一个**原子字里，否则读者会看到「set=true 而值还是
+//     旧值」（撕裂）；这里读的只是展示面，不值得为它引入双字协议。
+//
+// 0 不能直接当「未使用」——它就是 Unix epoch，一个真实时刻。所以存储面把整条
+// 时刻线整体偏移一位（见 markUsed/lastUsed），0 就空了。
+const lastUsedNever int64 = 0
 
 // snapshotStatic 是账号静态字段视图（acc/tpl/gid/groupIDs）：**发布后不可变**。
 // 重建对静态字段的更新一律 copy-modify-Store 整体替换
@@ -80,6 +96,31 @@ type sharedRuntime struct {
 	concurrency atomic.Int64
 	errRate     atomic.Uint64 // 定点
 	state       atomic.Pointer[accState]
+	// lastUsedNano 最近一次「被使用/被触碰」的**偏移**观测值（管理端展示面）：
+	// 存的是 UnixNano+1，lastUsedNever（零值）= 从未使用。它独立于 state 的
+	// CAS 链：既让写点零分配（写 accState 字段要走 copy-modify-CAS，`&next`
+	// 逃逸 = 1 alloc/写），也把「两处写互不覆盖」变成结构事实——预留在写使用
+	// 时刻，FailAccount 在写 disabled，两者碰不到同一个字，无需对账。
+	lastUsedNano atomic.Int64
+}
+
+// markUsed 是 lastUsedNano 的**唯一**写点（预留守卫 + FailAccount 共用）：
+// 传值进、单次 Store 出，零分配。+1 是存储偏移，把 0 留给 lastUsedNever。
+func (r *sharedRuntime) markUsed(t time.Time) {
+	r.lastUsedNano.Store(t.UnixNano() + 1)
+}
+
+// lastUsed 是展示面投影：原子读数 → time.Time。nil 表示「从未使用」。
+//
+// 不能把「未使用」渲染成 1970 或零时刻：那两者都是**真实可记录**的时刻，
+// 用它们当代值会把「没发生过」说成「发生过，只是很久以前」。
+func (r *sharedRuntime) lastUsed() *time.Time {
+	n := r.lastUsedNano.Load()
+	if n == lastUsedNever {
+		return nil
+	}
+	t := time.Unix(0, n-1)
+	return &t
 }
 
 type accountSnapshot struct {

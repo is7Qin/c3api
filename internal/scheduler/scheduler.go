@@ -239,12 +239,14 @@ func (s *Selection) Credential() domain.AccountCredential {
 // RuntimeInfo 账号运行时视图（管理端展示 + overview 聚合）。Status = 运行时
 // 调度状态（active/disabled——disabled 来自 FailAccount/failed_at 装载；临时
 // 健康细分状态在 RuntimeHealth，不在此重复）；ErrRate/ErrCount 为运行时观测
-// 投影（值由质量统计道供给）。
+// 投影（值由质量统计道供给）；LastUsedAt = 最近一次使用/触碰时刻，nil 表示
+// **从未使用**（不渲染成 1970 或零时刻——那是另一种事实）。
 type RuntimeInfo struct {
 	Status      domain.AccountStatus
 	Concurrency int64
 	ErrRate     float64
 	ErrCount    int
+	LastUsedAt  *time.Time
 }
 
 type Scheduler struct {
@@ -1115,6 +1117,9 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 		Concurrency: a.runtime.concurrency.Load(),
 		ErrRate:     float64(a.runtime.errRate.Load()) / errRateScale,
 		ErrCount:    st.errCount,
+		// 使用时刻来自 sharedRuntime 的独立原子字（与 accState 的 CAS 链无关），
+		// 投影成本落在冷面：一次 Load + 一次 time.Unix。
+		LastUsedAt: a.runtime.lastUsed(),
 	}, true
 }
 
@@ -1256,10 +1261,13 @@ func (s *Scheduler) FailAccount(accountID int64) {
 		}
 		st := *cur
 		st.status = domain.StatusDisabled
-		st.lastUsedAt = &now
 		if !a.runtime.state.CompareAndSwap(cur, &st) {
 			continue // 并发转换已发生——重读重试（disabled 对双方都是吸收态，必然终止）
 		}
+		// 触碰时刻与 disabled 转换同批落定：只有转换真的发生才记（幂等早退与
+		// CAS 失败重试都不会刷时间）。这里挪出 CAS 之外是安全的——观测字与
+		// accState 是两个独立的原子位点，互不覆盖是结构性质。
+		a.runtime.markUsed(now)
 		return
 	}
 }
