@@ -184,7 +184,10 @@ func TestQuotaWorkerExtendsDeadline(t *testing.T) {
 		AccountID: 7, IdentityRevision: 3,
 		Fingerprint: "fp-abc", Quality: "q1", State: StateRetryAfter,
 	})
-	waitQuotaWorker(t, "ExtendCooldown 收到补全调用", func() bool { return health.count() == 1 })
+	// 等 worker 侧最后一个效果：生产在 ExtendCooldown 返回后才累加 extended
+	// （quota_worker.go:284→:300，中间无同步点），只等替身侧 count() 会撞上
+	// worker 尚未记账的中间态。替身快照随后读，已被同一 happens-before 覆盖。
+	waitQuotaWorker(t, "worker 侧 extended 计数落定", func() bool { return w.Extended() == 1 })
 
 	writes := health.snapshot()
 	require.Equal(t, HealthKey{AccountID: 7, Quality: "q1", Identity: "fp-abc", IdentityRevision: 3}, writes[0].key,

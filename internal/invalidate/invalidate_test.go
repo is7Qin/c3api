@@ -246,6 +246,9 @@ func TestDebounceMerge(t *testing.T) {
 	// 两个计数器之间没有同步点：只等 auth 会让 sched 断言撞上执行 goroutine 的
 	// 中间态（TestDebounceMerge 曾随机红，sched full = 0）。等两个计数器都到 1。
 	waitCalls(t, r.sched.fullCalls, 1)
+	// clients(:341)/倍数(:344) 在 sched(:329) 之后且同样无同步点，等最后一个效果
+	// （倍率定向）到 1 才能断言前四个计数器。
+	waitCalls(t, r.bal.multCalls, 1)
 	// 一次合并重载：auth 1 次（非 2）、余额全量 1、sched 全量 1、clients 1、
 	// 倍率定向 1。
 	if got := r.auth.calls(); got != 1 {
@@ -474,6 +477,8 @@ func TestNewBranchesMerge(t *testing.T) {
 	r.clock.waitTimer(t, gen)
 	r.clock.fire()
 	waitCalls(t, r.auth.calls, 1)
+	// Rules.ReloadRules(:350) 是本行最后的效果，auth→rules 之间无同步点，等它到 1。
+	waitCalls(t, r.rules.calls, 1)
 	if r.auth.calls() != 1 || r.rules.calls() != 1 {
 		t.Fatalf("同窗口合并各 1 次：auth=%d rules=%d", r.auth.calls(), r.rules.calls())
 	}
