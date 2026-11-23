@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -26,13 +27,26 @@ var batchStageTimeout = 10 * time.Second
 
 // This file owns the folded group-invalidation path (T1): a debouncer window
 // that invalidates several groups collapses into ONE publisher.mu critical
-// section that loads each group singly (Loader.LoadGroupAccounts — singular
-// Group, plural Accounts), folds it into one mutable working root (with
-// step-wise identity-pool conversion), and freezes/stages ONCE at the end.
+// section that loads each group singly (ScopedGroupLoader when the loader
+// offers it, else Loader.LoadGroupAccounts — singular Group, plural Accounts),
+// folds it into one mutable working root (with step-wise identity-pool
+// conversion), and freezes/stages ONCE at the end.
 
-// InvalidateGroups 组失效批量合并：同一 publisher.mu 内逐组单组
-// LoadGroupAccounts，折叠进同一可变工作根（含逐步池转换），末尾一次冻结
-// newStaticView + stage + scope + wake。ids 排序去重；空集 no-op。
+// ScopedGroupLoader 是载入器的**可选能力**：把一次批次的作用域交给它，让同一模板
+// 在整批载入里只有一枚 *domain.Template（U22 §2.1）。不实现则退化为每次载入各转
+// 一份——功能不变，但按指针键的摘要缓存只剩「每组每模板一次」，跨组命中为零。
+//
+// 接口声明在本包（能力由消费方描述，实现方无需 import 本包——同
+// AccountUniverseLoader 的方向）。repository 已是本包的既有依赖（见
+// rule_persist.go），故此处引用 *repository.TemplateLoadScope 不新增层次边。
+type ScopedGroupLoader interface {
+	LoadGroupAccountsScoped(ctx context.Context, groupID int64, scope *repository.TemplateLoadScope) ([]*domain.Account, error)
+}
+
+// InvalidateGroups 组失效批量合并：同一 publisher.mu 内逐组单组载入
+// （ScopedGroupLoader 优先，未实现则 LoadGroupAccounts），折叠进同一可变工作根
+// （含逐步池转换），末尾一次冻结 newStaticView + stage + scope + wake。
+// ids 排序去重；空集 no-op。
 //
 // 等价契约：在固定 loader 响应、质量/价格、时钟、incident 初态与相同成功/
 // 失败序列下，其最终 canonical decision bytes 与静态拓扑 == 按同一排序去重
@@ -41,6 +55,17 @@ func (s *Scheduler) InvalidateGroups(ids []int64) {
 	s.withPublisherLock(func(reclaim *poolReclaim) {
 		s.invalidateGroupsLocked(ids, reclaim)
 	})
+}
+
+// loadGroupAccountsWithScope 是批次内单组载入的唯一出口：载入器实现了
+// ScopedGroupLoader 就把**批次作用域**交给它（同一模板在整批里只转一枚 domain
+// 对象），否则退回未 scoped 的 LoadGroupAccounts（每次载入各转一份）——功能等价，
+// 只是跨组不再共享模板指针，按指针键的摘要缓存随之退化成每组每模板一次。
+func (s *Scheduler) loadGroupAccountsWithScope(ctx context.Context, gid int64, scope *repository.TemplateLoadScope) ([]*domain.Account, error) {
+	if sl, ok := s.loader.(ScopedGroupLoader); ok {
+		return sl.LoadGroupAccountsScoped(ctx, gid, scope)
+	}
+	return s.loader.LoadGroupAccounts(ctx, gid)
 }
 
 // invalidateGroupsLocked 是加锁私有本体（调用方已持 publisher.mu）。禁止
@@ -68,6 +93,14 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	s.refreshProbeBaseline(ctx)
 	m, byID, pools := s.workingRootLocked()
 	prevPools := pools
+	// 批次作用域的模板摘要表：**一批**一张，不是一组一张。生产上载入器的模板
+	// 作用域同样贯穿整批（group_repo 的批量入口），同一模板因此在跨组时仍是同
+	// 一枚指针——缓存若建在 per-group 的 buildSnapshots 里，同一模板会被派生 G 次。
+	digests := newTemplateDigestCache()
+	// 与 digests **同寿命**的载入作用域：一次批次一张，交给实现了 ScopedGroupLoader
+	// 的载入器（生产 = repository.GroupRepo）。两张表必须同生同灭——摘要缓存的键是
+	// 模板指针，指针只有载入作用域跨组复用才唯一，"每模板一次"才可能在跨组时命中。
+	tplScope := repository.NewTemplateLoadScope()
 	var scope []int64
 	succeeded := false
 	for _, gid := range gids {
@@ -77,7 +110,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 			s.reloadRequired = true
 			break
 		}
-		accs, err := s.loader.LoadGroupAccounts(ctx, gid)
+		accs, err := s.loadGroupAccountsWithScope(ctx, gid, tplScope)
 		if err != nil {
 			s.log.Warn("group reload failed", logx.Int64("group_id", gid), logx.Error(err))
 			s.reloadRequired = true
@@ -85,7 +118,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 		}
 		succeeded = true
 		var stepScope []int64
-		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, reclaim)
+		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, digests, reclaim)
 		scope = unionScope(scope, stepScope)
 	}
 	if !succeeded {
@@ -143,11 +176,15 @@ func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*ac
 // groups' fix-ups read the CURRENT step's working m (seeing prior groups and
 // this step's removed-group replacement); pools are rebuilt once per successful
 // group (step-wise buildIdentityPools over the updated working byID).
-func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
+//
+// digests 是**批次作用域**的模板摘要表（由 invalidateGroupsLocked 建、整批共享）：
+// 它必须一路传到这里，否则 :188/:245 两个单叶构造点会各自退回逐次计算——
+// 功能不变，但批次内"每模板一次"的收益只剩 buildSnapshots 那一半。
+func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, digests *templateDigestCache, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress)
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress, digests)
 	newAccs := gs[gid].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
@@ -185,7 +222,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			// 不变量，事件投递归组会指向一个该账号已不属于的组。
 			// 出口 client 直接沿用旧叶的指针（不查池）：acc.Proxy 未变 ⇒ 规格摘要未变
 			// ⇒ 池里必是同一个 client；组归属变化与出口无关，多一次池查找只是白白加锁。
-			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids, ost.egress)
+			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids, ost.egress, digests)
 			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			byID[ost.acc.ID] = newLeaf
@@ -242,7 +279,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 		}
 		// New leaf is local (not yet published), safe to mutate static before publish.
 		// 同款：出口指针随组归属重派生原样接续（本步只改 groupIDs，不动出口）。
-		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...), nst.egress))
+		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...), nst.egress, digests))
 		byID[nst.acc.ID] = ns
 		for _, og := range otherGids {
 			if _, ok := otherRefs[og]; ok {

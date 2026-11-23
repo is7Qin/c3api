@@ -210,11 +210,72 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	return d
 }
 
+// toDomainAccount ent 行 → domain 账号（模板**不共享**：每个账号各转一份）。
+// 保留这个形状给所有"单行/列表"读面；快照载入走 toDomainAccountWithTemplateScope。
 func toDomainAccount(a *ent.Account) *domain.Account {
-	var tpl *domain.Template
-	if a.Edges.Template != nil {
-		tpl = toDomainTemplate(a.Edges.Template)
-	}
+	return toDomainAccountWithTemplateScope(a, nil)
+}
+
+// TemplateLoadScope 是一次**载入批次**的模板作用域：作用域内同一个 template_id
+// 只从 ent 行转换一次，所有账号共享那一枚 *domain.Template。
+//
+// 生命周期由**调用方**按"一次构建 / 一个失效批次"持有（U22 §2.1）：
+//
+//   - 全量 reload：reloadLocked 建一张，贯穿该次构建的全部组；
+//   - 组级失效：invalidateGroupsLocked 建一张，贯穿该批全部受影响组。这条是必须的
+//     ——invalidate_batch 对每个受影响组各调一次单组载入（invalidate_batch.go:73-89），
+//     逐次新建作用域会把"同模板跨组"退化成"每组一份指针"，按指针键的摘要缓存
+//     随之退化成"每组每模板一次"；
+//   - nil = 每次载入各建一张（既有调用点与测试不受影响）。
+//
+// **不是**包级、不是全局池：跨 reload 复用会把上一轮的模板对象带进新快照（模板
+// 改动不生效），旧对象的存活期也会被无限拉长。
+//
+// 跨查询复用（同一批次里不同组的两次 Ent 查询各有一枚 ent 模板实体）同样按
+// template_id 折叠，等价于把 Ent 的"同查询同 ID 同一实体"抬到批次级：批次内同一个
+// 模板只有一份 domain 事实。代价是"批次中途模板行被改"时后一个组会沿用前一个组
+// 读到的内容——这是一次构建/一个批次**该有**的行为（同一份快照不能半新半旧），
+// 下一次 reload 整批换新。
+//
+// **非并发安全**：调用方保证同一作用域串行使用（reload / invalidate 都在调度器锁
+// 内）。计数器只为测试与观测服务，不参与任何判据。
+type TemplateLoadScope struct {
+	templates map[int64]*domain.Template
+	hits      int
+	misses    int
+}
+
+// NewTemplateLoadScope 建一张空的载入作用域（调用方负责它的生命周期）。
+func NewTemplateLoadScope() *TemplateLoadScope {
+	return &TemplateLoadScope{templates: make(map[int64]*domain.Template)}
+}
+
+// Hits 返回作用域内复用已转换模板的次数（同模板的后续账号）。
+func (s *TemplateLoadScope) Hits() int { return s.hits }
+
+// Misses 返回作用域内实际转换 ent 模板的次数（= 出现过的不同 template_id 数）。
+func (s *TemplateLoadScope) Misses() int { return s.misses }
+
+// toDomainAccountWithTemplateScope 与 toDomainAccount 的唯一差别是模板转换：
+// scope 非 nil 时按 `a.Edges.Template.ID` 复用作用域内已转好的 *domain.Template，
+// 使同模板的账号共享同一枚指针（U22 §2.1：摘要缓存需要"一个模板一次 build 只有
+// 一个对象"这个便宜的键）；nil scope = 不共享，与旧行为逐字节相同。
+//
+// 按模板 ID 复用是**安全**的，因为 Ent 的 eager-load 本身就按 ID 折叠：
+// AccountQuery.loadTemplate 先按 TemplateID 去重外键，再把同一个模板实体分配给
+// 该 ID 的所有账号（internal/ent/account_query.go:493-518）。所以同一次查询内
+// 同 ID 的 `Edges.Template` 是同一枚实体，toDomainTemplate 末尾的 ext 合并
+// （strip_image_tools / upstream_paths / codex transport）结果必然一致，
+// 「复用第一份」不会丢差异。
+//
+// 共享的是**只读**对象。"模板不可变"不是我在这里新加的纪律，而是既有前提：
+// toDomainTemplate 本来就把 ent 行的 Models / FormatModels / ModelMapping /
+// UpstreamPaths 直接别名过去（不是深拷贝），所以"持有模板的人必须只读"在共享之前
+// 就已成立。本单元只把"每账号一份"换成"每模板一份"，没有新增可变面；唯一的增量
+// 风险是"写一处影响多个账号"，由构造期定型（scheduler.newSnapshotStatic）与
+// AST 门禁（template_immutability_gate_test.go）共同兜住。
+func toDomainAccountWithTemplateScope(a *ent.Account, scope *TemplateLoadScope) *domain.Account {
+	tpl := toDomainAccountTemplate(a, scope)
 	multBp := a.UpstreamCostMultiplierBp
 	d := &domain.Account{
 		ID: a.ID, Name: a.Name, TemplateID: a.TemplateID, Template: tpl,
@@ -251,6 +312,29 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		}
 	}
 	return d
+}
+
+// toDomainAccountTemplate 取账号的 domain 模板：无模板边 → nil；无作用域 → 现转
+// 一份（不共享）；有作用域 → 作用域内同 ID 复用同一枚（首次出现时转换并登记）。
+//
+// 三个分支合在一处，是为了让"复用"只有一条路径：任何给模板转换加行为的人都必须
+// 同时看到共享语义，而不是在两份转换代码里各写一遍。
+func toDomainAccountTemplate(a *ent.Account, scope *TemplateLoadScope) *domain.Template {
+	t := a.Edges.Template
+	if t == nil {
+		return nil
+	}
+	if scope == nil {
+		return toDomainTemplate(t)
+	}
+	if tpl, ok := scope.templates[t.ID]; ok {
+		scope.hits++
+		return tpl
+	}
+	tpl := toDomainTemplate(t)
+	scope.templates[t.ID] = tpl
+	scope.misses++
+	return tpl
 }
 
 // toDomainProxy ent 行 → domain.Proxy（可空列：nil 落零值——空串即无认证，

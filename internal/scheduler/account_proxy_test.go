@@ -142,7 +142,7 @@ func TestProxyPlanKeySensitivity(t *testing.T) {
 	pxB := &domain.Proxy{ID: 2, Scheme: domain.ProxySchemeSOCKS5, Host: "10.0.0.2", Port: 1080, Enabled: true}
 
 	keyOf := func(a *domain.Account) planKey {
-		return planKeyOf(newSnapshotStatic(*a, tplA, nil, directEgress()))
+		return planKeyOf(newSnapshotStatic(*a, tplA, nil, directEgress(), nil))
 	}
 
 	boundA := keyOf(proxyAcc(t, 1, tplA, pxA))

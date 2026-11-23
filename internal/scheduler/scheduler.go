@@ -587,7 +587,11 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 装载侧审计：非法传输值在这里留 WARN（每模板一条），值本身原样带进快照，
 	// 归一留给 domain 的 Key()/Name()。必须在装配前跑，且不在热路径上。
 	s.warnDirtyCodexTransports(m)
-	groups, byID := buildSnapshots(m, oldByID, s.cfg.Egress)
+	// 本次重载作用域的模板摘要表：一次 reload 一张，贯穿下面的 buildSnapshots。
+	// 下一次重载从 DB 读回的是新 ent 行 → 新 domain 模板对象 → 新表项，故模板
+	// 内容的改动必然重算（跨 reload 复用同一张表会让摘要陈旧，见类型注释）。
+	digests := newTemplateDigestCache()
+	groups, byID := buildSnapshots(m, oldByID, s.cfg.Egress, digests)
 	// codex 槽位池：与静态叶**同一发布点**（sv.identityPools）——门禁读的
 	// MaxConcurrency（byID 叶）与 request 认领的池 K 恒同源，杜绝「门禁上限
 	// 已变、池仍旧」的双发布路径。按当前账号集与容量重建注册表
@@ -774,7 +778,12 @@ func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Accoun
 // pool 是出口 client 池（**恒非 nil**，由 cfg.Egress 保证）：这里做**唯一一次**
 // 规格解析——快照上存的是解析好的 `*egress.Client`，热路径只读指针。仍保持包级
 // 函数（不为了 pool 改成方法）：复用/发布的调用面太多，改接收者等于改一片。
-func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot, pool *egress.Pool) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+//
+// digests 是**调用方作用域**的模板摘要表（可为 nil = 逐次计算）：reloadLocked
+// 一次重载建一张，invalidateGroupsLocked 一个批次建一张并贯穿该批所有组——
+// 缓存生命周期由调用方决定，本函数既不建也不清（在函数内建等于"每组一次"，
+// 批量路径上同一个模板会被重复派生 G 次）。
+func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot, pool *egress.Pool, digests *templateDigestCache) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
 	// First pass: collect per-account group membership and latest Account object.
 	type accInfo struct {
 		acc      *domain.Account
@@ -814,7 +823,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		if acc.Proxy != nil {
 			eg = pool.For(specOfDomain(acc.Proxy))
 		}
-		av := newSnapshotStatic(acc, a.Template, inf.groupIDs, eg)
+		av := newSnapshotStatic(acc, a.Template, inf.groupIDs, eg, digests)
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的

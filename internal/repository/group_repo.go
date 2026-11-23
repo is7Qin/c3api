@@ -129,9 +129,9 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 }
 
 // LoadGroupsAccounts 全量组→账号快照（调度器启动/定时/全量失效的数据源）。
-// 扫描纪律与返回语义见 loadGroupsAccounts。
+// 扫描纪律与返回语义见 loadGroupsAccounts；模板作用域是本调用私有的一张表。
 func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error) {
-	m, _, err := r.loadGroupsAccounts(ctx, false)
+	m, _, err := r.loadGroupsAccounts(ctx, false, nil)
 	return m, err
 }
 
@@ -139,7 +139,14 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 // （含未编组账号）：调度器用它给账号配置权威提供"账号全集"这一份事实。不额外发
 // 查询——`all` 就来自组→账号折叠用的同一份账号表扫描结果。
 func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*domain.Account, []*domain.Account, error) {
-	return r.loadGroupsAccounts(ctx, true)
+	return r.loadGroupsAccounts(ctx, true, nil)
+}
+
+// LoadGroupsAccountsFullScoped 与 LoadGroupsAccountsFull 相同，但模板共享由**调用方
+// 提供**的作用域承载：一次全量构建传一张，作用域贯穿这次扫描的全部组（U22 §2.1）。
+// scope 为 nil 时退化为"本次调用各建一张"，与 LoadGroupsAccountsFull 完全等价。
+func (r *GroupRepo) LoadGroupsAccountsFullScoped(ctx context.Context, scope *TemplateLoadScope) (map[int64][]*domain.Account, []*domain.Account, error) {
+	return r.loadGroupsAccounts(ctx, true, scope)
 }
 
 // loadGroupsAccounts 是全量快照的扫描本体（withUniverse 决定是否额外产出账号全集）。
@@ -175,7 +182,11 @@ func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*do
 // 结果语义与旧 eager-load 一致：所有组都在 map 中（无账号组为空切片），
 // 账号只出现在其所属组且带模板。（唯一窗口差异：组 id 扫描后被并发删除的
 // 组不会出现在结果中——见下方白名单守卫；旧 eager-load 同窗口行为。）
-func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool) (map[int64][]*domain.Account, []*domain.Account, error) {
+func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool, scope *TemplateLoadScope) (map[int64][]*domain.Account, []*domain.Account, error) {
+	if scope == nil {
+		// nil = 本次调用私有的一张表（既有调用点/测试的默认语义）。
+		scope = NewTemplateLoadScope()
+	}
 	// 软删除：已删 account/group 不进调度器快照（成员关系白名单守卫同语义）。
 	// 模板侧嵌套 WithExt：快照合并 StripImageTools（ext IN 参数数受模板
 	// 表实体数约束——同一小表界，见上方注释）；账号侧 ext 不 eager-load
@@ -194,8 +205,12 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool) (
 		return nil, nil, fmt.Errorf("load groups-accounts (proxy scan): %w", err)
 	}
 	byID := make(map[int64]*domain.Account, len(accs))
+	// 模板作用域（U22 §2.1）：扫描内同 template_id 的账号复用同一枚
+	// *domain.Template（Ent 同查询同 ID 同实体，见 toDomainAccountWithTemplateScope）。
+	// 作用域由调用方持有：全量构建传一张贯穿全部组，组级失效传一张贯穿整批；
+	// nil 已在上方退化为本次调用私有的一张。
 	for _, a := range accs {
-		d := toDomainAccount(a)
+		d := toDomainAccountWithTemplateScope(a, scope)
 		expandAccountProxy(d, proxies)
 		if snap, ok := extByAccount[a.ID]; ok {
 			// 凭据内容与 K 来自**同一条**语句（见 accountExtSnapshot）：成对覆盖，
@@ -400,7 +415,20 @@ type accountExtSnapshotRow struct {
 // groups g ON ag.group_id = g.id WHERE g.id = $1)`——外层 IN 是子查询
 // （非参数列表），语句参数数恒为 1（+ 模板 IN，受模板表实体数约束）。
 // 返回无序（调用方构建快照/路由，不依赖顺序）。
+// 模板作用域是本调用私有的一张表（同组内同模板共享一枚指针）；需要跟整批失效共享
+// 时用 LoadGroupAccountsScoped。
 func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error) {
+	return r.LoadGroupAccountsScoped(ctx, groupID, nil)
+}
+
+// LoadGroupAccountsScoped 与 LoadGroupAccounts 相同，但模板共享由**调用方提供**的
+// 作用域承载：一次组级失效批次传一张，串联该批每个受影响组的载入（U22 §2.1）。
+// 不这样做的话，"同模板跨组"会退化成每组一份指针，后续按指针键的摘要缓存就只能
+// 做到"每组每模板一次"。scope 为 nil 时与 LoadGroupAccounts 完全等价。
+func (r *GroupRepo) LoadGroupAccountsScoped(ctx context.Context, groupID int64, scope *TemplateLoadScope) ([]*domain.Account, error) {
+	if scope == nil {
+		scope = NewTemplateLoadScope()
+	}
 	// 软删除：已删 account 不进调度器快照（与 LoadGroupsAccounts 同语义）。
 	// 账号侧 ext 同触顶约束（单组账号 >65,535）：不 eager-load，按组定向取
 	// （EXISTS 子查询，参数数恒为 1）；ext 与父行 K 在同一条语句里读出
@@ -422,7 +450,7 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 		return nil, fmt.Errorf("load group accounts (proxy scan, group %d): %w", groupID, err)
 	}
 	for _, a := range accs {
-		d := toDomainAccount(a)
+		d := toDomainAccountWithTemplateScope(a, scope)
 		expandAccountProxy(d, proxies)
 		if snap, ok := extByAccount[a.ID]; ok {
 			// 凭据内容与 K 来自同一条语句（见 accountExtSnapshot）。

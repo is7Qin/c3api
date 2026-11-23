@@ -96,7 +96,7 @@ func buildRoutesReference(accs []*accountSnapshot) map[routeKey]*route {
 // routeAccount 造一个已挂静态叶的账号快照（tpl 可为 nil）。
 func routeAccount(id int64, tpl *domain.Template) *accountSnapshot {
 	return newAccountSnapshot(
-		newSnapshotStatic(domain.Account{ID: id}, tpl, nil, directEgress()),
+		newSnapshotStatic(domain.Account{ID: id}, tpl, nil, directEgress(), nil),
 		&accState{status: domain.StatusActive},
 	)
 }
@@ -423,7 +423,7 @@ func TestBuildRoutesRandomizedDifferential(t *testing.T) {
 // 这条真实链路，而不是手搓的 struct。位置参数**故意**与 tplRouteFactsKey 的字段顺序
 // 对齐：谁往键里加第 6 维，这里编译失败，逼他补一条注入用例。
 func routeFactsKeyOf(tpl *domain.Template) tplRouteFactsKey {
-	av := newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress())
+	av := newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress(), nil)
 	k := av.key
 	return tplRouteFactsKey{k.credentialType, k.modelsDigest, k.formatModelsKey, k.supportedFormats, k.modelMappingKey}
 }
@@ -490,8 +490,10 @@ const (
 // routeBenchDomainAccounts 是 A3000_M100 的生产形状夹具，**两个维度都写死**
 // （spec §4.5 第 4 条）：
 //
-//   - **每账号独立 `*domain.Template` 指针**：生产上 repository/mapping.go 的
-//     toDomainAccount 逐账号 toDomainTemplate（ent 的 eager-load 不按 ID 共享指针）⇒
+//   - **每账号独立 `*domain.Template` 指针**：U22 第一步之后生产上同一次载入里同
+//     template_id 已共享同一枚指针，但本夹具**刻意保持每账号一份**：它证明
+//     tplRouteFactsKey 不靠指针身份（共享指针 / 同内容不同指针 / 同 ID 不同内容
+//     三种形状由本文件下方的等价用例覆盖）⇒
 //     指针去重在生产恒不命中，夹具必须让它在基准里也占不到便宜；
 //   - **顺序恶意**：2999 个不命中热模型 m-000 的白名单账号在前（每个各持 99 个模型，
 //     在"查询模型 = m-000"上必然失配），真正服务 m-000…m-099 的模板排**最后** ——
