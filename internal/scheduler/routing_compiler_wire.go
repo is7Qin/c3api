@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -95,12 +96,13 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // takes fireSkip and compiles nothing at all. exec/observe boundary: compile
 // EXECUTES off-path; request observation only READS the published view.
 //
-// The decision digest is computed ONLY when the skip guard could match
-// (D1): the guard needs the same static root, and a staged fire always has a
-// brand-new root, so a staged fire can never skip — hashing the canonical
-// encoding there would be pure cost. A publish that could not hash therefore
-// unloads the guard (lastDigestSet = armed) instead of keeping a digest that
-// no longer describes the published view.
+// Guard cost (U31 D1 + U33 D2): the skip guard needs the same static root, and
+// a staged fire always has a brand-new root, so a staged fire can never skip and
+// hashes nothing. A same-root fire that recompiled only the affected routes does
+// not hash the 1.9 GB canonical stream either: the scoped merge hands every
+// unaffected route forward by pointer, so comparing the affected route bodies is
+// exact (see sameAffectedView). Only a full compile against an already-published
+// root — no pointer reuse to lean on — falls back to the whole-stream digest.
 func (s *Scheduler) compileOnce() {
 	scopes, scopeOverflow := s.drainCompileScopes()
 	// now is read ONCE per fire (single-M discipline): the fire-minute stamp
@@ -198,12 +200,27 @@ func (s *Scheduler) compileOnce() {
 	s.incidentActive.Store(int64(s.incidents.activeCount()))
 	s.incidentEvalMs.Store(s.timeNow().UnixMilli())
 	// D1 arming: the skip guard below is only reachable when this fire compiles
-	// against the root that is already published, so hash only then. A staged
-	// fire (target is a freshly staged root) can never match the guard.
+	// against the root that is already published. A staged fire (target is a
+	// freshly staged root) can never match the guard.
 	armed := s.lastCompiledStatic == target
+	// guarded tracks whether `digest` describes the view this fire publishes.
+	// Only the whole-stream fallback computes one (D2), so a scoped publish must
+	// unload the guard instead of keeping a digest the new view no longer matches.
+	guarded := armed && tookFull
 	var digest decisionDigest
+	same := false
 	if armed {
-		digest = s.digester.digest(dv)
+		if tookFull {
+			// No pointer reuse to lean on: a full compile rebuilds every route,
+			// so only the whole canonical stream can prove equality.
+			digest = s.digester.digest(dv)
+			same = s.lastDigestSet && s.lastDigest == digest
+		} else if carry != nil && dv != nil {
+			// The loaded carry is the published view (read under publisher.mu
+			// above) and the scoped merge copied its untouched entries by
+			// pointer, so affected routes alone decide equality.
+			same = s.digester.sameAffectedView(carry, dv, fire.affected)
+		}
 	}
 
 	s.publisher.mu.Lock()
@@ -215,14 +232,14 @@ func (s *Scheduler) compileOnce() {
 		s.RequestCompile()
 		return
 	}
-	if armed && s.lastDigestSet && s.lastDigest == digest {
+	if same {
 		s.publisher.mu.Unlock()
 		return
 	}
 	if pendingSnap != nil {
 		published := s.publisher.publishPairLocked(target, dv)
 		s.lastDigest = digest
-		s.lastDigestSet = armed
+		s.lastDigestSet = guarded
 		s.lastCompiledStatic = published
 		s.publisher.mu.Unlock()
 		return
@@ -230,7 +247,7 @@ func (s *Scheduler) compileOnce() {
 	s.publisher.mu.Unlock()
 	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
 		s.lastDigest = digest
-		s.lastDigestSet = armed
+		s.lastDigestSet = guarded
 		s.lastCompiledStatic = target
 	}
 }
@@ -396,8 +413,14 @@ func (s *canonicalSink) bytes() []byte {
 // decisionDigester is the compile-lane-owned production digest state: a fixed
 // 32 KiB scratch sink plus reusable sort scratch, with no buffer sized by the
 // canonical stream. Single owner: the serial compile lane (compileOnce).
+//
+// prevSink/nextSink are the D2 affected-route comparison scratch: collect mode,
+// so each holds at most one route body (never the view), and they are reused
+// across fires instead of being allocated per comparison.
 type decisionDigester struct {
-	sink canonicalSink
+	sink     canonicalSink
+	prevSink canonicalSink
+	nextSink canonicalSink
 }
 
 func (d *decisionDigester) digest(dv *DecisionView) decisionDigest {
@@ -406,6 +429,66 @@ func (d *decisionDigester) digest(dv *DecisionView) decisionDigest {
 	encodeCanonical(&d.sink, dv)
 	sum := d.sink.sum()
 	return decisionDigest{sum: sum, count: int64(d.sink.count()), isNil: dv == nil}
+}
+
+// sameAffectedView reports whether next carries the same publish identity as
+// prev, given that next came out of a scoped compile of prev: every unaffected
+// route is the SAME *RouteDecision pointer in both views (compileScopedRoutes
+// merges the published map and only replaces affected entries).
+//
+// This is deliberately STRICTER than the whole-stream digest it replaces, never
+// looser: whole and len(routes) are compared explicitly (encodeCanonical writes
+// neither, so a wholeness flip or a dropped route is invisible to the digest),
+// and every affected route is compared byte for byte. A stricter guard can only
+// publish more often — it can never hide a changed view. The difference set is
+// exactly `same bytes ∧ different whole`, which now publishes.
+func (d *decisionDigester) sameAffectedView(prev, next *DecisionView, affected map[RouteRef]struct{}) bool {
+	if prev == next {
+		return true
+	}
+	if prev == nil || next == nil {
+		return false
+	}
+	if len(prev.routes) != len(next.routes) || prev.whole != next.whole {
+		return false
+	}
+	for ref := range affected {
+		pd, pok := prev.routes[ref]
+		nd, nok := next.routes[ref]
+		if pok != nok {
+			// Added or dropped by this fire: the ref itself is the difference.
+			return false
+		}
+		if !pok || pd == nd {
+			// Absent on both sides, or carried by pointer: identical by
+			// construction, so nothing to encode.
+			continue
+		}
+		if !d.sameRouteBody(pd, nd) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameRouteBody compares the canonical payload of one route in two views. The
+// RouteRef is the map key (identity, already accounted for) and is therefore not
+// part of the payload. Both sinks are reused, so a comparison allocates nothing
+// sized by the route body.
+func (d *decisionDigester) sameRouteBody(a, b *RouteDecision) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	d.prevSink.collect = true
+	d.prevSink.resetCollect()
+	writeRouteBody(&d.prevSink, a)
+	d.nextSink.collect = true
+	d.nextSink.resetCollect()
+	writeRouteBody(&d.nextSink, b)
+	return bytes.Equal(d.prevSink.bytes(), d.nextSink.bytes())
 }
 
 // decisionViewBytes 编码为规范字节（测试与一次性调用面；每次新建收集 sink）。
@@ -450,41 +533,54 @@ func encodeCanonical(s *canonicalSink, d *DecisionView) int {
 	})
 	s.writeUvarint(uint64(len(s.refs)))
 	for _, ref := range s.refs {
-		rd := d.routes[ref]
+		// The ref's five components identify the route record; the payload is
+		// written by the single per-route writer below.
 		s.writeVarint(ref.GroupID)
 		s.writeString(ref.Format)
 		s.writeString(ref.Model)
 		s.writeString(ref.OperationTag)
 		s.writeString(ref.RouteClassID)
-		s.writeString(rd.Format)
-		s.writeString(rd.RequestedModel)
-		s.writeString(rd.RouteClassID)
-		s.writeString(rd.CallerCategory)
-		s.writeString(rd.OperationTag)
-		writeCompiled(s, rd.Primary)
-		writeCompiled(s, rd.Degraded)
-		writeCompiled(s, rd.Explore.Ordered)
-		s.ids = s.ids[:0]
-		for id := range rd.Explore.Weights {
-			s.ids = append(s.ids, id)
-		}
-		slices.Sort(s.ids)
-		s.writeUvarint(uint64(len(s.ids)))
-		for _, id := range s.ids {
-			s.writeVarint(id)
-			s.writeVarint(int64(rd.Explore.Weights[id]))
-		}
-		s.writeUvarint(uint64(len(rd.Explore.Cumulative)))
-		for _, c := range rd.Explore.Cumulative {
-			s.writeUvarint(c)
-		}
-		s.writeUvarint(rd.Explore.Total)
-		s.writeVarint(int64(rd.Explore.ExploreBP))
-		writeCompiledIndices(s, rd.Explore.Ordered, rd.Explore.Fallback)
-		writeCacheDomainPlan(s, rd)
-		writeIncident(s, rd.Incident)
+		writeRouteBody(s, d.routes[ref])
 	}
 	return s.count()
+}
+
+// writeRouteBody writes the canonical payload of ONE route decision: every
+// encoded field of rd in fixed order, and nothing else. Two boundaries are
+// load-bearing: the RouteRef (the map key, already compared as identity) and the
+// view-level route-count prefix are NOT payload, so neither is written here.
+//
+// Single writer: encodeCanonical (whole-view bytes, the digest and test oracle)
+// and the D2 publish guard (per-route bytes) both call this, so the two
+// encodings can never drift apart.
+func writeRouteBody(s *canonicalSink, rd *RouteDecision) {
+	s.writeString(rd.Format)
+	s.writeString(rd.RequestedModel)
+	s.writeString(rd.RouteClassID)
+	s.writeString(rd.CallerCategory)
+	s.writeString(rd.OperationTag)
+	writeCompiled(s, rd.Primary)
+	writeCompiled(s, rd.Degraded)
+	writeCompiled(s, rd.Explore.Ordered)
+	s.ids = s.ids[:0]
+	for id := range rd.Explore.Weights {
+		s.ids = append(s.ids, id)
+	}
+	slices.Sort(s.ids)
+	s.writeUvarint(uint64(len(s.ids)))
+	for _, id := range s.ids {
+		s.writeVarint(id)
+		s.writeVarint(int64(rd.Explore.Weights[id]))
+	}
+	s.writeUvarint(uint64(len(rd.Explore.Cumulative)))
+	for _, c := range rd.Explore.Cumulative {
+		s.writeUvarint(c)
+	}
+	s.writeUvarint(rd.Explore.Total)
+	s.writeVarint(int64(rd.Explore.ExploreBP))
+	writeCompiledIndices(s, rd.Explore.Ordered, rd.Explore.Fallback)
+	writeCacheDomainPlan(s, rd)
+	writeIncident(s, rd.Incident)
 }
 
 // writeIncident encodes the expose-only mark in fixed field order (sorted

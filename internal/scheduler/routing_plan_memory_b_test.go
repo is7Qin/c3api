@@ -70,6 +70,12 @@ func TestRPM_B1_DigestMatchesFrozenOracle(t *testing.T) {
 }
 
 // --- B2 ---
+//
+// U33 D2 moved the scoped-fire path off the whole-view digest (it compares the
+// affected route bodies instead), so the digest guard is now reachable only
+// through a compiler that cannot do a scoped compile. These tests therefore pin
+// the digest FALLBACK with u33FullOnlyCompiler; the scoped protocol is covered by
+// TestU33D2_SameRootDriftPublishesOnlyRealChanges and friends.
 
 // rpmAdvanceGenCompiler compiles normally but, once, advances the published
 // generation mid-compile so the fire's base-generation CAS fails.
@@ -115,6 +121,7 @@ func TestRPM_B2_DigestGuardPublishState(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSchedStatic(t, m)
+	s.compiler = &u33FullOnlyCompiler{inner: NewRoutingCompiler()}
 	qA := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(30, 29, 100, 100), 2: qualityInput(10, 5, 100, 100),
 	}, accs)
@@ -175,7 +182,9 @@ func TestRPM_B2_SupersededLeavesGuard(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	// Arm the guard first (the constructor's fire published a staged root, which
-	// leaves it unloaded): a same-root fire is what puts the digest in charge.
+	// leaves it unloaded): a same-root fire on the digest fallback is what puts a
+	// digest in charge.
+	s.compiler = &u33FullOnlyCompiler{inner: NewRoutingCompiler()}
 	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 	s.compileOnce()
 	require.True(t, s.lastDigestSet)
@@ -215,7 +224,7 @@ func TestRPM_B2_BaseCASFailureLeavesGuard(t *testing.T) {
 
 	// A subsequent valid compile still publishes (and arms the guard, because it
 	// compiles against the root that is already published).
-	s.compiler = NewRoutingCompiler()
+	s.compiler = &u33FullOnlyCompiler{inner: NewRoutingCompiler()}
 	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 	s.compileOnce()
 	require.NotEqual(t, dig0, s.lastDigest, "valid compile must publish a new digest")
