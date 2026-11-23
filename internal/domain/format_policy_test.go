@@ -317,10 +317,15 @@ func scanFormatGateSites(t *testing.T) (bps, allowed map[string]int) {
 		if perr != nil {
 			return fmt.Errorf("解析 %s 失败：%w", rel, perr)
 		}
-		if n := countFormatGateCalls(f, "BPSFormatsOnly"); n > 0 {
+		if n, cerr := countFormatGateCalls(f, "BPSFormatsOnly"); cerr != nil {
+			// 点导入：点名文件，让下一个人不用猜是哪一处让整条门禁失明。
+			return fmt.Errorf("%s: %w", rel, cerr)
+		} else if n > 0 {
 			bps[rel] = n
 		}
-		if n := countFormatGateCalls(f, "FormatAllowedFor"); n > 0 {
+		if n, cerr := countFormatGateCalls(f, "FormatAllowedFor"); cerr != nil {
+			return fmt.Errorf("%s: %w", rel, cerr)
+		} else if n > 0 {
 			allowed[rel] = n
 		}
 		return nil
@@ -330,14 +335,22 @@ func scanFormatGateSites(t *testing.T) (bps, allowed map[string]int) {
 }
 
 // countFormatGateCalls 统计一个文件里对 name 的**调用**数：同时识别选择器形式
-// （domain.FormatAllowedFor(...)）与包内裸标识符形式（FormatAllowedFor(...)）。
-// 函数声明不是 CallExpr，自然不计入。
+// （domain.FormatAllowedFor(...) / d.FormatAllowedFor(...)）与包内裸标识符形式
+// （FormatAllowedFor(...)）。函数声明不是 CallExpr，自然不计入。
+//
+// 选择器的前缀与 countBPSSymbolUses 共用 domainImportNames：默认名 / 别名都数得到，
+// 点导入则由那个助手返回错误（裸调用会被洗成裸 Ident，而裸 Ident 分支只认
+// `package domain`，另一包里的点导入等于让计数器失明）。
 //
 // 裸标识符分支必须限定在 domain 包内（f.Name.Name == "domain"）：生产里只有
 // internal/domain 的两个文件用裸调。若不加包名限制，别的包定义一个同名 no-op
 // 再加一处裸调用，就能让门禁误以为调用在位，而真正的格式门已被替换——这正是
 // 整支对抗评审实测到的绕过路径。
-func countFormatGateCalls(f *ast.File, name string) int {
+func countFormatGateCalls(f *ast.File, name string) (int, error) {
+	domainPkgs, err := domainImportNames(f)
+	if err != nil {
+		return 0, err
+	}
 	count := 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -353,13 +366,15 @@ func countFormatGateCalls(f *ast.File, name string) int {
 			if fn.Sel.Name != name {
 				return true
 			}
-			if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "domain" {
-				count++
+			if pkg, ok := fn.X.(*ast.Ident); ok {
+				if _, isDomain := domainPkgs[pkg.Name]; isDomain {
+					count++
+				}
 			}
 		}
 		return true
 	})
-	return count
+	return count, nil
 }
 
 // formatPolicyRoot 定位模块根：本文件在 <root>/internal/domain/ 下，向上找到含

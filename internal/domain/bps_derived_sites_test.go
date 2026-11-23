@@ -204,7 +204,9 @@ func TestBPSDerivedUseCountsUsesNotDeclarations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", tc.src, parser.SkipObjectResolution)
 			require.NoError(t, err, "合成源码必须可解析")
-			require.Equal(t, tc.want, countBPSSymbolUses(f, tc.symbol))
+			got, err := countBPSSymbolUses(f, tc.symbol)
+			require.NoError(t, err, "本组夹具都不含点导入")
+			require.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -244,7 +246,12 @@ func scanBPSDerivedSites(root string) (map[bpsSiteKey]int, error) {
 			return fmt.Errorf("解析 %s 失败：%w", rel, perr)
 		}
 		for _, symbol := range bpsDerivedSymbols {
-			if n := countBPSSymbolUses(f, symbol); n > 0 {
+			n, cerr := countBPSSymbolUses(f, symbol)
+			if cerr != nil {
+				// 点导入：点名文件，让下一个人不用猜是哪一处让整条门禁失明。
+				return fmt.Errorf("%s: %w", rel, cerr)
+			}
+			if n > 0 {
 				got[bpsSiteKey{file: rel, symbol: symbol}] = n
 			}
 		}
@@ -254,22 +261,30 @@ func scanBPSDerivedSites(root string) (map[bpsSiteKey]int, error) {
 }
 
 // countBPSSymbolUses 统计一个文件里对 symbol 的**使用**次数：选择器形态
-// （domain.BPSDefaultEndpoint / domain.BPSProfileHash(...)）与包内裸标识符形态
+// （domain.BPSDefaultEndpoint / d.BPSProfileHash(...)）与包内裸标识符形态
 // （bps.go 的 `raw == BPSDefaultEndpoint`）。裸标识符分支只在 f.Name.Name == "domain"
 // 的文件里生效，理由与 countBPSFormatsOnlyCalls 相同：不加包名限制，别的包定义一个
 // 同名 no-op 再裸调一处，就能让门禁误以为派生点还在位。
 //
-// 声明不是使用，必须跳过三类 Ident：
+// 选择器的前缀**不是**硬编码的 "domain"，而是 domainImportNames 从 ImportSpec 里
+// 解析出的本地名集合（默认名 / 别名）。点导入让两个分支同时失明，故由那个助手直接
+// 返回错误、这里原样上抛，调用方 t.Fatalf——宁可整条门禁红，也不要静默绿。
+//
+// 声明不是使用，必须跳过四类 Ident：
 //   - FuncDecl.Name（`func BPSProfileHash(...)`，生产实例 internal/domain/bps.go:206）；
 //   - ValueSpec.Names（`const BPSDefaultEndpoint = ...`，bps.go:22）；
-//   - TypeSpec.Name。
+//   - TypeSpec.Name；
+//   - Field.Names（结构体字段 / 函数参数 / 结果 / 嵌入字段 / 接口方法名）。漏了这条
+//     时，新增一个同名结构体字段就会凭空多算 1 次——方向是假红。
 //
 // 选择器的 Sel（`domain.BPSProfileHash` 里那个 BPSProfileHash）也要跳过：它已经在
 // SelectorExpr 分支计过，若再进裸标识符分支，package domain 的文件会平白多 1。
-//
-// 已知边界（与 countBPSFormatsOnlyCalls 一致）：包名别名（`import d ".../domain"` 后写
-// `d.BPSProfileHash`）数不到。生产里没有别名导入，出现时门禁会以"少一处"变红，不会漏绿。
-func countBPSSymbolUses(f *ast.File, symbol string) int {
+func countBPSSymbolUses(f *ast.File, symbol string) (int, error) {
+	// 先解析本地名：点导入在这里直接失败，不产生任何"半成品计数"。
+	domainPkgs, err := domainImportNames(f)
+	if err != nil {
+		return 0, err
+	}
 	declared := map[*ast.Ident]struct{}{}
 	selected := map[*ast.Ident]struct{}{}
 	count := 0
@@ -290,6 +305,12 @@ func countBPSSymbolUses(f *ast.File, symbol string) int {
 					declared[name] = struct{}{}
 				}
 			}
+		case *ast.Field:
+			for _, name := range node.Names {
+				if name != nil {
+					declared[name] = struct{}{}
+				}
+			}
 		case *ast.SelectorExpr:
 			if node.Sel == nil {
 				return true
@@ -298,8 +319,10 @@ func countBPSSymbolUses(f *ast.File, symbol string) int {
 			if node.Sel.Name != symbol {
 				return true
 			}
-			if pkg, ok := node.X.(*ast.Ident); ok && pkg.Name == "domain" {
-				count++
+			if pkg, ok := node.X.(*ast.Ident); ok {
+				if _, isDomain := domainPkgs[pkg.Name]; isDomain {
+					count++
+				}
 			}
 		case *ast.Ident:
 			if node.Name != symbol || f.Name.Name != "domain" {
@@ -315,5 +338,5 @@ func countBPSSymbolUses(f *ast.File, symbol string) int {
 		}
 		return true
 	})
-	return count
+	return count, nil
 }
