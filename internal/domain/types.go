@@ -376,10 +376,18 @@ type Template struct {
 // FormatsFor 模板支持的格式列表。
 func (t *Template) FormatsFor() []RequestFormat { return t.SupportedFormats }
 
-// FormatSupports 格式 f 是否支持模型 m（模型级限制）：
-// f 不在 SupportedFormats → false；FormatModels[f] 配置了 → m ∈ 列表；未配置 → true。
+// FormatSupports 格式 f 是否支持模型 m。
+//
+// 判据顺序：① 逐 Type 格式政策行（FormatAllowedFor —— BPS 只允许 resp/resp-ws 等，
+// 表外类型放行，语义见该函数注释）；② f ∈ SupportedFormats；③ FormatModels[f]
+// 配置了 → m ∈ 列表，未配置 → true。
+//
+// ① 必须在 ② 之前且**独立于** ②：format_models 的键可以指向一个该类型并不允许的
+// 格式（历史行/DB 直改造成），此前的 `IsBPS() && !BPSFormatsOnly` 写法在
+// scheduler 的 blanket（model-less）分支上被绕过去了（那条分支只调 tplSupportsFormat），
+// 于是 responses-special 的 5 格式行在"无 model"桶上不生效。现在两条路径共用一个判据。
 func (t *Template) FormatSupports(f RequestFormat, m string) bool {
-	if t.CredentialType.IsBPS() && !BPSFormatsOnly([]RequestFormat{f}) {
+	if !FormatAllowedFor(t.CredentialType, f) {
 		return false
 	}
 	if !slices.Contains(t.SupportedFormats, f) {

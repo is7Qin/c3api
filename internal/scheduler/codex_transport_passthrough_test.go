@@ -22,7 +22,10 @@ import (
 // codexTransportTpl 构造携带传输开关的 codex 模板：开关只对 codex 号池类型
 // 有意义（写面对非 codex 只放行 ""），用例必须在该类型上验证才有判别力。
 func codexTransportTpl(id int64, tr domain.CodexResponsesTransport) *domain.Template {
-	tp := tpl(id, domain.FormatOpenAIChat, []string{"m"})
+	// 格式必须落在 codex 的政策行内（resp/resp-ws/images/search）：运行时格式门与
+	// 写面共用 domain.allowedFormats，chat 对 codex 类型不是合法行（写面本就拒绝），
+	// 拿 chat 构造会让路由不可编译——用例测的是传输开关，不该被格式门挡在门外。
+	tp := tpl(id, domain.FormatOpenAIResponses, []string{"m"})
 	tp.CredentialType = credential.TypeCodexOAuth
 	tp.CodexResponsesTransport = tr
 	return tp
@@ -69,7 +72,7 @@ func TestSelectPicksUpCodexTransportAfterTemplateSwitch(t *testing.T) {
 	s := newSched(t, m)
 
 	before := reuseByID(s, 1)
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportDefault, sel.CodexResponsesTransport,
 		"未配置 ⇒ Selection 携带零值（默认面 http）")
@@ -86,7 +89,7 @@ func TestSelectPicksUpCodexTransportAfterTemplateSwitch(t *testing.T) {
 	require.NoError(t, s.reload(context.Background()))
 	s.compileOnce()
 
-	sel2, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	sel2, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportWS, sel2.CodexResponsesTransport,
 		"模板改成 ws 后，选中必须看到 ws（复用旧叶会让开关永远不生效）")
@@ -105,7 +108,7 @@ func TestSelectionCarriesRawCodexTransport(t *testing.T) {
 	tplx := codexTransportTpl(1, domain.CodexResponsesTransportHTTP)
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
 
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportHTTP, sel.CodexResponsesTransport,
 		"显式 http 原样进入 Selection（不归一成零值）")
@@ -173,8 +176,17 @@ func TestWarnDirtyCodexTransportsOncePerTemplate(t *testing.T) {
 	plain.CodexResponsesTransport = domain.CodexResponsesTransport("WS")
 	s.warnDirtyCodexTransports(map[int64][]*domain.Account{20: {acc(4, plain, 4)}})
 
+	// **表外类型**（credential_type 未设的历史行/手工夹具）上的脏值：同样不报。
+	// 这一段是整个判据的判别力来源：`UsesStaticKey()` 带 `ok &&` 守卫，表外类型返回
+	// false ⇒ `!UsesStaticKey()` 会把它判成"非静态"⇒ 多一条 WARN。改成
+	// ChannelOf(t)==ChannelStaticKey（零值即静态通道）才与改前语义等价。
+	outside := tpl(11, domain.FormatOpenAIChat, []string{"m"})
+	outside.CredentialType = ""
+	outside.CodexResponsesTransport = domain.CodexResponsesTransport("WS")
+	s.warnDirtyCodexTransports(map[int64][]*domain.Account{30: {acc(6, outside, 4)}})
+
 	lines := warnLines(t, lg, path)
-	require.Len(t, lines, 1, "同一模板多账号只留一条 WARN")
+	require.Len(t, lines, 1, "同一模板多账号只留一条 WARN；表外类型不得额外报一条")
 	require.Contains(t, lines[0], `"template_id":7`)
 	require.Contains(t, lines[0], `"value":"WS"`, "字段必须是原值，不是归一后的结果")
 }

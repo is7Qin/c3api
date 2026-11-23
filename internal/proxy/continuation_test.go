@@ -135,12 +135,21 @@ func contProxyBind(t *testing.T, format domain.RequestFormat, accs []*domain.Acc
 	for _, a := range accs {
 		ids = append(ids, a.ID)
 	}
+	nativeByID := make(map[int64]bool, len(accs))
+	for _, a := range accs {
+		if a != nil && a.Template != nil {
+			nativeByID[a.ID] = a.Template.CredentialType.SupportsContinuation()
+		}
+	}
 	for _, m := range tpl.Models {
 		compiled := make([]scheduler.CompiledCandidate, len(ids))
 		for i, id := range ids {
 			compiled[i] = scheduler.CompiledCandidate{AccountID: id}
 		}
-		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: compiled})
+		// 手工拼装的路由决策必须显式声明续接兼容位（零值 = fail-closed 方向）：
+		// 纯 codex 组"不查 Redis"是这些用例的前提，不能让夹具漏设把它测丢。
+		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m),
+			&scheduler.RouteDecision{Primary: compiled, ContinuationNativeOnly: continuationNativeOnly(nativeByID, ids)})
 	}
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))

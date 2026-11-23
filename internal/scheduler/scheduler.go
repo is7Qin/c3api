@@ -120,6 +120,19 @@ type Selection struct {
 	CredentialType  credential.Type
 	Model           string // 已应用模型映射
 	StripImageTools bool
+	// SkipContinuation 本次派发是否**跳过** previous_response_id 的续接解析
+	// （构造期定型：预留装配点按两条逐 Type 能力位算好，见 scheduler.skipContinuationFor）。
+	//
+	// 今天只有 BPS 为真：BPS 既没有服务端续接、也不吃 c3api 的绑定账本，id 原样留在
+	// 请求里由 SDK 丢弃（c3api 不做 body 工作）。它与能力位
+	// credential.SupportsContinuation 是**两个问题**：能力位回答"这个类型能不能原生
+	// 续接"（计划级、决定要不要 fail-closed 解析），本政策位回答"这次派发要不要连
+	// 绑定账本都不碰"（请求级）。
+	//
+	// 为什么放在这里（靠前）而不是追加到尾部：本字段占用 StripImageTools 之后
+	// 的对齐空洞，Selection 尺寸保持 272B（bench_test.go 的 size gate）。追加到尾部
+	// 会多占 8B——有意登记，不是随手排版。
+	SkipContinuation bool
 	// UpstreamPaths custom 的逐格式自定义上游路径（只读引用快照 map，不复制、
 	// 不修改；nil = 未配置 = 全部回落官方默认端点）。
 	UpstreamPaths map[string]string
@@ -756,7 +769,19 @@ func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Accoun
 	for _, accs := range accounts {
 		for _, a := range accs {
 			tpl := a.Template
-			if tpl == nil || (!tpl.CredentialType.IsCodex() && !tpl.CredentialType.IsBPS()) || tpl.CodexResponsesTransport.Valid() {
+			// 判据是**静态通道**（不是 codex/bps 两个谓词的合取）：它只问"这条模板
+			// 会不会被 codex responses 传输开关影响"，即"是不是 Responses-SDK 凭据"。
+			//
+			// 必须写成 ChannelOf(t)==ChannelStaticKey（等价写法：取反的「Responses-SDK
+			// 凭据」能力判定），
+			// **不许**写成 !tpl.CredentialType.UsesStaticKey()：UsesStaticKey 带 `ok &&`
+			// 守卫，表外类型（未设 credential_type 的历史行/手工夹具）返回 false，于是
+			// !UsesStaticKey() 把表外模板判成"非静态"⇒ 多报一条 WARN（并且对表内静态
+			// 类型也整体反过来）。而 ChannelOf 的零值正是 ChannelStaticKey：表外类型落回
+			// "静态"这一侧，与改前的双通道谓词合取（「非 codex 且非 bps」，两者在表外
+			// 均为 false）逐字节等价。守它的是
+			// TestWarnDirtyCodexTransportsOncePerTemplate 里 credential_type 留空的夹具。
+			if tpl == nil || credential.ChannelOf(tpl.CredentialType) == credential.ChannelStaticKey || tpl.CodexResponsesTransport.Valid() {
 				continue
 			}
 			if _, dup := seen[tpl.ID]; dup {
@@ -813,7 +838,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		// 而 reload 持 publisher.mu 按 K 同步分配 K 个 UUID（写面只校验 ≥1，
 		// tools/loadtest 曾配 100000）。钳在 acc 上使门禁与池 K 读同一份值，恒同源。
 		acc := *a
-		if acc.Template != nil && acc.Template.CredentialType.IsCodex() && acc.MaxConcurrency > maxIdentityPoolSlots {
+		if acc.Template != nil && credential.ChannelOf(acc.Template.CredentialType) == credential.ChannelCodex && acc.MaxConcurrency > maxIdentityPoolSlots {
 			acc.MaxConcurrency = maxIdentityPoolSlots
 		}
 		// 出口解析：**只在这里发生一次**（快照期，非热路径）。未绑定 = 直连

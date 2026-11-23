@@ -315,8 +315,9 @@ func (p *identityPool) collectThreads(reclaim *poolReclaim) {
 	}
 }
 
-// buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据
-// （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
+// buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex **通道**
+// （ChannelOf == ChannelCodex，今天 = oauth/pat；表外类型落静态通道 ⇒ 不建池）
+// 且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
 // StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
 // 供复用（未变的池原样保留在途 busy 与会话身份）；删除/非 codex 的账号不在新
 // 表中 → 旧池随之 GC。K 的上界已在 buildSnapshots 装载期施加于 acc.MaxConcurrency。
@@ -331,7 +332,7 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 		if av == nil || av.tpl == nil || av.acc.Ext == nil {
 			continue
 		}
-		if !av.tpl.CredentialType.IsCodex() {
+		if credential.ChannelOf(av.tpl.CredentialType) != credential.ChannelCodex {
 			continue
 		}
 		k := av.acc.MaxConcurrency
@@ -367,13 +368,14 @@ func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
 	return nil
 }
 
-// claimCodexSession 为一次**已成功预留**的 codex 调用认领会话：仅 codex 凭据
-// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入会话身份）。pools 取自
+// claimCodexSession 为一次**已成功预留**的 codex 调用认领会话：入参是已解析好的
+// **凭据通道**（调用方在装配点时算过一次 ChannelOf，不再重复查表）；仅
+// ChannelCodex 认领；其余通道 / 无池 → nil（不认领、不注入会话身份）。pools 取自
 // 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
 // （不落池、无代际/退役面，计一条 warn）——installation/policy 取自池的**不可变
 // 字段**，不在租借之外读任何会话状态。
-func (s *Scheduler) claimCodexSession(pools *identityRegistry, accountID int64, credType credential.Type) (*codexSession, *identityPool) {
-	if !credType.IsCodex() || pools == nil {
+func (s *Scheduler) claimCodexSession(pools *identityRegistry, accountID int64, ch credential.Channel) (*codexSession, *identityPool) {
+	if ch != credential.ChannelCodex || pools == nil {
 		return nil, nil
 	}
 	pool := pools.pools[accountID]

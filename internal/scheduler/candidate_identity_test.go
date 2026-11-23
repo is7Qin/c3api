@@ -17,7 +17,8 @@ import (
 )
 
 func TestCandidateFingerprintProducerMatchesSelectionAndFailureEvent(t *testing.T) {
-	tpl := tpl(10, domain.FormatOpenAIChat, []string{"m"})
+	// codex 类型的政策行不含 chat（写面同样拒绝），用 responses 构造合法候选。
+	tpl := tpl(10, domain.FormatOpenAIResponses, []string{"m"})
 	tpl.CredentialType = credential.TypeCodexOAuth
 	a := acc(1, tpl, 4)
 	a.Ext = &domain.AccountExt{
@@ -29,7 +30,7 @@ func TestCandidateFingerprintProducerMatchesSelectionAndFailureEvent(t *testing.
 
 	want, err := candidateFingerprint(a)
 	require.NoError(t, err)
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
 	require.Equal(t, want, sel.CandidateFingerprint)
 

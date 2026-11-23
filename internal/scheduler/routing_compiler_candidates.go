@@ -4,6 +4,7 @@ package scheduler
 import (
 	"slices"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -208,7 +209,7 @@ func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFa
 		// Phase 1 has no safe JSONB repository projection yet. A BPS candidate
 		// without a canonical profile digest is therefore unroutable rather than
 		// silently falling back to Codex/static-key identity.
-		if fact.static.tpl.CredentialType.IsBPS() && fact.static.bpsProfileDigest == "" {
+		if credential.ChannelOf(fact.static.tpl.CredentialType) == credential.ChannelBPS && fact.static.bpsProfileDigest == "" {
 			continue
 		}
 		out = append(out, fact)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -71,8 +70,11 @@ func isBPSLocalReject(err error) bool {
 // continuation resolution: BPS has no server-side continuation, so the id is
 // left in the request for the SDK to drop. c3api deliberately does no body
 // work here (no scan/copy/marshal) — stripping is the SDK's job.
+//
+// 判据是 Selection 上的**构造期政策位**（预留装配点按凭据通道算一次），本函数只做
+// 字段读：数据面不再为这个结论查能力表/通道表（spec §9：政策构造期定型）。
 func bpsSkipsContinuation(sel *scheduler.Selection) bool {
-	return sel != nil && credential.ChannelOf(sel.CredentialType) == credential.ChannelBPS
+	return sel != nil && sel.SkipContinuation
 }
 
 // bpsInvalidBody builds the client-facing 400 for a pre-dial rejection. The SDK

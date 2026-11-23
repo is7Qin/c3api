@@ -226,12 +226,16 @@ func publishTestRoutes(tb testing.TB, s *scheduler.Scheduler) {
 	require.NoError(tb, err)
 	for gid, list := range accs {
 		byFormat := map[string][]int64{}
+		nativeByID := map[int64]bool{}
 		seen := map[int64]bool{}
 		for _, a := range list {
 			if a == nil || a.Template == nil || seen[a.ID] {
 				continue
 			}
 			seen[a.ID] = true
+			// 续接兼容位来自**逐 Type 能力列**（与编译期 planAllCandidatesNativeContinuation
+			// 同源），手工拼装的路由决策必须自己带上它：零值是 fail-closed 方向。
+			nativeByID[a.ID] = a.Template.CredentialType.SupportsContinuation()
 			for _, f := range a.Template.SupportedFormats {
 				fs := string(f)
 				if a.Enabled && a.FailedAt == nil {
@@ -242,6 +246,7 @@ func publishTestRoutes(tb testing.TB, s *scheduler.Scheduler) {
 			}
 		}
 		for f, ids := range byFormat {
+			native := continuationNativeOnly(nativeByID, ids)
 			models := map[string]struct{}{}
 			for _, a := range list {
 				if a == nil || a.Template == nil {
@@ -255,20 +260,32 @@ func publishTestRoutes(tb testing.TB, s *scheduler.Scheduler) {
 				}
 			}
 			if len(models) == 0 {
-				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, ""), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, ""), &scheduler.RouteDecision{Primary: compiledCandidates(ids), ContinuationNativeOnly: native})
 				if f == string(domain.FormatOpenAIImages) {
-					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, "", domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, "", domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids), ContinuationNativeOnly: native})
 				}
 				continue
 			}
 			for model := range models {
-				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, model), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, model), &scheduler.RouteDecision{Primary: compiledCandidates(ids), ContinuationNativeOnly: native})
 				if f == string(domain.FormatOpenAIImages) {
-					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, model, domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, model, domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids), ContinuationNativeOnly: native})
 				}
 			}
 		}
 	}
+}
+
+// continuationNativeOnly 报告这批候选账号的凭据类型是否**全部**原生支持服务端续接
+// （今天 = 全是 codex 族）。空集按"全部支持"处理（没有候选的计划不可能派发，与编译期
+// planAllCandidatesNativeContinuation 的空表语义一致）。
+func continuationNativeOnly(nativeByID map[int64]bool, ids []int64) bool {
+	for _, id := range ids {
+		if !nativeByID[id] {
+			return false
+		}
+	}
+	return true
 }
 
 func compiledCandidates(ids []int64) []scheduler.CompiledCandidate {

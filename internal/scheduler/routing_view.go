@@ -95,6 +95,24 @@ type RouteDecision struct {
 	Explore             ExploreDecision
 	CacheDomainRing     CacheDomainRing
 	CacheDomainAccounts []CacheDomainAccount
+	// ContinuationNativeOnly 本路由的候选**全部**支持服务端（原生）
+	// previous_response_id 续接（逐 Type 能力位，不是通道）。为真 ⇒ 绑定式续接解析
+	// 既不可能命中、也不需要执行；为假（零值）⇒ 必须 fail-closed 地解析绑定。
+	//
+	// 为什么存**肯定式**而不是 ContinuationIncompatible：零值必须是保守方向。手工
+	// 拼装的路由决策（测试替身、未来新增的旁路）不带这一位时，若字段语义是
+	// "不兼容"（false=兼容），零值就会静默变成"纯 codex 计划" ⇒ 跳过解析 ⇒ API key
+	// 的缺失绑定不再 410、模型静默丢上下文。肯定式的零值反过来是"有人可能不支持
+	// 续接" ⇒ 照旧解析，fail-closed。
+	//
+	// **编译期一次定型**：候选集合在编译完成后不再变（Primary / Explore.Ordered /
+	// Degraded 三张不可变表），因此"是否全都原生支持续接"是路由的静态事实，不该在每次
+	// 请求上重算（旧实现 PlanHasNonCodexCandidate 在续接请求里回查视图 + 逐候选 map
+	// 查找）。AttemptPlan 的构造期只把这一位拷进只读位。
+	//
+	// 判据来源见 planAllCandidatesNativeContinuation：能力位来自 internal/credential
+	// 的逐 Type caps（SupportsContinuation），与执行通道是两条轴。
+	ContinuationNativeOnly bool
 	// Incident is the expose-only mark (detect + surface: never reorders
 	// lanes, never throttles, never probes). Zero = no incident.
 	Incident RouteIncident
@@ -157,11 +175,12 @@ func cloneRouteDecision(in *RouteDecision) *RouteDecision {
 		RequestedModel: in.RequestedModel, RouteClassID: in.RouteClassID,
 		CallerCategory: in.CallerCategory, OperationTag: in.OperationTag,
 		Primary: cloneCompiled(in.Primary), Degraded: cloneCompiled(in.Degraded),
-		Explore:             cloneExploreDecision(in.Explore),
-		CacheDomainRing:     cloneCacheDomainRing(in.CacheDomainRing),
-		CacheDomainAccounts: append([]CacheDomainAccount(nil), in.CacheDomainAccounts...),
-		Incident:            in.Incident,
-		validated:           false,
+		Explore:                cloneExploreDecision(in.Explore),
+		CacheDomainRing:        cloneCacheDomainRing(in.CacheDomainRing),
+		CacheDomainAccounts:    append([]CacheDomainAccount(nil), in.CacheDomainAccounts...),
+		Incident:               in.Incident,
+		ContinuationNativeOnly: in.ContinuationNativeOnly,
+		validated:              false,
 	}
 	return out
 }

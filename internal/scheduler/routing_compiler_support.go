@@ -44,8 +44,16 @@ func callerKindForFormat(f domain.RequestFormat) domain.CallerKind {
 	return formatSpecs[f].callerKind
 }
 
+// tplSupportsFormat 是**无模型**（blanket）桶的模板格式门：逐 Type 格式政策行 ∧
+// SupportedFormats，与 Template.FormatSupports 的 ①② 两步共用同一个判据
+// （domain.FormatAllowedFor），故两条路径不可能分叉。
+//
+// 这里此前写的是「BPS 通道谓词 ∧ 切片版政策判定」：
+// blanket 分支只调本函数，于是 responses-special 的格式行在"无 model"桶上不生效
+// （需要一条违反写面策略的历史行才可达，但既然发现就修）。改法是把逐 Type 判定
+// 交给政策表的单格视图，判据只剩数据源一处。
 func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {
-	if tpl.CredentialType.IsBPS() && !domain.BPSFormatsOnly([]domain.RequestFormat{format}) {
+	if !domain.FormatAllowedFor(tpl.CredentialType, format) {
 		return false
 	}
 	return slices.Contains(tpl.SupportedFormats, format)

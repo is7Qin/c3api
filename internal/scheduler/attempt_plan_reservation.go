@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -66,34 +67,61 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 	return plan, nil
 }
 
-// PlanHasNonCodexCandidate 计划绑定的路由决策里是否有非 Codex 凭据的候选（Primary、
-// Explore 全集、Degraded；按当前视图的模板凭据类型判定）。只在带
-// previous_response_id 的请求上调用（续接解析前置判定，不在普通请求路径上）。视图
-// 未就绪、候选不在视图或无模板时按“有非 Codex”返回 true——保守地保留续接解析与
-// fail-closed。
-func (s *Scheduler) PlanHasNonCodexCandidate(plan *AttemptPlan) bool {
-	if plan == nil || plan.route == nil {
-		return true
-	}
-	v := s.view.Load()
-	if v == nil || v.static == nil {
-		return true
-	}
-	nonCodex := func(cs []CompiledCandidate) bool {
+// planAllCandidatesNativeContinuation 报告计划的候选车道里的候选是否**全部**原生
+// 支持 previous_response_id 的服务端续接。
+//
+// 语义（与它取代的旧判定逐条等价，除了"通道"换成"能力"）：
+//   - 只看计划真正会用的三张表：Primary、Explore.Ordered、Degraded；
+//   - 全为真 ⇒ 调用方**不解析**绑定：codex 不写续接绑定，这组请求不可能命中；
+//     previous_response_id 留在请求里交给 SDK，续接存储故障时同样放行（不 503）；
+//   - 有任何候选为假 ⇒ 调用方照旧先 contResolve（fail-closed：宁可多查一次 Redis、
+//     宁可 410/503，也不静默丢上下文）。
+//
+// 为什么判据是**能力位**而不是通道：旧实现问"是不是 codex 通道"，那在今天就等于
+// "能不能续接"。两条轴只是**当前**取值一致——一个未来的 codex 通道类型可以不支持
+// 服务端续接（例如换一种上游鉴权方式、读不回 response id）。判据读
+// credential.Type.SupportsContinuation（逐 Type caps 的能力列），故这种分化无需
+// 改调度层。
+//
+// 空表按"全部支持"返回 true：没有候选的计划不可能派发（预留必然失败），这一位对它
+// 没有意义；反过来返回 false 只会让不可能发生的路径多查一次 Redis。注意这条**只对
+// 编译产物**成立——手工拼装的路由决策走的是 RoutingView 上的零值（保守方向），见
+// RouteDecision.ContinuationNativeOnly 的注释。
+//
+// 纯函数 + 显式能力读投影（capable），不是包级可变状态：
+//   - 生产唯一调用点是**编译期**（assembleRouteDecision 传
+//     credential.Type.SupportsContinuation），结论落在 RouteDecision 的不可变位上；
+//   - 测试用它注入"codex 通道但不支持续接"的未来类型替身（capsTable 包私有，
+//     跨包注册不了），证明这条判定真的读能力而不是读通道。
+func planAllCandidatesNativeContinuation(primary, ordered, degraded []CompiledCandidate, capable func(credential.Type) bool) bool {
+	for _, cs := range [][]CompiledCandidate{primary, ordered, degraded} {
 		for i := range cs {
-			cur, ok := v.static.byID[cs[i].AccountID]
-			if !ok || cur == nil {
-				return true
-			}
-			av := cur.static.Load()
-			if av == nil || av.tpl == nil || !av.tpl.CredentialType.IsCodex() {
-				return true
+			if !capable(cs[i].PlanKey.credentialType) {
+				return false
 			}
 		}
-		return false
 	}
-	d := plan.route
-	return nonCodex(d.Primary) || nonCodex(d.Explore.Ordered) || nonCodex(d.Degraded)
+	return true
+}
+
+// skipContinuationFor 判断一次派发是否**完全跳过**续接解析（不只是"不需要原生续接"）。
+//
+// 语义是两条能力位的合取取反：
+//   - 没有原生续接能力（!SupportsContinuation）——这是"为什么不需要解析"的一半；
+//   - 也不吃 c3api 的绑定账本（!UsesStaticKey）——另一半。绑定账本里的 id 由
+//     静态 key 通道的响应产生（c3api 为该账号写的 response id），所以只有静态通道
+//     类型的 previous_response_id 可能有绑定；codex/bps 的上游 id 不在账本里。
+//
+// 今天唯一为真的是 BPS（无原生续接、也无账本）。**必须**写成两个能力位的合取，
+// 不能写成通道投影（`ChannelOf(t) == ChannelBPS`）：那会把"今天恰好只有 BPS 同时缺
+// 这两条"固化成一个通道判定，未来的 codex 通道变体（不支持续接、也不产生账本 id）
+// 会被误判成"要解析" ——反过来，任何新增的静态通道类型也会因为通道名不等于 BPS 被
+// 误判成"要解析"。能力位是逐 Type 声明的，新增类型必须显式回答这两问。
+//
+// 构造期一次定型：调用点在预留装配点，结果写进 Selection.SkipContinuation，数据面
+// 只读一位（不查任何表）。
+func skipContinuationFor(t credential.Type) bool {
+	return !t.SupportsContinuation() && !t.UsesStaticKey()
 }
 
 // ReserveAttempt applies request-time health, latch, status and
@@ -232,6 +260,9 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	if curAv == nil || curAv.tpl == nil {
 		return nil, Attempt{}, ErrAttemptsExhausted
 	}
+	// 凭据通道在**装配点算一次**（一次 map 查表）：Selection 的续接政策位与
+	// claimCodexSession 的分支共用同一个值，热路径不重复查表。
+	credCh := credential.ChannelOf(curAv.tpl.CredentialType)
 	selected := &Selection{
 		AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
 		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
@@ -256,13 +287,18 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		CacheDomain:    curAv.cacheDomain,
 		InstallationID: curAv.installationID,
 		Conversation:   plan.identity.Conversation,
+		// 续接派发政策位（构造期定型，构造期一次赋值）：判据**不是通道**，而是两条
+		// 逐 Type 能力位的合取（见 skipContinuationFor 的注释）——"没有原生续接，
+		// 也不吃绑定账本"才跳过解析，此时 previous_response_id 原样留给 SDK 丢弃
+		// （c3api 不做 body 工作）。
+		SkipContinuation: skipContinuationFor(curAv.tpl.CredentialType),
 	}
 	// 认领会话（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏会话）。仅 codex 凭据认领（claimCodexSession
 	// 内判定），非 codex → nil。池注册表取自本视图静态根——与门禁 limit 同源。
 	// 会话路径（Conversation）不认领：身份由 SDK 会话簿合成，槽位池无占用、无推进。
 	if !plan.identity.Conversation {
-		selected.session, selected.pool = s.claimCodexSession(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
+		selected.session, selected.pool = s.claimCodexSession(v.static.identityPools, curAv.acc.ID, credCh)
 	}
 	// 财务上下文随选中固定（供给准入门放行时同一次视图读取捕获；§4.2/§4.6）：
 	// 收尾只按本值落账，不再 Load/查 owner。

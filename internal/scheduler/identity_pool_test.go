@@ -375,31 +375,32 @@ func TestIdentityPoolRotatePolicyImmutable(t *testing.T) {
 		"空池也按字段回答（不读 slot）")
 }
 
-// TestClaimCodexSessionOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
-// 不落池；非 codex / 无池 → nil。
+// TestClaimCodexSessionOnlyCodexAndFallback 仅 codex **通道**认领（入参是预留装配点
+// 算好的 credential.Channel，不再是凭据类型谓词）；全忙兜底临时身份不落池；
+// 非 codex 通道 / 无池 → nil。
 func TestClaimCodexSessionOnlyCodexAndFallback(t *testing.T) {
 	pool := newTestPool(2, testPolicy())
 	s := &Scheduler{}
 	reg := &identityRegistry{pools: map[int64]*identityPool{7: pool}}
 
-	// 非 codex → nil
-	session, owner := s.claimCodexSession(reg, 7, credential.TypeAPIKey)
+	// 非 codex 通道 → nil（BPS 通道同样不认领：它没有 codex 会话池）
+	session, owner := s.claimCodexSession(reg, 7, credential.ChannelStaticKey)
 	require.Nil(t, session)
 	require.Nil(t, owner)
 	// 无池 → nil
-	session, owner = s.claimCodexSession(reg, 99, credential.TypeCodexOAuth)
+	session, owner = s.claimCodexSession(reg, 99, credential.ChannelCodex)
 	require.Nil(t, session)
 	require.Nil(t, owner)
 
 	// 认领入池会话
-	session, owner = s.claimCodexSession(reg, 7, credential.TypeCodexOAuth)
+	session, owner = s.claimCodexSession(reg, 7, credential.ChannelCodex)
 	require.NotNil(t, session)
 	require.Same(t, pool, owner, "返回所属池（代际/退役出口）")
 	require.True(t, session.busy.Load())
 
 	// 全忙兜底：临时身份不落池、不计 busy、无池。
-	s.claimCodexSession(reg, 7, credential.TypeCodexPAT) // 占满第二会话
-	ephem, ephPool := s.claimCodexSession(reg, 7, credential.TypeCodexPAT)
+	s.claimCodexSession(reg, 7, credential.ChannelCodex) // 占满第二会话
+	ephem, ephPool := s.claimCodexSession(reg, 7, credential.ChannelCodex)
 	require.NotNil(t, ephem)
 	require.False(t, ephem.busy.Load(), "兜底临时身份不落池（不计 busy）")
 	require.Nil(t, ephPool, "兜底身份无池（无代际/退役面）")
@@ -508,13 +509,22 @@ func TestIdentityPoolCapacityClamped(t *testing.T) {
 	huge := maxIdentityPoolSlots + 5000
 	codex := codexAcc(1, domain.FormatOpenAIResponses, "gpt-5", huge, "inst-1")
 	plain := acc(2, tpl(2, domain.FormatOpenAIChat, []string{"gpt-4o"}), huge) // api_key：无池
-	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {codex, plain}}))
+	// BPS 是**独立 provider**：它有 account_ext 与身份面（很容易被误当成 codex 族），
+	// 但没有 codex 会话池，因此 K 的上界（= 会话池容量）不适用于它。
+	bps := bpsAccWith(3, huge, &domain.AccountExt{
+		AccountID: 3, CredentialType: credential.TypeBPS,
+		BPSProfile: []byte(`{"profile_id":"p"}`),
+	})
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {codex, plain, bps}}))
 
 	v := s.View()
 	require.Len(t, v.static.identityPools.pools[1].slots, maxIdentityPoolSlots, "codex 池 K 钳到上界")
 	require.Equal(t, maxIdentityPoolSlots, v.static.byID[1].static.Load().acc.MaxConcurrency, "门禁上限同源钳制")
 	require.Nil(t, v.static.identityPools.pools[2], "非 codex 账号不建池")
 	require.Equal(t, huge, v.static.byID[2].static.Load().acc.MaxConcurrency, "非 codex 账号门禁不受上界影响")
+	require.Nil(t, v.static.identityPools.pools[3], "BPS 不建 codex 会话池")
+	require.Equal(t, huge, v.static.byID[3].static.Load().acc.MaxConcurrency,
+		"BPS 的 max_concurrency 不得被钳到 maxIdentityPoolSlots（它没有会话池，钳它等于凭空砍并发）")
 }
 
 // TestReloadPublishesPoolWithView 全量 reload 的池挂在与门禁同读的静态根上：

@@ -26,12 +26,21 @@ const (
 // 加一个类型时漏改任何一处都**静默**落 default——编译器不报错，生产走错分支。
 // 收成一张表之后，「漏掉」变成「表里没这一行」：caps_test.go 的 golden 会红。
 //
-// 除 validTplExt 外全部能力位由 ch 派生（validAcctExt / usesAccountExt /
-// fixedEndpoint = 非静态通道；usesStaticKey = 静态通道）。加列前先回答：它是否
-// 独立于 channel？不独立就不要加——多一列就多一个能与 ch 矛盾的状态。
+// 除 validTplExt 与 supportsContinuation 外全部能力位由 ch 派生（validAcctExt /
+// usesAccountExt / fixedEndpoint = 非静态通道；usesStaticKey = 静态通道）。加列前
+// 先回答：它是否独立于 channel？不独立就不要加——多一列就多一个能与 ch 矛盾的状态。
 type caps struct {
 	ch          Channel
-	validTplExt bool // 模板 ext 子表可用（唯一与 channel 无函数关系的能力位）
+	validTplExt bool // 模板 ext 子表可用（与 channel 无函数关系）
+	// supportsContinuation 该类型能否用 previous_response_id 做**服务端**续接。
+	//
+	// 它是**逐 Type 能力位，不是通道投影**：通道回答「这个类型由谁鉴权」，能力回答
+	// 「这个类型能不能续接」。今天两者取值恰好一致（codex 通道 = true，其余 = false），
+	// 但那是当前事实，不是不变量——一个未来的 codex 通道类型（换一种上游鉴权、
+	// 却读不回 response id）必须能把这一列单独设成 false。调度层的计划判定读的正是
+	// 这一列（见 scheduler.PlanContinuationIncompatible），任何把它写成
+	// `ChannelOf(t) == ChannelCodex` 的「简化」都会把两条轴重新焊死。
+	supportsContinuation bool
 }
 
 // capsTable 是唯一的能力真相：类型集合与每个能力位只在这里声明一次，方法只做
@@ -45,8 +54,8 @@ var capsTable = map[Type]caps{
 	TypeAPIKey:           {ch: ChannelStaticKey},
 	TypeResponsesSpecial: {ch: ChannelStaticKey, validTplExt: true},
 	TypeCustom:           {ch: ChannelStaticKey, validTplExt: true},
-	TypeCodexOAuth:       {ch: ChannelCodex, validTplExt: true},
-	TypeCodexPAT:         {ch: ChannelCodex, validTplExt: true},
+	TypeCodexOAuth:       {ch: ChannelCodex, validTplExt: true, supportsContinuation: true},
+	TypeCodexPAT:         {ch: ChannelCodex, validTplExt: true, supportsContinuation: true},
 	TypeBPS:              {ch: ChannelBPS, validTplExt: true},
 }
 

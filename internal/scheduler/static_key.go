@@ -263,11 +263,11 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	av.routable = routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
 	// 会话路径的两项账号级事实同样构造期定型（预留只拷字段，零分配）。仅 Codex
 	// 凭据填：非 Codex 面不走会话簿，零值即"无会话路径事实"。
-	if av.tpl != nil && av.tpl.CredentialType.IsCodex() {
+	if av.tpl != nil && credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelCodex {
 		av.cacheDomain = cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
 		av.installationID = installationIDOf(av.acc.Ext)
 	}
-	if av.tpl != nil && av.tpl.CredentialType.IsBPS() && av.acc.Ext != nil {
+	if av.tpl != nil && credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelBPS && av.acc.Ext != nil {
 		av.bpsProfileDigest = domain.BPSProfileHash(av.acc.Ext.BPSProfile)
 	}
 	var k planKey
@@ -275,13 +275,13 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.name = av.acc.Name
 	k.templateID = av.acc.TemplateID
 	if av.tpl != nil {
-		if av.tpl.CredentialType.IsBPS() {
+		if credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelBPS {
 			k.baseURL = domain.BPSDefaultEndpoint
 		} else {
 			k.baseURL = av.tpl.BaseURL
 		}
 	}
-	if (av.tpl == nil || !av.tpl.CredentialType.IsBPS()) && av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
+	if (av.tpl == nil || credential.ChannelOf(av.tpl.CredentialType) != credential.ChannelBPS) && av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 		k.baseURL = *av.acc.BaseURL
 	}
 	// 凭据原文不再单独入键，但读点与改前逐行同源（闭包门禁把 `$S.acc.UpstreamKey`
@@ -299,7 +299,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	// 其余模板形状（含 tpl == nil ⇒ isBPS 为假）沿用 pre-BPS 语义。
 	var credentialPAT string
 	if ext := av.acc.Ext; ext != nil {
-		isBPS := av.tpl != nil && av.tpl.CredentialType.IsBPS()
+		isBPS := av.tpl != nil && credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelBPS
 		if isBPS {
 			// BPS needs the verified upstream account claim for auth, but it
 			// never consumes Codex email/PAT/installation identity.
@@ -352,7 +352,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		k.modelMappingKey = d.modelMappingKey
 		k.upstreamPathsKey = d.upstreamPathsKey
 		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
-		if tpl.CredentialType.IsBPS() {
+		if credential.ChannelOf(tpl.CredentialType) == credential.ChannelBPS {
 			k.bpsProfileDigest = av.bpsProfileDigest
 		}
 	}

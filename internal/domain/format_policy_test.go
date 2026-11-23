@@ -95,16 +95,23 @@ func TestFormatPolicyMatrix(t *testing.T) {
 	}
 }
 
-// TestFormatPolicyUnknownType 表外类型：FormatsAllowedFor 必须 ok=false 且返回
-// nil，FormatAllowedFor 对任意格式必须 false。末尾钉住副本语义——调用方原地改写
-// 返回切片后，下一次调用必须仍是权威值。
+// TestFormatPolicyUnknownType 表外类型上的**两个视图必须分离**：
+//
+//   - FormatsAllowedFor（管理面：这个类型允许哪些格式）→ ok=false 且 nil，
+//     调用方必须显式拒绝；
+//   - FormatAllowedFor（运行时门：这个类型是否额外禁止某格式）→ **任意格式放行**。
+//     表外类型没有政策行 ⇒ 没有可施加的额外限制。这条是既有语义的冻结：
+//     BPS 门落地之前，运行时门就是 `IsBPS()`（表外 false ⇒ 不拦）。把 !ok 写成
+//     拒绝会静默拒掉那些没设 credential_type 的历史模板（夹具 tpl(8,…) 那类）。
+//
+// 末尾钉住副本语义——调用方原地改写返回切片后，下一次调用必须仍是权威值。
 func TestFormatPolicyUnknownType(t *testing.T) {
 	for _, typ := range []credential.Type{"", "bogus", "codex_oauth"} {
 		got, ok := FormatsAllowedFor(typ)
 		require.False(t, ok, "%q 不在表内 → ok=false", typ)
 		require.Nil(t, got, "%q 不在表内 → 返回 nil（不是空切片）", typ)
 		for _, f := range allRequestFormats {
-			require.False(t, FormatAllowedFor(typ, f), "%q × %q：未知类型恒 false", typ, f)
+			require.True(t, FormatAllowedFor(typ, f), "%q × %q：表外类型放行（无政策行 = 无额外限制）", typ, f)
 		}
 	}
 	first, ok := FormatsAllowedFor(credential.TypeBPS)
@@ -120,15 +127,43 @@ func TestFormatPolicyUnknownType(t *testing.T) {
 	require.Equal(t, authoritative, second[0], "FormatsAllowedFor 必须返回副本：调用方改不动权威表")
 }
 
-// formatGateSites 是 BPS 格式门的**调用点**全集（仓库相对路径 → 期望调用数）。
-// 站点 6 在 domain 包内是裸标识符调用（types.go），3/4/5 是 domain.BPSFormatsOnly
-// 选择器调用；四处都读同一张 allowedFormats 的 BPS 行，删掉任一处都能静默放行
-// 不该放行的格式，故必须逐个在位。
+// TestFormatAllowedForZeroAlloc 运行时格式门在 buildRoutes 的三层循环里被逐账号 ×
+// 模型 × 格式调用，故必须是纯查表 + slices.Contains：**零分配**。表外类型走的是同一
+// 条路径（`!ok` 直接返回 true），不得因为"要报告未知类型"而构造任何值。
+func TestFormatAllowedForZeroAlloc(t *testing.T) {
+	cases := []credential.Type{credential.TypeBPS, credential.TypeAPIKey, "", "bogus"}
+	for _, typ := range cases {
+		allocs := testing.AllocsPerRun(1000, func() {
+			_ = FormatAllowedFor(typ, FormatAnthropic)
+		})
+		require.Zero(t, allocs, "%q：运行时格式门必须零分配（allocs=%v）", typ, allocs)
+	}
+}
+
+// formatGateSites 是**运行时格式门**的调用点全集（仓库相对路径 → 期望调用数）。
+//
+// 迁移史（S2，谓词→通道）：BPS 门此前有四个站点——domain/types.go 与
+// scheduler/routing_compiler_support.go 各一处 `IsBPS() && !BPSFormatsOnly(...)`，
+// repository/template_repo.go 与 repository/batch.go 各一处 `BPSFormatsOnly(...)`。
+// 前两处改成逐 Type 单格判定 `domain.FormatAllowedFor(t, f)` 之后，`BPSFormatsOnly`
+// 就只剩仓库侧两个站点；调度/领域侧的 2 个站点**没有消失**，它们迁移成
+// `formatAllowedSites`（见下）——删除注册表等于把这两个站点从门禁里摘掉，那是削弱
+// 测试，不是迁移。
 var formatGateSites = map[string]int{
-	"internal/domain/types.go":                       1,
-	"internal/repository/template_repo.go":           1,
-	"internal/repository/batch.go":                   1,
-	"internal/scheduler/routing_compiler_support.go": 1,
+	"internal/repository/template_repo.go": 1,
+	"internal/repository/batch.go":         1,
+}
+
+// formatAllowedSites 是 `FormatAllowedFor`（逐 Type × 逐格式的单格视图）的调用点
+// 全集。它承接了上面迁移过来的两个站点：这两处是**运行时**格式门，删掉任一处都能
+// 静默放行不该放行的格式（BPS 拿到 anthropic、responses-special 拿到 chat），所以
+// 必须逐个在位、每处恰好一次。
+//
+// 为什么两族分开计数而不是合成一张表：判据是**调用形状**（切片子集 vs 单格），
+// 混在一起时"把格判定改写成切片判定"会让总数不变、门禁照绿。
+var formatAllowedSites = map[string]int{
+	"internal/domain/types.go":                       1, // Template.FormatSupports ①
+	"internal/scheduler/routing_compiler_support.go": 1, // tplSupportsFormat（blanket 桶）
 }
 
 // gateScanSkipTopDirs 是门禁遍历的排除项，按**模块根下的顶层路径**匹配：相对路径的
@@ -154,9 +189,9 @@ var formatGateSites = map[string]int{
 // `go build` 的 Go 包），BPS 格式门在那里出现调用点同样必须被数到。
 var gateScanSkipTopDirs = []string{".git", ".omo", "tmp", "node_modules", "vendor"}
 
-// TestBPSFormatGateSites 存在性门禁：扫**仓库全部非测试 .go**，`BPSFormatsOnly`
-// 的调用文件集合必须**恰好**等于 formatGateSites，每文件恰好 1 处调用；扫到 0 处
-// 必须失败（空转的门禁比没有门禁更危险）。
+// TestBPSFormatGateSites 存在性门禁（运行时格式门的第一族）：扫**仓库全部非测试
+// .go**，`BPSFormatsOnly` 的调用文件集合必须**恰好**等于 formatGateSites，每文件
+// 恰好 1 处调用；扫到 0 处必须失败（空转的门禁比没有门禁更危险）。
 //
 // 扫描面 = 模块根减去 gateScanSkipTopDirs 里的顶层非源码树（首段匹配，深层同名目录
 // 照扫；名单理由见该变量注释）；解析失败必须**点名文件**（仓库相对路径 + 解析器的
@@ -165,8 +200,32 @@ var gateScanSkipTopDirs = []string{".git", ".omo", "tmp", "node_modules", "vendo
 // 为什么是存在性而非否定式：把整块调用删掉不产生任何格式字面量，否定式 AST 拦
 // 不住；「调用数恰好为 1」既能抓删除，也能抓「改写成字面量」（调用消失）。
 func TestBPSFormatGateSites(t *testing.T) {
+	bps, _ := scanFormatGateSites(t)
+	require.NotEmpty(t, bps, "BPSFormatsOnly 调用点扫到 0 个：门禁在空转")
+	require.Equal(t, formatGateSites, bps, "BPSFormatsOnly 的调用点集合必须恰好是仓库侧两处，每处恰好 1 次调用")
+}
+
+// TestFormatAllowedGateSites 存在性门禁（运行时格式门的第二族，S2 从
+// TestBPSFormatGateSites 迁移过来）：`FormatAllowedFor` 的调用点集合必须**恰好**
+// 等于 formatAllowedSites。
+//
+// 为什么迁移而不删除：这两个站点原来写的是 `IsBPS() && !BPSFormatsOnly(...)`，
+// 改法只是把判定换成政策表的单格视图——站点本身的职责（运行时拦住不该放的格式）
+// 一点没变。删掉注册表 = 这两个站点从门禁里消失，而"删掉一处调用"正是这条门禁
+// 存在的理由。
+func TestFormatAllowedGateSites(t *testing.T) {
+	_, allowed := scanFormatGateSites(t)
+	require.NotEmpty(t, allowed, "FormatAllowedFor 调用点扫到 0 个：门禁在空转")
+	require.Equal(t, formatAllowedSites, allowed, "FormatAllowedFor 的调用点集合必须恰好是运行时两个站点，每处恰好 1 次调用")
+}
+
+// scanFormatGateSites 一次遍历仓库源码，分别数出两族运行时格式门的逐文件调用数。
+// 两族共用同一次解析（一次 IO、一个 AST），但**分开返回**：调用形状不同（切片子集
+// vs 单格），合成一张表会让"把格判定改写成切片判定"在总数上不可见。
+func scanFormatGateSites(t *testing.T) (bps, allowed map[string]int) {
+	t.Helper()
 	root := formatPolicyRoot(t)
-	got := map[string]int{}
+	bps, allowed = map[string]int{}, map[string]int{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -193,25 +252,27 @@ func TestBPSFormatGateSites(t *testing.T) {
 		if perr != nil {
 			return fmt.Errorf("解析 %s 失败：%w", rel, perr)
 		}
-		if n := countBPSFormatsOnlyCalls(f); n > 0 {
-			got[rel] = n
+		if n := countFormatGateCalls(f, "BPSFormatsOnly"); n > 0 {
+			bps[rel] = n
+		}
+		if n := countFormatGateCalls(f, "FormatAllowedFor"); n > 0 {
+			allowed[rel] = n
 		}
 		return nil
 	})
 	require.NoError(t, err, "扫描仓库源码失败")
-	require.NotEmpty(t, got, "BPSFormatsOnly 调用点扫到 0 个：门禁在空转")
-	require.Equal(t, formatGateSites, got, "BPS 格式门的调用点集合必须恰好是四处，每处恰好 1 次调用")
+	return bps, allowed
 }
 
-// countBPSFormatsOnlyCalls 统计一个文件里对 BPSFormatsOnly 的**调用**数：同时识别
-// 选择器形式（domain.BPSFormatsOnly(...)）与包内裸标识符形式（BPSFormatsOnly(...)）。
+// countFormatGateCalls 统计一个文件里对 name 的**调用**数：同时识别选择器形式
+// （domain.FormatAllowedFor(...)）与包内裸标识符形式（FormatAllowedFor(...)）。
 // 函数声明不是 CallExpr，自然不计入。
 //
 // 裸标识符分支必须限定在 domain 包内（f.Name.Name == "domain"）：生产里只有
-// internal/domain/types.go 用裸调。若不加包名限制，别的包定义一个同名 no-op
-// 再加一处裸调用，就能让门禁误以为调用在位，而真正的 BPS 门已被替换——这正是
+// internal/domain 的两个文件用裸调。若不加包名限制，别的包定义一个同名 no-op
+// 再加一处裸调用，就能让门禁误以为调用在位，而真正的格式门已被替换——这正是
 // 整支对抗评审实测到的绕过路径。
-func countBPSFormatsOnlyCalls(f *ast.File) int {
+func countFormatGateCalls(f *ast.File, name string) int {
 	count := 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -220,11 +281,11 @@ func countBPSFormatsOnlyCalls(f *ast.File) int {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if f.Name.Name == "domain" && fn.Name == "BPSFormatsOnly" {
+			if f.Name.Name == "domain" && fn.Name == name {
 				count++
 			}
 		case *ast.SelectorExpr:
-			if fn.Sel.Name != "BPSFormatsOnly" {
+			if fn.Sel.Name != name {
 				return true
 			}
 			if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "domain" {

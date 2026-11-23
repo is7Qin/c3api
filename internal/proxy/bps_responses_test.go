@@ -94,9 +94,13 @@ func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 }
 
 // TestBPSContinuationPolicy BPS 没有服务端续接：只跳过解析，不碰 body。
+//
+// 判据是 Selection 上的**构造期政策位**（预留装配点按两条逐 Type 能力位算好），
+// 数据面只读这一位；位本身的取值由 scheduler 的 TestSkipContinuationFor* 守。
 func TestBPSContinuationPolicy(t *testing.T) {
-	require.True(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeBPS}))
-	require.False(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeAPIKey}))
+	require.True(t, bpsSkipsContinuation(&scheduler.Selection{SkipContinuation: true}))
+	require.False(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeAPIKey}),
+		"静态 key 通道要吃绑定账本 ⇒ 绝不跳过解析（即便凭据类型被夹具设成 api_key）")
 	require.False(t, bpsSkipsContinuation(nil))
 
 	// 两条车道都必须接线到该判定（防漏接）；body 不出现任何 strip 调用。

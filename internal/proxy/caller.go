@@ -386,9 +386,9 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 }
 
 // resolveContinuationBinding 续接解析（REST 与 WS 共用）：
-//   - 计划里没有任何非 Codex 候选（纯 Codex 组）→ (nil, nil)，根本不解析：Codex 不
-//     写续接绑定，这组请求不可能命中，也就不查 Redis，续接存储故障时同样放行（不
-//     503）；previous_response_id 留在请求里交给 SDK；
+//   - 计划的候选**全都支持**服务端续接（今天 = 纯 Codex 组）→ (nil, nil)，根本不
+//     解析：Codex 不写续接绑定，这组请求不可能命中，也就不查 Redis，续接存储故障时
+//     同样放行（不 503）；previous_response_id 留在请求里交给 SDK；
 //   - 否则照常先 contResolve——命中 → 返回绑定，调用方照旧 contPin（API key 产出的
 //     id 在首个预留为 Codex 时仍钉回原账号）；
 //   - 未命中（missing/expired）且首个预留 sel 是 Codex → (nil, nil)：不 410、
@@ -397,8 +397,12 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 //   - 未命中且首个预留不是 Codex → 照旧 410；Redis 不可用 → 503（混合组无法判断
 //     是否存在 API key 绑定；放行会让 Codex 静默丢弃该 id、模型静默丢上下文，
 //     fail-closed 优先）。
+//
+// 判据读的是计划上的**构造期政策位**（plan.ContinuationIncompatible），不是控制面
+// 谓词：结论在编译期按逐 Type 能力位算好、构造期一次拷进计划，数据面只读一位
+// （spec §9：政策构造期定型，数据面不回调控制面）。
 func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
-	if !p.sched.PlanHasNonCodexCandidate(plan) {
+	if !plan.ContinuationIncompatible() {
 		return nil, nil
 	}
 	codexFirst := credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex

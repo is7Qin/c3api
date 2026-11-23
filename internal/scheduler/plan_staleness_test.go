@@ -17,7 +17,8 @@ import (
 // 一致（指纹可派生），token 可轮转。返回调度器、内存 loader 与路由。
 func oauthRotationFixture(t *testing.T, token, refresh string) (*Scheduler, *memLoader, RouteRef) {
 	t.Helper()
-	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	// codex 类型的政策行不含 chat（写面同样拒绝），用 responses 构造合法候选。
+	tplx := tpl(1, domain.FormatOpenAIResponses, []string{"m"})
 	tplx.CredentialType = credential.TypeCodexOAuth
 	a := acc(1, tplx, 4)
 	a.Ext = &domain.AccountExt{
@@ -29,7 +30,7 @@ func oauthRotationFixture(t *testing.T, token, refresh string) (*Scheduler, *mem
 	}
 	m := newMemLoader(map[int64][]*domain.Account{10: {a}})
 	s := newSched(t, m)
-	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	route := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
 	return s, m, route
 }
 

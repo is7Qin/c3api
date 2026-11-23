@@ -112,11 +112,11 @@ func TestFallbackSessionUsesPoolPolicy(t *testing.T) {
 	s := &Scheduler{}
 	reg := &identityRegistry{pools: map[int64]*identityPool{7: pool}}
 
-	busy, owner := s.claimCodexSession(reg, 7, credential.TypeCodexOAuth)
+	busy, owner := s.claimCodexSession(reg, 7, credential.ChannelCodex)
 	require.NotNil(t, busy)
 	require.Same(t, pool, owner)
 
-	ephem, ephPool := s.claimCodexSession(reg, 7, credential.TypeCodexOAuth)
+	ephem, ephPool := s.claimCodexSession(reg, 7, credential.ChannelCodex)
 	require.NotNil(t, ephem)
 	require.Nil(t, ephPool, "兜底身份无池")
 	require.Equal(t, policyB, ephem.threads.Policy(), "兜底身份的策略取自池字段")

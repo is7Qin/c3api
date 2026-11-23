@@ -31,10 +31,14 @@ type wantBehavior struct {
 	valid, validTplExt, validAcctExt bool
 	isCodex, isBPS, isRespProvider   bool
 	usesStaticKey                    bool
-	group                            []Type
+	// supportsContinuation 是**能力**轴（能不能用 previous_response_id 续接），
+	// 与上面的 isCodex/isBPS（通道轴）分开手抄：两列今天取值一致，而 golden 必须
+	// 能分开漂移，否则「能力 = 通道」这个错误假设没有任何一格钉得住。
+	supportsContinuation bool
+	group                []Type
 }
 
-// TestTypeBehaviorFrozen 冻结 6 个类型的 11 项行为 + 身份组。
+// TestTypeBehaviorFrozen 冻结 6 个类型的 12 项行为 + 身份组。
 //
 // 为什么断言方法而不是 capsTable 本身：今天比较表，明天表和 golden 一起改就全绿——
 // 而且那样锁的是实现面，不是调用方消费面。改表若不同步改这里，diff 会落在两种形状上
@@ -44,38 +48,38 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 		TypeAPIKey: {
 			valid: true, validTplExt: false, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true,
-			group:         []Type{TypeAPIKey},
+			usesStaticKey: true, supportsContinuation: false,
+			group: []Type{TypeAPIKey},
 		},
 		TypeResponsesSpecial: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true,
-			group:         []Type{TypeResponsesSpecial},
+			usesStaticKey: true, supportsContinuation: false,
+			group: []Type{TypeResponsesSpecial},
 		},
 		TypeCustom: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true,
-			group:         []Type{TypeCustom},
+			usesStaticKey: true, supportsContinuation: false,
+			group: []Type{TypeCustom},
 		},
 		TypeCodexOAuth: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
-			usesStaticKey: false,
-			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
+			usesStaticKey: false, supportsContinuation: true,
+			group: []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeCodexPAT: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
-			usesStaticKey: false,
-			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
+			usesStaticKey: false, supportsContinuation: true,
+			group: []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeBPS: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: false, isBPS: true, isRespProvider: true,
-			usesStaticKey: false,
-			group:         []Type{TypeBPS},
+			usesStaticKey: false, supportsContinuation: false,
+			group: []Type{TypeBPS},
 		},
 	}
 	// 表键集合与 golden 类型集合绑定：加/删表行而漏改这里 → 红（漏掉一行不再等于
@@ -90,7 +94,40 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 		require.Equal(t, w.isBPS, typ.IsBPS(), "%q.IsBPS", typ)
 		require.Equal(t, w.isRespProvider, typ.IsResponsesProvider(), "%q.IsResponsesProvider", typ)
 		require.Equal(t, w.usesStaticKey, typ.UsesStaticKey(), "%q.UsesStaticKey", typ)
+		require.Equal(t, w.supportsContinuation, typ.SupportsContinuation(), "%q.SupportsContinuation", typ)
 		require.Equal(t, w.group, typ.IdentityGroup(), "%q.IdentityGroup：身份组决定账号查重作用域，不能按名称猜", typ)
+	}
+}
+
+// TestContinuationCapabilityIsNotChannel 钉住「能力 ≠ 通道」：表内一个**未来类型**
+// 的替身——通道是 codex、但 supportsContinuation=false。
+//
+// 为什么需要它：今天 codex 通道恰好全都支持续接，于是
+// `SupportsContinuation() ≡ ChannelOf(t)==ChannelCodex` 这个等价式在**每一个**真实
+// 类型上成立，任何把它写成通道投影的实现都会全绿通过。这条测试把两列拆开，等价式
+// 当场失效——调度层的计划判定依赖的正是这个分叉（它读能力位，不读通道）。
+//
+// 注册方式：capsTable 是包私有的，所以替身只能在这里临时插入并在 Cleanup 里删除；
+// 表键集合的相等断言（TestTypeBehaviorFrozen / TestChannelFrozen）在删除后照旧成立
+// （本包不并行跑用例，见 AGENTS.md）。
+func TestContinuationCapabilityIsNotChannel(t *testing.T) {
+	const future Type = "codex-future-no-continuation"
+	capsTable[future] = caps{ch: ChannelCodex, validTplExt: true, supportsContinuation: false}
+	t.Cleanup(func() { delete(capsTable, future) })
+
+	require.Equal(t, ChannelCodex, ChannelOf(future),
+		"夹具的通道必须是 codex——否则这条测试证明不了两条轴能分开")
+	require.True(t, future.Valid())
+	require.True(t, future.IsCodex(), "通道是 codex ⇒ 通道投影 IsCodex 必须为真")
+	require.True(t, future.IsResponsesProvider())
+	require.False(t, future.SupportsContinuation(),
+		"codex 通道 + supportsContinuation=false 必须共存：能力位不是通道投影")
+
+	// 反向对照：真实 codex 类型的能力位为真——上面那条 false 不是「表外零值兜底」。
+	require.True(t, TypeCodexOAuth.SupportsContinuation())
+	require.True(t, TypeCodexPAT.SupportsContinuation())
+	for _, typ := range []Type{TypeAPIKey, TypeResponsesSpecial, TypeCustom, TypeBPS} {
+		require.False(t, typ.SupportsContinuation(), "%q：今天只有 codex 族支持续接", typ)
 	}
 }
 
@@ -132,7 +169,7 @@ func TestChannelOfInvalidType(t *testing.T) {
 // 把锁。补偿它的是 TestPredicatesOnUnknownType：那条锁的是表外语义（golden 不覆盖
 // 的维度），恰是 ch 派生最容易翻车的地方。
 
-// TestPredicatesOnUnknownType 表外类型（非法/未注册）上，**7 个布尔谓词全部必须
+// TestPredicatesOnUnknownType 表外类型（非法/未注册）上，**8 个布尔谓词全部必须
 // false**——逐谓词显式枚举，不写「全部谓词」的模糊断言。
 //
 // 为什么单独锁：caps 塌到 2 列后谓词全部由 c.ch 派生，而 ChannelOf 的零值正是
@@ -152,6 +189,7 @@ func TestPredicatesOnUnknownType(t *testing.T) {
 		{"IsBPS", Type.IsBPS},
 		{"IsResponsesProvider", Type.IsResponsesProvider},
 		{"UsesStaticKey", Type.UsesStaticKey},
+		{"SupportsContinuation", Type.SupportsContinuation},
 	}
 	for _, unknown := range []Type{"", "bogus", "codex_oauth"} {
 		for _, p := range predicates {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -241,6 +242,9 @@ func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr Ro
 		Explore:             ExploreDecision{Ordered: ordered, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallback, ExploreBP: exploreBP},
 		CacheDomainRing:     ring,
 		CacheDomainAccounts: accounts,
+		// 续接兼容性在**编译期**定型（候选三表此后不变），计划构造期只拷这一位。
+		// 车道选择与旧实现逐条一致：Primary ∪ Explore.Ordered ∪ Degraded。
+		ContinuationNativeOnly: planAllCandidatesNativeContinuation(primary, ordered, degraded, credential.Type.SupportsContinuation),
 	}
 	if err := validateRouteDecision(decision); err != nil {
 		return nil, err

@@ -199,11 +199,13 @@ func TestSelectFormatHardFilter(t *testing.T) {
 // TestSelectCredentialTypeFromTemplate 钉死：Selection.CredentialType 只来自
 // 模板（账号级无该字段；一个模板 = 一种号池）。
 func TestSelectCredentialTypeFromTemplate(t *testing.T) {
-	codexTpl := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
+	// codex 类型的政策行是 resp/resp-ws/images/search（写面同样只放行这些），
+	// chat 不在行内 ⇒ 运行时格式门会拒。这里测的是"类型随模板传播"，用合法行。
+	codexTpl := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-4o"})
 	codexTpl.CredentialType = credential.TypeCodexOAuth
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, codexTpl, 4)}})
 	s := newSched(t, m)
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	sel, err := s.Select(10, domain.FormatOpenAIResponses, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexOAuth, sel.CredentialType, "类型随模板传播")
 	sel.Release()

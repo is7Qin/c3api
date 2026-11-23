@@ -86,6 +86,23 @@ func (t Type) IsResponsesProvider() bool {
 	return ok && (c.ch == ChannelCodex || c.ch == ChannelBPS)
 }
 
+// SupportsContinuation reports whether this type can use previous_response_id for
+// **server-side** continuation.
+//
+// 这是**逐 Type 能力位**，不是通道投影：通道回答「由谁鉴权」，能力回答「能不能续接」。
+// 今天 codex 通道恰好为 true、其余 false，但那是当前取值，不是不变量——未来的 codex
+// 通道类型可以不支持续接（换一种鉴权方式、上游读不回 response id）。调度层的计划判定
+// 读的正是这一位（scheduler 的续接前置判定），任何把它改回 `ChannelOf(t)==ChannelCodex`
+// 的「简化」都会把两条轴重新焊死，见 caps.go 的 supportsContinuation 注释。
+//
+// 表外类型 → false（`ok &&` 守卫，与其余谓词同契约，见 TestPredicatesOnUnknownType）。
+// 该取值在调度层是**保守方向**：未知类型被当作"可能不支持续接" ⇒ 计划进入 fail-closed
+// 的续接解析分支。
+func (t Type) SupportsContinuation() bool {
+	c, ok := capsTable[t]
+	return ok && c.supportsContinuation
+}
+
 // IdentityGroup returns the credential types that share one upstream identity
 // namespace with t. Codex OAuth and PAT authenticate the same upstream Codex
 // account, so they remain one dedup group (a second row for the other Codex

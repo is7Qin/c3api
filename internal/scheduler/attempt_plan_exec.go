@@ -74,6 +74,23 @@ type selectSession struct {
 	// A decision-generation mismatch is tolerated only before execution
 	// starts; afterwards the strict fence applies.
 	reservationStarted bool
+	// continuationIncompatible 是**构造期定型的只读政策位**：本计划的候选里有人
+	// 可能不支持 previous_response_id 服务端续接 ⇒ 续接必须先解析（fail-closed）。
+	//
+	// 值的来源是 RouteDecision.ContinuationNativeOnly（编译期按逐 Type 能力位算好的
+	// 不可变事实）的**取反**，构造期一次赋值，此后本会话不再查视图、不再查能力表：
+	// 数据面（proxy）只读这一位，不回调控制面谓词（spec §9：政策构造期定型）。
+	//
+	// 取反不是笔误：路由位是肯定式的（"全都原生支持"），为了让它的零值落在保守
+	// 方向（详见 RouteDecision.ContinuationNativeOnly 的注释）；计划位保持调用方
+	// 读得懂的否定式（"有人可能不支持 ⇒ 要解析"）。两者只在这一处换向。
+	continuationIncompatible bool
+}
+
+// ContinuationIncompatible 报告续接解析是否必须执行。nil / 未绑定路由的计划按
+// **保守方向**返回 true：没有候选信息时不能断言"全都支持续接"，宁可 fail-closed。
+func (p *selectSession) ContinuationIncompatible() bool {
+	return p == nil || p.route == nil || p.continuationIncompatible
 }
 
 // AttemptPlan is the pinned harness spelling of selectSession: the
@@ -106,7 +123,12 @@ func newSelectSession(identity AttemptPlanIdentity, decision *RouteDecision) (se
 			return selectSession{}, err
 		}
 	}
-	p := selectSession{identity: identity, route: decision, generation: identity.RoutingGeneration, maxAttempts: normalizeMaxAttempts(identity.MaxAttempts)}
+	p := selectSession{
+		identity: identity, route: decision, generation: identity.RoutingGeneration,
+		maxAttempts: normalizeMaxAttempts(identity.MaxAttempts),
+		// 政策位在构造期一次定型（拷贝编译期结论并换向，不新增查表）：见字段注释。
+		continuationIncompatible: !decision.ContinuationNativeOnly,
+	}
 	if len(decision.Explore.Ordered) > 0 && decision.Explore.Total > 0 && len(decision.Explore.Cumulative) == len(decision.Explore.Ordered) {
 		ticket := exploreHashForPlan(identity, 0) % decision.Explore.Total
 		idx := sort.Search(len(decision.Explore.Cumulative), func(i int) bool {
