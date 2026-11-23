@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,6 +75,26 @@ func newOpsPGRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
 	return repos, pool
+}
+
+// opsUsageLogPartitionSet 当前 schema 下 usage_logs 的分区名集合。取数口径与
+// 生产 PartitionRepo.tablePartitionNames 一致（pg_inherits 取子表，不含父表
+// 自身），retention 断言用它算 before/after 的真实差集：pgtest 模板库只在
+// schema 变化时重建，永久携带建库当日的 usage_logs 日分区（pgtest.go:138-141），
+// 这些分区同样老于 cutoff，会被真实 DROP——DROP 数量因此不可硬编码。
+func opsUsageLogPartitionSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]struct{} {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid JOIN pg_class p ON p.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE p.relname = 'usage_logs' AND n.nspname = current_schema()`)
+	require.NoError(t, err)
+	defer rows.Close()
+	names := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		names[name] = struct{}{}
+	}
+	require.NoError(t, rows.Err())
+	return names
 }
 
 // TestOpsWorkersPG 端到端：真实 PG 上装配代表性 worker（usage/errlog/
@@ -178,9 +200,10 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Eventually(t, func() bool { return errlogW.Inserted() == 2 },
 		3*time.Second, 10*time.Millisecond, "errlog 周期 flush 落盘")
 
-	// --- 3) retention：预建 2 天前分区 → 启动巡检 DROP（真实 DROP 1 个；
-	// DropTablePartitionsBefore 边界为 d.Before(cut)，cutoff=now-1day → 当日
-	// 分区保留、2 天前分区删除） ---
+	// --- 3) retention：预建 2 天前分区 → 启动巡检 DROP 过期分区。断言用
+	// before/after 真实分区差集，不硬编码数量：pgtest 模板库只在 schema 变化
+	// 时重建，永久携带建库当日的 usage_logs 日分区（pgtest.go:138-141），它们
+	// 同样老于 cutoff=now-1day、会被真实 DROP——硬编码「1」必然随日期失败。
 	stale := now.AddDate(0, 0, -2)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, stale, stale))
 	// 路由事实表分区：兜底观测（A17）必须有真实分区可观测。必须先建父表 + 当日
@@ -189,12 +212,19 @@ func TestOpsWorkersPG(t *testing.T) {
 	// 再补建 day-2..today；它们都在观测保留 cutoff（now-7d）内，巡检不会 DROP。
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	require.NoError(t, repos.EnsureRoutingFactPartitions(ctx, stale, now))
+	before := opsUsageLogPartitionSet(t, ctx, pool)
 	require.NoError(t, retention.Start(ctx))
 	require.Eventually(t, func() bool {
 		return retention.Stats().(usage.RetentionWorkerStats).LastPatrolUnixMs > 0
 	}, 3*time.Second, 10*time.Millisecond, "启动即巡检")
 	rst := retention.Stats().(usage.RetentionWorkerStats)
-	require.Equal(t, int64(1), rst.LastDroppedLogPartitions, "DROP 分区数与真实一致")
+	after := opsUsageLogPartitionSet(t, ctx, pool)
+	t.Logf("usage_logs 分区 before=%v after=%v", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)))
+	require.Subset(t, before, after, "巡检只 DROP 过期分区：after 必须是 before 的子集")
+	require.Equal(t, int64(len(before)-len(after)), rst.LastDroppedLogPartitions, "DROP 计数 = before/after 真实分区差集")
+	require.Contains(t, after, "usage_logs_"+now.UTC().Format("20060102"), "当日分区在保留期内，不得 DROP")
+	require.NotContains(t, after, "usage_logs_"+stale.UTC().Format("20060102"), "夹具自建的过期分区必须 DROP")
+	require.Zero(t, rst.LastBlockedLogPartitions, "夹具无未确认资金事件，不该被屏障挡下")
 
 	// --- 4) /api/admin/ops/workers 端点：typed struct 断言 + 指标与真实状态一致 ---
 	// （并入管理面：路由由契约 chi-server 生成，走 /admin 组鉴权）
@@ -265,10 +295,12 @@ func TestOpsWorkersPG(t *testing.T) {
 	for _, w := range resp.Workers {
 		got[w.Name] = w.Stats.(map[string]any)
 	}
+	// 观测面 == worker 真实值（不硬编码：DROP 数量取决于模板库带进来的历史分区）。
+	rstLive := retention.Stats().(usage.RetentionWorkerStats)
 	require.Equal(t, float64(5), got["usage"]["pending_logs"], "usage pending 与真实一致")
 	require.Equal(t, float64(2), got["errlog"]["inserted"], "errlog 落盘计数与真实一致")
 	require.NotZero(t, got["retention"]["last_patrol_unix_ms"], "retention 巡检时刻已记")
-	require.Equal(t, float64(1), got["retention"]["last_dropped_log_partitions"], "DROP 分区数")
+	require.Equal(t, float64(rstLive.LastDroppedLogPartitions), got["retention"]["last_dropped_log_partitions"], "DROP 分区数 = worker 真实值")
 	// A17 保留期兜底：/ops 必须能读到路由事实表的分区数与最老分区时刻，且与库内
 	// 真实值一致。这是「保留 worker 停摆 ⇒ 分区静默无界增长」的唯一观测面。
 	// 分表值（quality/flow）、快照行数、无名分区数、stale 标记、路由 DROP 计数与
@@ -288,7 +320,6 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Equal(t, float64(wantStats.UndatedCount), gotRetention["undated_partition_count"], "/ops 无名分区数 = 库内真实值")
 	require.Equal(t, false, gotRetention["partition_stats_stale"], "成功巡检后 stale 必须为 false")
 	require.Equal(t, float64(7), gotRetention["routing_observation_retention_days"], "/ops 观测保留天数 = 装配值")
-	rstLive := retention.Stats().(usage.RetentionWorkerStats)
 	require.Equal(t, float64(rstLive.LastDroppedRoutingQualityParts), gotRetention["last_dropped_routing_quality_partitions"], "/ops quality DROP 计数 = worker 真实值")
 	require.Equal(t, float64(rstLive.LastDroppedRoutingFlowParts), gotRetention["last_dropped_routing_flow_partitions"], "/ops flow DROP 计数 = worker 真实值")
 	require.Equal(t, float64(1), got["scheduler"]["compile_cap"], "scheduler 编译道信号 cap=1（trailing-edge 合并）")
@@ -307,20 +338,15 @@ func TestOpsWorkersPG(t *testing.T) {
 	}
 	require.False(t, resp.GeneratedAt.IsZero())
 
-	// --- 5) 指标回检真实 DB：err_logs 恰 2 行；retention DROP 后分区消失；
-	// rec.Close 排空 → usage_logs 恰 5 行（pending 归零 = 真实落库） ---
+	// --- 5) 指标回检真实 DB：err_logs 恰 2 行；rec.Close 排空 → usage_logs
+	// 恰 5 行（pending 归零 = 真实落库）。过期分区是否真的消失已由上面的
+	// before/after 差集断言（同一取数口径）覆盖。 ---
 	countRows := func(table string) int {
 		var n int
 		require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n))
 		return n
 	}
 	require.Equal(t, 2, countRows("err_logs"), "inserted 指标 = err_logs 真实行数")
-	// 已 DROP 的分区表不存在（pg_tables 计数 = 0——DROP 计数与真实一致）。
-	var stalePartitions int
-	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename = $1",
-		"usage_logs_"+stale.UTC().Format("20060102")).Scan(&stalePartitions))
-	require.Zero(t, stalePartitions, "DROP 后过期分区已不存在（DROP 计数 = 真实）")
 
 	require.NoError(t, rec.Close(ctx), "rec.Close 真实排空 pending")
 	require.Zero(t, rec.Stats().(usage.RecorderStats).PendingLogs, "排空后 pending 归零")
