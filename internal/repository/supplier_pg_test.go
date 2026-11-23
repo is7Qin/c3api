@@ -108,6 +108,8 @@ func TestPGSupplierCreditChain(t *testing.T) {
 
 	s := seedSupplierUser(t, repos, "sup-credit@example.com")
 	now := time.Now().UTC()
+	// 下面两行按 now-1m / now-30s 回看：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	ensureWritePartitions(t, ctx, repos, now.Add(-time.Minute))
 	seedSupplierUsage(t, pool, s.ID, 700, 1000, false, now.Add(-time.Minute))
 	seedSupplierUsage(t, pool, s.ID, 300, 400, false, now.Add(-30*time.Second))
 
@@ -156,6 +158,8 @@ func TestPGSupplierCreditConcurrentOnce(t *testing.T) {
 
 	s := seedSupplierUser(t, repos, "sup-conc@example.com")
 	now := time.Now().UTC()
+	// 该行按 now-1m 回看：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	ensureWritePartitions(t, ctx, repos, now.Add(-time.Minute))
 	seedSupplierUsage(t, pool, s.ID, 500, 800, false, now.Add(-time.Minute))
 	batch, err := sr.FetchCreditBatch(ctx, 10)
 	require.NoError(t, err)
@@ -196,6 +200,8 @@ func TestPGSupplierCreditZeroFreezeDirectAvailable(t *testing.T) {
 	seedSupplierBalance(t, pool, s.ID, 0)
 	pgExec(t, pool, `UPDATE supplier_balances SET freeze_hours = 0, available = 0 WHERE supplier_user_id=$1`, s.ID)
 	now := time.Now().UTC()
+	// 该行按 now-1m 回看：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	ensureWritePartitions(t, ctx, repos, now.Add(-time.Minute))
 	seedSupplierUsage(t, pool, s.ID, 4242, 5000, false, now.Add(-time.Minute))
 
 	batch, err := sr.FetchCreditBatch(ctx, 10)
@@ -674,6 +680,8 @@ func TestPGSupplierPayoutGate(t *testing.T) {
 
 	// backlog 超阈值 ⇒ 拒绝：插一条未扣费正收益行（NOT billed）。
 	sr2 := repos.SupplierRepo(supplierRepoCfg())
+	// 该行按 now-1h 回看：只在 UTC 00:00–01:00 这一小时里落到昨天而缺分区。
+	ensureWritePartitions(t, ctx, repos, time.Now().UTC().Add(-time.Hour))
 	pgExec(t, pool, `INSERT INTO usage_logs (request_id, model, format, error_type, cost, created_at, billed)
 		VALUES ('gate-backlog','m','openai-chat','none',100, now() - interval '1 hour', false)`)
 	_, err = sr2.ClaimSettlement(ctx, st.ID, st.Revision, st.AmountMillis, testPayeeSnapshot("payee"), testRiskEvidence(st.Revision), aActor)
@@ -742,7 +750,10 @@ func TestPGSupplierLiabilityAndPatch(t *testing.T) {
 	s := seedSupplierUser(t, repos, "sup-liab@example.com")
 	seedSupplierBalance(t, pool, s.ID, 5000)
 	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES ($1, now() + interval '1 hour', 300)`, s.ID)
-	seedSupplierUsage(t, pool, s.ID, 200, 300, false, time.Now().UTC().Add(-time.Minute))
+	// 该行按 now-1m 回看：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	usageAt := time.Now().UTC().Add(-time.Minute)
+	ensureWritePartitions(t, ctx, repos, usageAt)
+	seedSupplierUsage(t, pool, s.ID, 200, 300, false, usageAt)
 	pgExec(t, pool, `INSERT INTO supplier_settlements (supplier_user_id, kind, amount_millis, period_start, period_end, status, revision, request_key, requested_at, requested_operator)
 		VALUES ($1,'supplier_request',100,now(),now(),'pending',1,'liab1',now(),$1)`, s.ID)
 

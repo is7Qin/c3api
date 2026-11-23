@@ -194,6 +194,8 @@ func TestPGUsageAggScopeC1(t *testing.T) {
 
 	from := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 	to := from.Add(2 * time.Hour)
+	// 两行都按 now-1m 起步：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	ensureWritePartitions(t, context.Background(), repos, from)
 	logs := []*domain.UsageLog{
 		{RequestID: "scope-mine-1", AccountID: mine.ID, Model: "m", Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 10, Cost: 100, RawCost: 200, CreatedAt: from},
 		{RequestID: "scope-theirs-1", AccountID: theirs.ID, Model: "m", Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 99, Cost: 9999, RawCost: 9999, CreatedAt: from},

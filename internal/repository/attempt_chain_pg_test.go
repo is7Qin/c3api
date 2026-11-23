@@ -58,11 +58,15 @@ func openAttemptChainDB(t *testing.T) (*Repository, *pgxpool.Pool) {
 	return repos, pool
 }
 
-// ensureChainPartitions 预建本文件夹具会写到的三张分区表在 [earliest, now+1h] 的
-// 每日分区。openAttemptChainDB 只建 [now, now+1d]（对齐生产 `-migrate up` 的尾步），
-// 而下面的用例按「相对 now 的小时偏移」造历史行（now-2h..now-5h）：跨 UTC 零点时
-// 这些行落在昨天，缺分区就 SQLSTATE 23514。历史行是夹具的一部分，谁造谁建。
-func ensureChainPartitions(t *testing.T, ctx context.Context, repos *Repository, earliest time.Time) {
+// ensureWritePartitions 预建夹具会写到的三张「近期写入」分区表在 [earliest, now+1h]
+// 的每日分区。pgtest 克隆只保证 [now, now+1d]（对齐生产 -migrate up 的尾步 / 每小时
+// 预建），而夹具常按「相对 now 的分钟/小时偏移」造历史行：跨 UTC 零点时这些行落在
+// 昨天，缺分区就是 SQLSTATE 23514。
+//
+// 约定：历史行是夹具的一部分，**谁造谁建**（同 TestAttemptChainErrLegScanCostPG:348、
+// routing_quality_window_test.go:68）。不要靠给克隆加默认的「昨天」分区来兜——
+// 那会让每个用例都背一个不可见的 1 天边界，且 CloneEmpty 路径根本不经那条 hook。
+func ensureWritePartitions(t *testing.T, ctx context.Context, repos *Repository, earliest time.Time) {
 	t.Helper()
 	until := time.Now().UTC().Add(time.Hour)
 	require.NoError(t, repos.Partitions.EnsureAttemptLogPartitions(ctx, earliest, until), "attempt_logs 分区")
@@ -101,7 +105,7 @@ func TestAttemptChainQueryLegsPG(t *testing.T) {
 	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
 	from, to := base, base.Add(time.Hour)
 	// 行最早到 base-1m，跨 UTC 零点时它落在昨天：历史行是夹具，分区自己建。
-	ensureChainPartitions(t, ctx, repos, base.Add(-time.Minute))
+	ensureWritePartitions(t, ctx, repos, base.Add(-time.Minute))
 
 	// attempt 腿：ordinal 1/2（lane/outcome 有区分度，错位即红）。
 	require.NoError(t, repos.AttemptLogs.InsertBatch(ctx, []*domain.AttemptLog{
@@ -188,7 +192,7 @@ func TestAttemptChainTruncatedIsExplicitPG(t *testing.T) {
 	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
 	from, to := base, base.Add(time.Hour)
 	// 行从 base 起写，跨 UTC 零点时 base 在昨天：历史行是夹具，分区自己建。
-	ensureChainPartitions(t, ctx, repos, base)
+	ensureWritePartitions(t, ctx, repos, base)
 
 	seed := func(reqID string, n int) {
 		rows := make([]*domain.AttemptLog, 0, n)
@@ -223,7 +227,7 @@ func TestAttemptChainWindowIsHalfOpenPG(t *testing.T) {
 	to := from.Add(time.Hour)
 	before := from.Add(-time.Second)
 	// before 比 from 早 1s，跨 UTC 零点时落在昨天：历史行是夹具，分区自己建。
-	ensureChainPartitions(t, ctx, repos, before)
+	ensureWritePartitions(t, ctx, repos, before)
 
 	// attempt 腿。
 	require.NoError(t, repos.AttemptLogs.InsertBatch(ctx, []*domain.AttemptLog{
@@ -277,7 +281,7 @@ func TestAttemptChainTruncatedUsageLegPG(t *testing.T) {
 	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
 	from, to := base, base.Add(2*time.Hour)
 	// 129 行从 base 起写，跨 UTC 零点时 base 在昨天：历史行是夹具，分区自己建。
-	ensureChainPartitions(t, ctx, repos, base)
+	ensureWritePartitions(t, ctx, repos, base)
 
 	seed := func(reqID string, n int) {
 		rows := make([]*domain.UsageLog, 0, n)
@@ -309,7 +313,7 @@ func TestAttemptChainWideWindowCoversLongRequestPG(t *testing.T) {
 	created := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Minute)
 	earlier := created.Add(-2 * time.Hour)
 	// earlier 是 now-5h，跨 UTC 零点时落在昨天：历史行是夹具，分区自己建。
-	ensureChainPartitions(t, ctx, repos, earlier)
+	ensureWritePartitions(t, ctx, repos, earlier)
 
 	require.NoError(t, repos.AttemptLogs.InsertBatch(ctx, []*domain.AttemptLog{{
 		RequestID: "chain-long", Ordinal: 1, AccountID: 11, Lane: "primary",

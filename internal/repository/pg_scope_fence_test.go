@@ -893,6 +893,8 @@ func newFenceFixture(t *testing.T) *fenceFixture {
 	// usage 聚合面的越域夹具：两条日志（各租户一条）落在同一时间窗内。
 	f.usageFrom = time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 	f.usageTo = f.usageFrom.Add(2 * time.Hour)
+	// 两行都按 now-1m 起步：只在 UTC 00:00–00:01 这 60 秒里落到昨天而缺分区。
+	ensureWritePartitions(t, context.Background(), f.repos, f.usageFrom)
 	require.NoError(t, f.repos.Usages.InsertBatch(context.Background(), []*domain.UsageLog{
 		{RequestID: "fence-mine-1", AccountID: f.mine.ID, Model: "m", Format: domain.FormatOpenAIChat,
 			ErrorType: domain.ErrNone, TotalTokens: 10, Cost: 100, RawCost: 200, CreatedAt: f.usageFrom},
