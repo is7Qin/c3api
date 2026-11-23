@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -125,6 +126,70 @@ func TestFormatPolicyUnknownType(t *testing.T) {
 	require.NotEmpty(t, second)
 	// 只断言「调用方改不动权威表」，不比对行内容：行内容归 TestFormatPolicyMatrix。
 	require.Equal(t, authoritative, second[0], "FormatsAllowedFor 必须返回副本：调用方改不动权威表")
+}
+
+// formatPolicyRowViolations 是"能力表 ↔ 格式政策表"跨表完整性的**唯一判据**
+// （空 = 合规）。两个方向都要报：
+//   - 已知类型缺 allowedFormats 行：新类型只登记了 credential.caps 行 ⇒
+//     FormatAllowedFor 走 `!ok ⇒ 放行` ⇒ **运行时格式门对该类型全放行**（BPS 拿到
+//     anthropic、codex 拿到 chat 都不再被拦），而两张表各自的 golden 全绿；
+//   - allowedFormats 有行但类型不在能力表：删类型时漏删的残留行，会让已经被拒绝的
+//     类型在格式门上"看起来有政策"。
+//
+// 判据写成纯函数并接受 known/rows 两个参数，是为了让自测能喂合成输入（证明它不是
+// 恒空转）——真实调用点只传 credential.KnownTypes() 与 allowedFormats。
+func formatPolicyRowViolations(known []credential.Type, rows map[credential.Type][]RequestFormat) []string {
+	var out []string
+	inKnown := make(map[credential.Type]bool, len(known))
+	for _, typ := range known {
+		inKnown[typ] = true
+		if _, ok := rows[typ]; !ok {
+			out = append(out, fmt.Sprintf("新类型必须同时登记 domain.allowedFormats：%q 只有 credential.caps 行，运行时格式门会对它**全放行**（FormatAllowedFor 的 !ok 分支）", typ))
+		}
+	}
+	for typ := range rows {
+		if !inKnown[typ] {
+			out = append(out, fmt.Sprintf("%q 在 domain.allowedFormats 有政策行，但不在 credential.caps 能力表内（残留行）", typ))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestEveryKnownTypeHasFormatPolicyRow 跨表完整性：**每个** credential 已知类型都必须在
+// domain.allowedFormats 里有政策行，且两边键集合恰好相等。
+//
+// 这是 `FormatAllowedFor` 的 `!ok ⇒ 放行` 语义的**唯一机械兜底**：放行分支保留历史
+// 兼容（表外类型不施加额外限制），代价是"新类型忘记登记 allowedFormats"会静默放行
+// 全部格式，而这个缺口在两张表各自的矩阵 golden 里都看不见。
+func TestEveryKnownTypeHasFormatPolicyRow(t *testing.T) {
+	known := credential.KnownTypes()
+	require.NotEmpty(t, known, "已知类型枚举不得为空（空转的完整性检查 = 没有检查）")
+	require.Empty(t, formatPolicyRowViolations(known, allowedFormats),
+		"能力表与格式政策表必须逐类型对齐")
+	require.Len(t, allowedFormats, len(known),
+		"allowedFormats 与 credential.KnownTypes() 的键集合必须相等（多一行=残留，少一行=漏登记）")
+}
+
+// TestFormatPolicyRowViolationsSelfTest 负例：证明上面的判据**真的会拒**——只加能力表
+// 行（新类型）与只留格式政策行（残留行）两个方向都要被点名。
+func TestFormatPolicyRowViolationsSelfTest(t *testing.T) {
+	rows := map[credential.Type][]RequestFormat{
+		credential.TypeAPIKey: {FormatOpenAIChat},
+	}
+	// 合规对照：两边一致 → 空。
+	require.Empty(t, formatPolicyRowViolations([]credential.Type{credential.TypeAPIKey}, rows))
+
+	// 方向 1：caps 有行、allowedFormats 无行（oracle 点名的静默风险）。
+	got := formatPolicyRowViolations([]credential.Type{credential.TypeAPIKey, credential.Type("future-only-in-caps")}, rows)
+	require.Len(t, got, 1, "必须恰好报一条：%v", got)
+	require.Contains(t, got[0], "future-only-in-caps")
+	require.Contains(t, got[0], "全放行", "失败信息必须说清后果")
+
+	// 方向 2：allowedFormats 有行、能力表无该类型（残留行）。
+	got = formatPolicyRowViolations(nil, rows)
+	require.Len(t, got, 1, "残留行必须被点名：%v", got)
+	require.Contains(t, got[0], "残留行")
 }
 
 // TestFormatAllowedForZeroAlloc 运行时格式门在 buildRoutes 的三层循环里被逐账号 ×

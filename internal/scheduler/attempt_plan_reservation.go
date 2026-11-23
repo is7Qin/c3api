@@ -106,8 +106,8 @@ func planAllCandidatesNativeContinuation(primary, ordered, degraded []CompiledCa
 
 // skipContinuationFor 判断一次派发是否**完全跳过**续接解析（不只是"不需要原生续接"）。
 //
-// 语义是两条能力位的合取取反：
-//   - 没有原生续接能力（!SupportsContinuation）——这是"为什么不需要解析"的一半；
+// 对**表内**类型，语义是两条能力位的合取取反：
+//   - 没有原生续接能力（!SupportsContinuation）——"为什么不需要解析"的一半；
 //   - 也不吃 c3api 的绑定账本（!UsesStaticKey）——另一半。绑定账本里的 id 由
 //     静态 key 通道的响应产生（c3api 为该账号写的 response id），所以只有静态通道
 //     类型的 previous_response_id 可能有绑定；codex/bps 的上游 id 不在账本里。
@@ -118,9 +118,20 @@ func planAllCandidatesNativeContinuation(primary, ordered, degraded []CompiledCa
 // 会被误判成"要解析" ——反过来，任何新增的静态通道类型也会因为通道名不等于 BPS 被
 // 误判成"要解析"。能力位是逐 Type 声明的，新增类型必须显式回答这两问。
 //
+// **表外类型（含 CredentialType == "")必须 fail-closed（返回 false）**，不能靠上面的
+// 合取：表外类型两个能力位都是 false ⇒ 合取为 true ⇒ 会把"缺失绑定 ⇒ 410"悄悄变成
+// "丢掉 previous_response_id 放行"，方向是 fail-open。这条路径**可达**：
+// routing_compiler_candidates.go 的候选过滤只拒 `CredentialType != "" && !Valid()`，
+// 空类型模板照常成为候选并产出 Selection。语义与 service/format_gate.go 同一选择
+// （"表外历史 credential_type 因此 fail-closed——这是刻意的行为选择"）：
+// 不猜未知类型的能力，把请求交给绑定账本，缺失/过期照旧 410 / Redis 故障 503。
+//
 // 构造期一次定型：调用点在预留装配点，结果写进 Selection.SkipContinuation，数据面
 // 只读一位（不查任何表）。
 func skipContinuationFor(t credential.Type) bool {
+	if !t.Valid() {
+		return false // 表外/空类型：不猜能力，交给绑定账本 ⇒ 缺失 410（fail-closed）
+	}
 	return !t.SupportsContinuation() && !t.UsesStaticKey()
 }
 

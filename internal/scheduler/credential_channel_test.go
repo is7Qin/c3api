@@ -72,6 +72,32 @@ func TestBPSIgnoresCodexIdentity(t *testing.T) {
 	require.NotNil(t, v.static.identityPools.pools[2], "反向对照：codex 建池")
 }
 
+// TestEmptyCredentialTypeIsUndispatchable 钉住一条**当前不可达**的路径，它的价值是
+// 给 skipContinuationFor 的 fail-closed 分支上第二道锁：
+//
+//   - routing_compiler_candidates.go 的候选过滤只拒 `CredentialType != "" && !Valid()`，
+//     所以未设 credential_type 的历史模板**能**编进路由（本用例第 1 段）；
+//   - 但它拿不到候选指纹：domain.CandidateFingerprint 要求 `CredType.Valid()`，派生失败
+//     被 deriveCompilerAccountFacts 吞掉（fingerprint 留空），预留谓词的
+//     `c.Fingerprint == ""` 于是恒拒 ⇒ **永远不会产出 Selection**（第 2 段）。
+//
+// 所以 skipContinuationFor 的 `!t.Valid() → false` 是防御性的（表外 ⇒ 不猜能力 ⇒ 交给
+// 绑定账本 ⇒ 缺失 410）。谁将来放宽了指纹这一关、让空类型真的可派发，本用例就会红：
+// 届时必须重新核对续接政策位，不能默认它"反正不可达"。
+func TestEmptyCredentialTypeIsUndispatchable(t *testing.T) {
+	tp := tpl(1, domain.FormatOpenAIResponses, []string{"m"})
+	tp.CredentialType = ""
+	s := newTestScheduler(t, []*domain.Account{acc(1, tp, 4)})
+
+	dec := s.View().decision.routes[normRouteRef(RouteRefFor(10, string(domain.FormatOpenAIResponses), "m"))]
+	require.NotNil(t, dec, "空 credential_type 的模板能编进路由（候选过滤放行）")
+	require.NotEmpty(t, dec.Explore.Ordered, "它确实进了候选表")
+
+	_, err := s.Select(10, domain.FormatOpenAIResponses, "m")
+	require.ErrorIs(t, err, ErrAttemptsExhausted,
+		"但候选指纹为空 ⇒ 预留恒拒：空类型今天拿不到 Selection（放宽这条会红）")
+}
+
 // TestBPSWithoutProfileIsUnroutable §8.2③：BPS 候选缺 bpsProfileDigest ⇒ 不可路由。
 //
 // 为什么必须拒绝而不是放行：BPS 的身份/端点/profile 全部来自 account_ext，缺摘要

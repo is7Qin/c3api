@@ -48,21 +48,28 @@ func TestSkipContinuationForFollowsCapabilities(t *testing.T) {
 	require.False(t, credential.TypeBPS.UsesStaticKey())
 }
 
-// TestSkipContinuationForFutureCodexChannelVariant 未来类型替身：一个**未知**类型名
-// （尚未在 caps 表内注册的新类型，例如未来的 codex 通道变体）必须被判为"跳过解析"。
+// TestSkipContinuationForUnknownTypeIsFailClosed 表外类型（含 CredentialType == ""）
+// 必须返回 **false**（不跳过解析 = fail-closed）。
 //
-// 判别力：实现若写成通道投影 `ChannelOf(t) == ChannelBPS`，未知类型的通道是零值
-// ChannelStaticKey ⇒ 结果是 false（= 去解析），本条立刻红。能力位写法给出 true
-// （既没有声明原生续接，也没有声明吃绑定账本 ⇒ 保守地不碰账本、把 id 留给 SDK）。
-func TestSkipContinuationForFutureCodexChannelVariant(t *testing.T) {
-	future := credential.Type("codex-future-no-continuation")
-	require.False(t, future.Valid(), "夹具必须是表外类型（未来类型尚未注册）")
-	require.Equal(t, credential.ChannelStaticKey, credential.ChannelOf(future),
-		"表外类型的通道是零值——这正是通道判定会错的原因")
-	require.False(t, future.SupportsContinuation(), "能力位对表外类型 false（ok 守卫）")
-
-	require.True(t, skipContinuationFor(future),
-		"没有声明能力的类型不得被判成「要吃绑定账本」")
+// 为什么这条是 Critical 方向：表外类型的两个能力位都是 false，若判据直接写成
+// `!SupportsContinuation() && !UsesStaticKey()` 就会得 true ⇒ "缺失绑定 ⇒ 410" 悄悄
+// 变成"丢掉 previous_response_id 放行"。而这条路径**可达**：
+// routing_compiler_candidates.go 的候选过滤只拒 `CredentialType != "" && !Valid()`，
+// 空类型模板照常成为候选并产出 Selection。语义与 service/format_gate.go 同一选择
+// （"表外历史 credential_type 因此 fail-closed——这是刻意的行为选择"）。
+//
+// "能力 ≠ 通道" 的判别力不靠这条（表外类型两边都给 false，没有区分度）：它由
+//   - credential 的 TestContinuationCapabilityIsNotChannel（表内注入 codex 通道 +
+//     能力 false 的替身，证明两条轴可共存），与
+//   - 计划级的 TestPlanAllCandidatesNativeContinuationReadsCapabilityNotChannel
+//     （同一批 codex 候选、两个能力答案 ⇒ 相反结论）承担。
+func TestSkipContinuationForUnknownTypeIsFailClosed(t *testing.T) {
+	for _, unknown := range []credential.Type{"", "codex-future-no-continuation", "bogus"} {
+		require.False(t, unknown.Valid(), "%q 必须是表外类型", unknown)
+		require.False(t, unknown.SupportsContinuation(), "能力位对表外类型 false（ok 守卫）")
+		require.False(t, skipContinuationFor(unknown),
+			"%q 表外 ⇒ 不猜能力，交给绑定账本（缺失绑定照旧 410），不得 fail-open 跳过解析", unknown)
+	}
 }
 
 // planKeyWithType 是构造候选最小事实的辅助：计划级判据只读 planKey.credentialType。
@@ -175,6 +182,10 @@ func TestContinuationBitZeroValueIsFailClosed(t *testing.T) {
 
 // TestSelectionSkipContinuationPinnedAtReservation 派发级判据的端到端推导：预留
 // 装配点按能力位算好，Selection 只携带结果（数据面不再查通道表/能力表）。
+//
+// 表外/空类型不在这里列：它们今天**拿不到 Selection**（候选指纹要求 Valid()，
+// 见 TestEmptyCredentialTypeIsUndispatchable），"不跳过解析"由
+// TestSkipContinuationForUnknownTypeIsFailClosed 在单元层钉住。
 func TestSelectionSkipContinuationPinnedAtReservation(t *testing.T) {
 	cases := []struct {
 		name string

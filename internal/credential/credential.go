@@ -15,7 +15,10 @@
 // anthropic → x-api-key，aiclient 现状已按格式分头），与凭据类型无关。
 package credential
 
-import "errors"
+import (
+	"errors"
+	"sort"
+)
 
 // Type 账号凭据类型：按生态命名（api_key = 静态 Key + 模板 BaseURL，现状语义）。
 type Type string
@@ -127,6 +130,25 @@ func (t Type) IdentityGroup() []Type {
 func (t Type) UsesStaticKey() bool {
 	c, ok := capsTable[t]
 	return ok && c.ch == ChannelStaticKey
+}
+
+// KnownTypes 返回能力表内**全部**类型的规范序（字典序）副本；每次调用返回新切片，
+// 调用方改不动权威表。
+//
+// 为什么导出这张表：跨包要问的是一句**集合**问题——"每个已知类型都在
+// domain.allowedFormats 里有政策行吗"。格式门是逐 Type 的表驱动判定，而
+// FormatAllowedFor 对表外类型**放行**（没有政策行 = 没有额外限制）。于是"新类型加了
+// caps 行、忘了 allowedFormats 行"会让格式门对该类型**全放行**，而两张表各自的
+// golden（caps_test.go 的矩阵、format_policy_test.go 的矩阵）都是绿的——没有任何
+// 一处会红。这个缺口的机械兜底只能由外部消费者枚举已知类型来写：
+// internal/domain 的 TestEveryKnownTypeHasFormatPolicyRow 就是那个消费者。
+func KnownTypes() []Type {
+	out := make([]Type, 0, len(capsTable))
+	for t := range capsTable {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // ErrUnsupported 该凭据类型（或承载它的格式/传输）在调用点不受支持。它是**跨包

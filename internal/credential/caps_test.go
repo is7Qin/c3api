@@ -131,6 +131,34 @@ func TestContinuationCapabilityIsNotChannel(t *testing.T) {
 	}
 }
 
+// TestKnownTypesMirrorsCapsTable KnownTypes 是"全类型枚举"的对外入口，跨包的跨表
+// 完整性断言（domain.TestEveryKnownTypeHasFormatPolicyRow）靠它。它必须与 caps 表
+// **恰好**同集合、规范序、且是副本（调用方改不动权威表）。
+func TestKnownTypesMirrorsCapsTable(t *testing.T) {
+	got := KnownTypes()
+	require.Len(t, got, len(capsTable), "KnownTypes 必须与 capsTable 同大小")
+	require.True(t, sort.SliceIsSorted(got, func(i, j int) bool { return got[i] < got[j] }),
+		"KnownTypes 必须规范序（字典序）：%v", got)
+
+	seen := make(map[Type]bool, len(got))
+	for _, typ := range got {
+		require.False(t, seen[typ], "KnownTypes 不得有重复项：%q", typ)
+		seen[typ] = true
+		require.True(t, typ.Valid(), "%q 来自表内 ⇒ Valid() 必真", typ)
+	}
+	for typ := range capsTable {
+		require.True(t, seen[typ], "capsTable 里的 %q 必须出现在 KnownTypes", typ)
+	}
+
+	// 副本语义：改写返回切片不影响下一次调用。
+	first := KnownTypes()
+	require.NotEmpty(t, first)
+	authoritative := first[0]
+	first[0] = Type("tampered")
+	second := KnownTypes()
+	require.Equal(t, authoritative, second[0], "KnownTypes 必须返回副本")
+}
+
 // TestChannelFrozen 独立 golden：期望表是**字面量**，不许用 IsCodex/IsBPS 反推——
 // 那会变成同源重言（表整体错时两边一起错，测试照绿）。
 func TestChannelFrozen(t *testing.T) {
