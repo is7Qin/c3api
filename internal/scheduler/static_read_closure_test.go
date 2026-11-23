@@ -123,10 +123,13 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.SupplierUserID":           {staticPathField, "supplierUserID"},
 
 	// --- 账号凭据面（决策输入子集） ---
-	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},
-	"$S.acc.Ext.CodexEmail":                   {staticPathField, "codexEmail"},
-	"$S.acc.Ext.CodexPATKey":                  {staticPathField, "credentialPairDigest"}, // pat 原文：与上游鉴权键合并为同一枚摘要（BPS 分支不读 ⇒ 不进 BPS 的键）
-	"$S.acc.Ext.BPSProfile":                   {staticPathField, "bpsProfileDigest"},
+	"$S.acc.Ext.CodexAccountID": {staticPathField, "codexAccountID"},
+	"$S.acc.Ext.CodexEmail":     {staticPathField, "codexEmail"},
+	"$S.acc.Ext.CodexPATKey":    {staticPathField, "credentialPairDigest"}, // pat 原文：与上游鉴权键合并为同一枚摘要（BPS 分支不读 ⇒ 不进 BPS 的键）
+	// $S.acc.Ext.BPSProfile 不再出现：S3a 把这条派生收口进 domain.BPSProfileDigest，
+	// scheduler 只读冻结后的 $S.bpsProfileDigest（下一行）。若谁在控制面重新直接读
+	// profile，本表与实际读路径集的**相等**判据会立刻红——删行不是放宽，是把声明
+	// 收紧到"实际没有这条读"。
 	"$S.acc.Ext.CodexIdentity.InstallationID": {staticPathField, "codexInstallation"},
 
 	// --- 账号凭据面（载荷：只影响叶子内容是否新鲜） ---

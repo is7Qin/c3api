@@ -320,12 +320,9 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 	if a == nil || a.Template == nil {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: missing account or template")
 	}
-	baseURL := a.Template.BaseURL
-	if a.Template.CredentialType.IsBPS() {
-		baseURL = BPSDefaultEndpoint
-	} else if a.BaseURL != nil && *a.BaseURL != "" {
-		baseURL = *a.BaseURL
-	}
+	// 生效 baseURL 的优先级只在 EffectiveBaseURL 里定义一次（scheduler 的计划键
+	// 读的是同一个函数）：BPS 固定端点 ⇒ 账号覆盖 ⇒ 模板值。
+	baseURL := EffectiveBaseURL(a.Template, a)
 	// 只读账号级稳定身份项：installation_id（CodexIdentity 退役为运行时槽状态后
 	// session/thread/window 不再是决策输入）；CodexIdentity 仅保留 InstallationID。
 	var patKey, email, codexAccountID, installationID, bpsProfileDigest string
@@ -339,9 +336,8 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		if a.Ext.CodexAccountID != nil {
 			codexAccountID = *a.Ext.CodexAccountID
 		}
-		if a.Template.CredentialType.IsBPS() {
-			bpsProfileDigest = BPSProfileHash(a.Ext.BPSProfile)
-		}
+		// 类型门在 BPSProfileDigest 内（非 BPS 的残留 profile 不算摘要）。
+		bpsProfileDigest = BPSProfileDigest(a.Template.CredentialType, a.Ext)
 		if a.Template.CredentialType.IsCodex() && a.Ext.CodexIdentity != nil {
 			installationID = a.Ext.CodexIdentity.InstallationID
 		}

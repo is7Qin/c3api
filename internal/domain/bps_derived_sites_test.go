@@ -33,10 +33,11 @@ import (
 // 两份注册表，改一处漏一处就是名单漂移。本文件因此**只看**上面两个符号，
 // scheduler 里那处 BPSFormatsOnly 调用是有意不在此处的。
 //
-// 为什么目标是归零（注册表最终为空）：S2 会把 control-plane 的这两处分别改成
-// `ChannelOf(t) == ChannelBPS` 与表驱动 `FormatsAllowedFor`。届时 scheduler 不再
-// 派生任何 `domain.BPS*`，本条门禁就退化成与 P1 的 `pkg/* ↛ internal/*` 同款的
-// 「Scheduler 零 domain.BPS*」硬规则——此后新增任何一处派生都会被判红。
+// 为什么目标是归零（注册表最终为空）：S3a 已归零——control-plane 的两处派生分别换成
+// 了 `domain.EffectiveBaseURL` 与 `domain.BPSProfileDigest`（真正派生 `domain.BPS*`
+// 的代码因此留在 domain 包内），scheduler 不再直接持有这两个符号。本条门禁由此变成
+// 与 P1 的 `pkg/* ↛ internal/*` 同款的「Scheduler 零 domain.BPS*」硬规则：**S3a 已
+// 归零，此后新增任何一处都会红**。
 //
 // 为什么是计数而不是否定式：把整块赋值/调用删掉不产生任何字面量，否定式 AST 拦不住
 // （对抗评审实测：照抄 credential_channel_gate_test.go 的否定式断言，命中 14 / 漏 20，
@@ -66,25 +67,24 @@ type bpsDerivedSite struct {
 }
 
 // bpsDerivedSites 是 `internal/scheduler` 内 `domain.BPS*` 派生点的**完整**注册表
-// （非测试、非注释；声明不计，见 countBPSSymbolUses）。复核基准 7a486270：
+// （非测试、非注释；声明不计，见 countBPSSymbolUses）。**S3a 已归零**：收口前的两行
+// （复核基准 7a486270 的 static_key.go:249 / :257）分别改成了
 //
-//	internal/scheduler/static_key.go:249  av.bpsProfileDigest = domain.BPSProfileHash(...)
-//	internal/scheduler/static_key.go:257  k.baseURL = domain.BPSDefaultEndpoint
+//	av.bpsProfileDigest = domain.BPSProfileDigest(av.tpl.CredentialType, av.acc.Ext)
+//	k.baseURL          = domain.EffectiveBaseURL(av.tpl, &av.acc)
 //
-// 只许变短：删掉一行必须同时把 rowsMax 改小（或归零时一并删掉本表），否则
-// TestBPSDerivedSitesInScheduler 会红。新增一行等于承认控制面又多了一处"加类型时
-// 忘了改就静默走错分支"的派生点，需要在评审里说明理由。
-var bpsDerivedSites = []bpsDerivedSite{
-	{file: "internal/scheduler/static_key.go", symbol: "BPSDefaultEndpoint", count: 1},
-	{file: "internal/scheduler/static_key.go", symbol: "BPSProfileHash", count: 1},
-}
+// 之后 scheduler 只消费 domain 的派生函数。只许变短：新增一行等于承认控制面又多了一处
+// "加类型时忘了改就静默走错分支"的派生点，需要在评审里说明理由——归零后的默认答案
+// 是不加。
+var bpsDerivedSites = []bpsDerivedSite{}
 
 // rowsMax 是注册表的行数上限，与 len(bpsDerivedSites) 精确相等。它存在的唯一目的是
 // 把"删一行"变成一次必须显式改小的编辑：只删 bpsDerivedSites 的行而忘了改 rowsMax，
 // 测试红；反过来，想加行就得先把 rowsMax 抬高，diff 里看得见。
 //
-// 只许改小。目标值是 0（S2 完成后本门禁变成"Scheduler 零 domain.BPS*"硬规则）。
-const rowsMax = 2
+// 只许改小。S3a 已归零：本门禁现在是"Scheduler 零 domain.BPS*"硬规则，rowsMax 不得
+// 回升——真要在控制面新增派生，先把评审结论写进 diff。
+const rowsMax = 0
 
 // TestBPSDerivedSitesInScheduler 是控制面派生点的精确计数门禁：
 // `internal/scheduler` 内每个符号的「文件 → 次数」必须逐项等于 bpsDerivedSites。
@@ -117,7 +117,7 @@ func TestBPSDerivedSitesInScheduler(t *testing.T) {
 
 	// 自检锚点（防"空转的门禁"）：计数器必须在 domain/bps.go 里数到 BPSDefaultEndpoint
 	// 的**使用**（bps.go:28 的 `raw == BPSDefaultEndpoint`；bps.go:22 的 const 声明不算）。
-	// 这条断言与注册表内容无关，因此在 S2 把注册表清空之后仍然成立，是"归零"阶段的
+	// 这条断言与注册表内容无关，因此在 S3a 把注册表清空之后仍然成立，是"归零"阶段的
 	// 唯一防退化锚点：解析器/遍历失效、symbol 清单被清空，都会让它读到 0。
 	anchor := all[bpsSiteKey{file: "internal/domain/bps.go", symbol: "BPSDefaultEndpoint"}]
 	require.GreaterOrEqual(t, anchor, 1,

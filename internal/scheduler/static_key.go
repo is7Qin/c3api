@@ -267,23 +267,19 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		av.cacheDomain = cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
 		av.installationID = installationIDOf(av.acc.Ext)
 	}
-	if av.tpl != nil && credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelBPS && av.acc.Ext != nil {
-		av.bpsProfileDigest = domain.BPSProfileHash(av.acc.Ext.BPSProfile)
+	// BPS profile 摘要：类型门与 ext 判空都在 domain.BPSProfileDigest 内（非 BPS
+	// 账号残留的 profile 不算摘要）。tpl == nil 时不调用——没有模板就没有类型。
+	if av.tpl != nil {
+		av.bpsProfileDigest = domain.BPSProfileDigest(av.tpl.CredentialType, av.acc.Ext)
 	}
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
 	k.templateID = av.acc.TemplateID
-	if av.tpl != nil {
-		if credential.ChannelOf(av.tpl.CredentialType) == credential.ChannelBPS {
-			k.baseURL = domain.BPSDefaultEndpoint
-		} else {
-			k.baseURL = av.tpl.BaseURL
-		}
-	}
-	if (av.tpl == nil || credential.ChannelOf(av.tpl.CredentialType) != credential.ChannelBPS) && av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
-		k.baseURL = *av.acc.BaseURL
-	}
+	// 生效 baseURL：优先级只在 domain.EffectiveBaseURL 里定义一次（路由的
+	// AccountCandidateFingerprint 读的是同一个函数）。BPS 固定端点忽略账号覆盖；
+	// tpl == nil 时账号覆盖仍然生效（零键形状的既有语义）。
+	k.baseURL = domain.EffectiveBaseURL(av.tpl, &av.acc)
 	// 凭据原文不再单独入键，但读点与改前逐行同源（闭包门禁把 `$S.acc.UpstreamKey`
 	// 与 `$S.acc.Ext.CodexPATKey` 都登记到 credentialPairDigest 上）：上游键与 PAT
 	// 在下面合成一枚摘要，不再各占一枚 string 字段。

@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/is7qin/c3api/internal/credential"
 )
 
 // BPSDefaultEndpoint is the fixed endpoint identity used by BPS routing. The
@@ -216,6 +218,28 @@ func BPSProfileHash(raw []byte) string {
 		return ""
 	}
 	return hex.EncodeToString(h[:])
+}
+
+// BPSProfileDigest 返回 BPS 模板的 profile 摘要，是路由指纹与计划键共用的
+// **唯一**派生点（收口前三处调用逐字节一致）。
+//
+// 契约（顺序有意义，不得重排）：
+//
+//  1. t 不是 BPS ⇒ ""。**必须先判模板类型**：非 BPS 账号的 ext 可能残留一段
+//     BPSProfile（S1 刻意保留的语义债——写面不清理旧字段），若只按 ext 判空，
+//     那截残留就会进摘要，把非 BPS 候选的身份绑到一段它根本不消费的数据上。
+//  2. ext == nil ⇒ ""（字段容器契约：没有 AccountExt 就没有 profile）。
+//  3. 否则 BPSProfileHash(ext.BPSProfile)：空/JSON null/非 object 一律回落 ""
+//     （BPSProfileHash 的既有语义），即"未配置 profile 的 BPS 账号没有摘要"，
+//     由候选过滤按不可路由处理，而不是退化成某个可比较的伪摘要。
+func BPSProfileDigest(t credential.Type, ext *AccountExt) string {
+	if !t.IsBPS() {
+		return ""
+	}
+	if ext == nil {
+		return ""
+	}
+	return BPSProfileHash(ext.BPSProfile)
 }
 
 // ValidateBPSProfileJSON enforces the phase-1 storage boundary: a profile is
