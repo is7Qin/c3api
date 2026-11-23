@@ -4,8 +4,10 @@
 
 - 定义 `credential.Type` 与 `IdentityGroup()`：codex-oauth/codex-pat 同组，BPS 独立，
   api_key/custom 各自成组。
-- **形态由 `capsTable`（`caps.go`）单点定义**；`UsesStaticKey`/`IsCodex`/`IsBPS` 等方法是
-  它的只读投影。**分发**一律走 `ChannelOf`——调用方按通道分支，不再问类型谓词
+- **形态由两张能力表（`caps.go`）单点定义**：`typeCapsTable`（键 `Type`：通道身份 +
+  `validTplExt` + `supportsContinuation`）与 `channelCapsTable`（键 `Channel`：
+  `validAcctExt`）；`UsesStaticKey`/`IsCodex`/`IsBPS` 等方法是它们的只读投影。
+  **分发**一律走 `ChannelOf`——调用方按通道分支，不再问类型谓词
   （`internal/proxy` 侧由 `credential_channel_gate_test.go` 的 AST 门禁禁止）。
 - `UsesStaticKey`/`IsCodex`/`IsBPS` 仍是调用方判断凭据形态的入口（本轮不改 84 处调用点）；
   但**新**代码要分发时用 `ChannelOf`，别加新的 `Is*` 谓词。
@@ -19,13 +21,18 @@
 
 ## 不变量
 
-- 新增类型的动作 = `capsTable` 加一行 + `IdentityGroup` 补 case + 同步 `caps_test.go` 的
+- 新增类型的动作 = `typeCapsTable` 加一行 + `IdentityGroup` 补 case + 同步 `caps_test.go` 的
   两张手抄矩阵（`TestTypeBehaviorFrozen` / `TestChannelFrozen`）。
   漏改**表行或任一 golden** → 红；但只加 `Type` 常量、不加表行 → 编译通过、全门禁绿，
   此时 `Valid()` 恒 false，该类型被上游 fail-closed 显式拒绝，不会被静默选中。
-  caps 只剩 `ch` + `validTplExt` 两列后**不存在跨列不变量**（两者无函数关系）：
-  **golden 是唯一的跨类型锁**；表外语义（7 个布尔谓词恒 false、`IdentityGroup` 自成
-  一组）由 `TestPredicatesOnUnknownType` / `TestIdentityGroupOnUnknownType` 单独咬住。
+  新增 `Channel` 常量则必须给 `channelCapsTable` 补行（`TestCapsTablesSplitByAxis` 钉住覆盖率：
+  漏行会让 `ValidAccountExt` 静默恒 false）。拆表后 `validAcctExt` 与通道矛盾在类型上不可表达；
+  剩下三列之间**不存在跨列不变量**（`ch` ⇔ `validTplExt` 是错的断言）。**golden 仍是唯一的
+  跨类型锁**；表外语义（8 个布尔谓词恒 false、`IdentityGroup` 自成一组）由
+  `TestPredicatesOnUnknownType` / `TestIdentityGroupOnUnknownType` 单独咬住。
+- 五个消费层目录（repository/service/domain/sdkbridge/probe）的凭据谓词调用点是**预算**，
+  只许变短：`predicate_budget_test.go` 逐文件精确计数 `IsCodex`/`IsBPS`/`IsResponsesProvider`
+  的 SelectorExpr（含方法值、作为参数传递），新增与删除都红（预算是清单不是上限）。
 - 身份组决定账号查重作用域，不能按名称猜。
 - 包内不许新增按类型判定的 helper（`TestCredentialPkgOwnsNoTypePredicateHelper` 反向门禁）。
 - BPS 非静态 key；BPS 模板的 `SupportedFormats` 只允许 Responses 两种格式。

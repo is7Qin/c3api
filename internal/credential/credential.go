@@ -2,8 +2,9 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package credential 是凭据类型的词表与能力表：Type 的取值集合，加上 capsTable
-// 声明的执行通道——「一个类型意味着什么、由谁鉴权」只在这里回答一次。
+// Package credential 是凭据类型的词表与能力表：Type 的取值集合，加上
+// typeCapsTable（类型级列 + 类型→通道身份）与 channelCapsTable（通道级列）声明的
+// 执行通道——「一个类型意味着什么、由谁鉴权」只在这里回答一次。
 //
 // 它**不承载凭据取值**：静态通道的类型（api_key / responses-special / custom）由
 // internal/proxy 的 credentialFor 按 UsesStaticKey() 直读
@@ -45,47 +46,56 @@ const (
 
 // Valid 类型是否在能力表内（模板主列 credential_type 全量：api_key 四格式任意；
 // 生态类型按通道能力做格式校验）。未知类型（含空串）→ false。
+//
+// 它是**唯一**的存在性判据：只认 typeCapsTable 的 ok，不看任何派生位。
 func (t Type) Valid() bool {
-	_, ok := capsTable[t]
+	_, ok := typeCapsTable[t]
 	return ok
 }
 
 // 其余谓词（ValidTemplateExt / ValidAccountExt / IsCodex / IsBPS /
-// IsResponsesProvider / UsesStaticKey）形状一律是「先查表存在性，再用 c.ch 判定」，
-// 那个 `ok &&` 不能省：表外类型的 ChannelOf 是零值 ChannelStaticKey，若派生直接写
+// IsResponsesProvider / UsesStaticKey / SupportsContinuation）形状一律是
+// 「先查 typeCapsTable 的存在性（ok），再看通道 / 通道能力位 / 类型列」，那个
+// `ok &&` 不能省：表外类型的 ChannelOf 是零值 ChannelStaticKey，若派生直接写
 // ChannelOf(t) == ChannelStaticKey，UsesStaticKey() 对非法类型就从 false 变 true——
 // service/account.go:45,221 拿它决定 upstream_key 是否必填，且**没有** Valid() 守卫。
-// 表外恒 false 是这些谓词对外的既有契约（见 TestPredicatesOnUnknownType）。
+// 表外恒 false 是这些谓词对外的既有契约（见 TestPredicatesOnUnknownType）；拆表不许
+// 因为「零值通道在 channelCapsTable 里恰好有一行」就把守卫放松。
 
 // ValidTemplateExt 模板 ext 子表可用类型（api_key 类型模板无 ext 行——主列已
-// 表达静态 Key 语义）。它是表里唯一不与 ch 同源的位。
+// 表达静态 Key 语义）。它是 typeCapsTable 里与通道无函数关系的列之一。
 func (t Type) ValidTemplateExt() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && c.validTplExt
 }
 
 // ValidAccountExt 账号 ext 子表可用类型——即非静态通道（今天：codex oauth/pat + bps）。
+//
+// 这一位是**通道级**事实：先查类型是否存在，再把它的通道投影到 channelCapsTable。
+// 于是「同一通道下两个类型对该位给出不同答案」不可表达；表外类型的零值通道虽然命中
+// channelCapsTable（ChannelStaticKey 是真实存在的行，validAcctExt=false），`ok` 守卫
+// 仍然先把它挡在外面。
 func (t Type) ValidAccountExt() bool {
-	c, ok := capsTable[t]
-	return ok && c.ch != ChannelStaticKey
+	c, ok := typeCapsTable[t]
+	return ok && channelCapsTable[c.ch].validAcctExt
 }
 
 // IsCodex codex 号池类型（oauth / pat）：鉴权走 SDK；请求格式限定 resp/resp-ws。
 func (t Type) IsCodex() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && c.ch == ChannelCodex
 }
 
 // IsBPS reports the independent BPS OAuth provider. It intentionally does not
 // alias IsCodex: BPS has different identity, profile and transport semantics.
 func (t Type) IsBPS() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && c.ch == ChannelBPS
 }
 
 // IsResponsesProvider reports providers backed by a Responses-native SDK.
 func (t Type) IsResponsesProvider() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && (c.ch == ChannelCodex || c.ch == ChannelBPS)
 }
 
@@ -102,7 +112,7 @@ func (t Type) IsResponsesProvider() bool {
 // 该取值在调度层是**保守方向**：未知类型被当作"可能不支持续接" ⇒ 计划进入 fail-closed
 // 的续接解析分支。
 func (t Type) SupportsContinuation() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && c.supportsContinuation
 }
 
@@ -128,7 +138,7 @@ func (t Type) IdentityGroup() []Type {
 
 // UsesStaticKey reports providers that require the account upstream_key——即静态通道。
 func (t Type) UsesStaticKey() bool {
-	c, ok := capsTable[t]
+	c, ok := typeCapsTable[t]
 	return ok && c.ch == ChannelStaticKey
 }
 
@@ -143,8 +153,8 @@ func (t Type) UsesStaticKey() bool {
 // 一处会红。这个缺口的机械兜底只能由外部消费者枚举已知类型来写：
 // internal/domain 的 TestEveryKnownTypeHasFormatPolicyRow 就是那个消费者。
 func KnownTypes() []Type {
-	out := make([]Type, 0, len(capsTable))
-	for t := range capsTable {
+	out := make([]Type, 0, len(typeCapsTable))
+	for t := range typeCapsTable {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })

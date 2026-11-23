@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -38,53 +39,59 @@ type wantBehavior struct {
 	group                []Type
 }
 
+// typeBehaviorGolden 是 6 个类型的 12 项行为 + 身份组的手抄矩阵，也是本包**唯一的
+// 跨类型锁**：表里加/删行而漏改这里 → 红。它提升成包级变量（不是留在用例里）是为了
+// 让 TestCapsTablesSplitByAxis 能拿它做**键集合**断言：拆表后的类型集合必须与这份
+// golden 恰好相同，而不是「表自己和自己相等」。
+var typeBehaviorGolden = map[Type]wantBehavior{
+	TypeAPIKey: {
+		valid: true, validTplExt: false, validAcctExt: false,
+		isCodex: false, isBPS: false, isRespProvider: false,
+		usesStaticKey: true, supportsContinuation: false,
+		group: []Type{TypeAPIKey},
+	},
+	TypeResponsesSpecial: {
+		valid: true, validTplExt: true, validAcctExt: false,
+		isCodex: false, isBPS: false, isRespProvider: false,
+		usesStaticKey: true, supportsContinuation: false,
+		group: []Type{TypeResponsesSpecial},
+	},
+	TypeCustom: {
+		valid: true, validTplExt: true, validAcctExt: false,
+		isCodex: false, isBPS: false, isRespProvider: false,
+		usesStaticKey: true, supportsContinuation: false,
+		group: []Type{TypeCustom},
+	},
+	TypeCodexOAuth: {
+		valid: true, validTplExt: true, validAcctExt: true,
+		isCodex: true, isBPS: false, isRespProvider: true,
+		usesStaticKey: false, supportsContinuation: true,
+		group: []Type{TypeCodexOAuth, TypeCodexPAT},
+	},
+	TypeCodexPAT: {
+		valid: true, validTplExt: true, validAcctExt: true,
+		isCodex: true, isBPS: false, isRespProvider: true,
+		usesStaticKey: false, supportsContinuation: true,
+		group: []Type{TypeCodexOAuth, TypeCodexPAT},
+	},
+	TypeBPS: {
+		valid: true, validTplExt: true, validAcctExt: true,
+		isCodex: false, isBPS: true, isRespProvider: true,
+		usesStaticKey: false, supportsContinuation: false,
+		group: []Type{TypeBPS},
+	},
+}
+
 // TestTypeBehaviorFrozen 冻结 6 个类型的 12 项行为 + 身份组。
 //
-// 为什么断言方法而不是 capsTable 本身：今天比较表，明天表和 golden 一起改就全绿——
+// 为什么断言方法而不是表本身：今天比较表，明天表和 golden 一起改就全绿——
 // 而且那样锁的是实现面，不是调用方消费面。改表若不同步改这里，diff 会落在两种形状上
 // （表 vs 方法期望），review 才看得见。
 func TestTypeBehaviorFrozen(t *testing.T) {
-	want := map[Type]wantBehavior{
-		TypeAPIKey: {
-			valid: true, validTplExt: false, validAcctExt: false,
-			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true, supportsContinuation: false,
-			group: []Type{TypeAPIKey},
-		},
-		TypeResponsesSpecial: {
-			valid: true, validTplExt: true, validAcctExt: false,
-			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true, supportsContinuation: false,
-			group: []Type{TypeResponsesSpecial},
-		},
-		TypeCustom: {
-			valid: true, validTplExt: true, validAcctExt: false,
-			isCodex: false, isBPS: false, isRespProvider: false,
-			usesStaticKey: true, supportsContinuation: false,
-			group: []Type{TypeCustom},
-		},
-		TypeCodexOAuth: {
-			valid: true, validTplExt: true, validAcctExt: true,
-			isCodex: true, isBPS: false, isRespProvider: true,
-			usesStaticKey: false, supportsContinuation: true,
-			group: []Type{TypeCodexOAuth, TypeCodexPAT},
-		},
-		TypeCodexPAT: {
-			valid: true, validTplExt: true, validAcctExt: true,
-			isCodex: true, isBPS: false, isRespProvider: true,
-			usesStaticKey: false, supportsContinuation: true,
-			group: []Type{TypeCodexOAuth, TypeCodexPAT},
-		},
-		TypeBPS: {
-			valid: true, validTplExt: true, validAcctExt: true,
-			isCodex: false, isBPS: true, isRespProvider: true,
-			usesStaticKey: false, supportsContinuation: false,
-			group: []Type{TypeBPS},
-		},
-	}
-	// 表键集合与 golden 类型集合绑定：加/删表行而漏改这里 → 红（漏掉一行不再等于
-	// 静默走零值）。
-	require.Len(t, capsTable, len(want), "capsTable 与 golden 的类型集合必须一致")
+	want := typeBehaviorGolden
+	// 表键集合与 golden 类型集合绑定（拆表后仍绑 typeCapsTable：类型集合只在那张表里）：
+	// 加/删表行而漏改这里 → 红（漏掉一行不再等于静默走零值）。
+	require.Len(t, typeCapsTable, len(want), "typeCapsTable 与 golden 的类型集合必须一致")
 
 	for typ, w := range want {
 		require.Equal(t, w.valid, typ.Valid(), "%q.Valid", typ)
@@ -107,13 +114,17 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 // 类型上成立，任何把它写成通道投影的实现都会全绿通过。这条测试把两列拆开，等价式
 // 当场失效——调度层的计划判定依赖的正是这个分叉（它读能力位，不读通道）。
 //
-// 注册方式：capsTable 是包私有的，所以替身只能在这里临时插入并在 Cleanup 里删除；
+// 注册方式：typeCapsTable 是包私有的，所以替身只能在这里临时插入并在 Cleanup 里删除；
 // 表键集合的相等断言（TestTypeBehaviorFrozen / TestChannelFrozen）在删除后照旧成立
 // （本包不并行跑用例，见 AGENTS.md）。
+//
+// 替身按拆分后的形状构造：通道（身份）在 typeCapsTable 的 ch 列，能力位单独给 false——
+// 这正是「能力位留在 typeCapsTable」的现场证明：若把它挪进 channelCapsTable，本夹具
+// 的 codex 通道将无法与「不支持续接」共存，测试当场写不出来。
 func TestContinuationCapabilityIsNotChannel(t *testing.T) {
 	const future Type = "codex-future-no-continuation"
-	capsTable[future] = caps{ch: ChannelCodex, validTplExt: true, supportsContinuation: false}
-	t.Cleanup(func() { delete(capsTable, future) })
+	typeCapsTable[future] = typeCaps{ch: ChannelCodex, validTplExt: true, supportsContinuation: false}
+	t.Cleanup(func() { delete(typeCapsTable, future) })
 
 	require.Equal(t, ChannelCodex, ChannelOf(future),
 		"夹具的通道必须是 codex——否则这条测试证明不了两条轴能分开")
@@ -136,7 +147,7 @@ func TestContinuationCapabilityIsNotChannel(t *testing.T) {
 // **恰好**同集合、规范序、且是副本（调用方改不动权威表）。
 func TestKnownTypesMirrorsCapsTable(t *testing.T) {
 	got := KnownTypes()
-	require.Len(t, got, len(capsTable), "KnownTypes 必须与 capsTable 同大小")
+	require.Len(t, got, len(typeCapsTable), "KnownTypes 必须与 typeCapsTable 同大小")
 	require.True(t, sort.SliceIsSorted(got, func(i, j int) bool { return got[i] < got[j] }),
 		"KnownTypes 必须规范序（字典序）：%v", got)
 
@@ -146,8 +157,8 @@ func TestKnownTypesMirrorsCapsTable(t *testing.T) {
 		seen[typ] = true
 		require.True(t, typ.Valid(), "%q 来自表内 ⇒ Valid() 必真", typ)
 	}
-	for typ := range capsTable {
-		require.True(t, seen[typ], "capsTable 里的 %q 必须出现在 KnownTypes", typ)
+	for typ := range typeCapsTable {
+		require.True(t, seen[typ], "typeCapsTable 里的 %q 必须出现在 KnownTypes", typ)
 	}
 
 	// 副本语义：改写返回切片不影响下一次调用。
@@ -170,7 +181,7 @@ func TestChannelFrozen(t *testing.T) {
 		TypeCodexPAT:         ChannelCodex,
 		TypeBPS:              ChannelBPS,
 	}
-	require.Len(t, capsTable, len(want), "capsTable 与 Channel golden 的类型集合必须一致")
+	require.Len(t, typeCapsTable, len(want), "typeCapsTable 与 Channel golden 的类型集合必须一致")
 	for typ, ch := range want {
 		require.Equal(t, ch, ChannelOf(typ), "%q 的执行通道漂移", typ)
 	}
@@ -187,24 +198,72 @@ func TestChannelOfInvalidType(t *testing.T) {
 	}
 }
 
+// TestCapsTablesSplitByAxis 钉住「拆表」本身：哪一列属于哪条轴、两张表的键集合恰好是什么。
+//
+// 断言的**不是** AST 形状，而是类型系统 + 运行时集合：
+//   - channelCapsTable 的键类型是 Channel ⇒ `map[Type]channelCaps` 根本编译不过，
+//     「把类型塞进通道表」在编译期已被排除；
+//   - 运行时键集合必须恰好是三个合法 Channel（空表或漏一行都红）；
+//   - 每个类型的 ch 都必须在通道表里有行——这是拆表**新引入**的缺口：新通道只加常量、
+//     不加通道行，ValidAccountExt 会静默恒 false（零值），而不是报错；
+//   - typeCapsTable 的键集合必须恰好等于 golden 的类型集合（加/删类型漏改 golden 即红）。
+func TestCapsTablesSplitByAxis(t *testing.T) {
+	// ① 键类型（类型系统层面的事实，运行时再复述一次，防「顺手换成 map[string]」）。
+	require.Equal(t, reflect.TypeOf(Channel(0)), reflect.TypeOf(channelCapsTable).Key(),
+		"channelCapsTable 的键必须是 Channel：键就是通道，Type 不能进来")
+	require.Equal(t, reflect.TypeOf(channelCaps{}), reflect.TypeOf(channelCapsTable).Elem())
+	require.Equal(t, reflect.TypeOf(Type("")), reflect.TypeOf(typeCapsTable).Key(),
+		"typeCapsTable 的键必须是 Type：逐类型声明的只有类型级列")
+
+	// ② 通道表键集合 == 三个合法 Channel，且非空。
+	wantChannels := []Channel{ChannelStaticKey, ChannelCodex, ChannelBPS}
+	require.NotEmpty(t, channelCapsTable, "channelCapsTable 为空：ValidAccountExt 会对全类型恒 false")
+	require.Len(t, channelCapsTable, len(wantChannels), "channelCapsTable 的键必须恰好是三个合法 Channel")
+	for _, ch := range wantChannels {
+		_, ok := channelCapsTable[ch]
+		require.True(t, ok, "channelCapsTable 缺 %d 这一行", ch)
+	}
+
+	// ③ 每个类型的通道都有通道行（拆表后新增的静默缺口）。
+	for typ, c := range typeCapsTable {
+		_, ok := channelCapsTable[c.ch]
+		require.True(t, ok,
+			"%q 的通道 %d 在 channelCapsTable 里没有行：ValidAccountExt 会静默走零值 false", typ, c.ch)
+	}
+
+	// ④ 类型表键集合 == golden 类型集合（逐键双向断言，不是只比长度——长度相等的一对
+	// 增删仍然会漏）。
+	require.Len(t, typeCapsTable, len(typeBehaviorGolden), "typeCapsTable 与 golden 的类型集合必须一致")
+	for typ := range typeBehaviorGolden {
+		_, ok := typeCapsTable[typ]
+		require.True(t, ok, "%q 在 golden 里但不在 typeCapsTable 里", typ)
+	}
+}
+
 // 这里曾有一条 TestCapsColumnInvariants（对 capsTable 求「跨列不变量」）。caps 塌到
 // 2 列（ch + validTplExt）后它不可重建：其余 4 个能力位已不存在，而剩下的两列之间
 // **没有**函数关系——api_key（validTplExt=false）与 responses-special / custom
 // （true）的 ch 同为 ChannelStaticKey。任何「ch ⇔ validTplExt」的断言都是错的，
 // 所以不接受「保留仍成立的部分」这种空话，整条删除。
 //
+// S3b 拆两表后，这条的替代品**不是**又一条跨列不变量，而是结构：validAcctExt 已搬进
+// `map[Channel]channelCaps`，「通道是 static、却声明账号 ext 可用」在类型上不可表达
+// （见 TestCapsTablesSplitByAxis）；剩下三列（ch / validTplExt /
+// supportsContinuation）之间仍然没有函数关系，不复活那条断言。
+//
 // 代价与接受理由：**golden 是唯一的跨类型锁**——表与 golden 被同步改错时不再有第二
 // 把锁。补偿它的是 TestPredicatesOnUnknownType：那条锁的是表外语义（golden 不覆盖
-// 的维度），恰是 ch 派生最容易翻车的地方。
+// 的维度），恰是通道派生最容易翻车的地方。
 
 // TestPredicatesOnUnknownType 表外类型（非法/未注册）上，**8 个布尔谓词全部必须
 // false**——逐谓词显式枚举，不写「全部谓词」的模糊断言。
 //
-// 为什么单独锁：caps 塌到 2 列后谓词全部由 c.ch 派生，而 ChannelOf 的零值正是
-// ChannelStaticKey。最容易的错法是把 ok 守卫丢掉、写成 ChannelOf(t) == ChannelStaticKey
-// ——那会让 UsesStaticKey() 对非法类型从 false 翻成 true；而
-// service/account.go:45,221 拿它决定 upstream_key 是否必填，**没有** Valid() 前置守卫，
-// 是真实的行为变化。golden 只覆盖表内 6 个类型，抓不到这一类。
+// 为什么单独锁：拆表后通道轴谓词仍全部由 typeCapsTable 的 ch 派生，而 ChannelOf 的零值
+// 正是 ChannelStaticKey（它在 channelCapsTable 里有一行真实记录，不是「查不到」）。
+// 最容易的错法是把 ok 守卫丢掉、写成 ChannelOf(t) == ChannelStaticKey——那会让
+// UsesStaticKey() 对非法类型从 false 翻成 true；而 service/account.go:45,221 拿它决定
+// upstream_key 是否必填，**没有** Valid() 前置守卫，是真实的行为变化。golden 只覆盖
+// 表内 6 个类型，抓不到这一类。
 func TestPredicatesOnUnknownType(t *testing.T) {
 	predicates := []struct {
 		name string
@@ -282,7 +341,7 @@ func TestCredentialPkgOwnsNoTypePredicateHelper(t *testing.T) {
 					continue
 				}
 				require.False(t, strings.HasPrefix(fn.Name.Name, "Is"),
-					"%s：新增谓词方法 %s——类型的形态只由 capsTable 投影，不要在 credential 包再开按类型判定的入口",
+					"%s：新增谓词方法 %s——类型的形态只由 typeCapsTable/channelCapsTable 投影，不要在 credential 包再开按类型判定的入口",
 					fset.Position(fn.Pos()), fn.Name.Name)
 				frag, found := hit(fn.Name.Name)
 				require.False(t, found, "%s：方法名 %s 含 %q——同上的「按类型分支」入口", fset.Position(fn.Pos()), fn.Name.Name, frag)
