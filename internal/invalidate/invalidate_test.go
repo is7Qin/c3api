@@ -271,6 +271,10 @@ func TestMatrixPerEntity(t *testing.T) {
 		r := newRig(t, &recAuth{})
 		r.markAndFire(KindUsers, nil)
 		waitCalls(t, r.auth.calls, 1)
+		// reloadAll 在同一 goroutine 顺序执行：先 Auth.Reload（invalidate.go:321）
+		// 后 Balances.Reload（:325），两者之间没有同步点。余额全量是本行的最后
+		// 一个效果，必须等它到位，否则断言撞上进行中的中间态（bal = 0）。
+		waitCalls(t, r.bal.relCalls, 1)
 		if r.bal.relCalls() != 1 || r.sched.fullCalls() != 0 || r.cl.calls() != 0 || r.bal.multCalls() != 0 {
 			t.Fatalf("users 只应 auth+bal 全量：auth=%d bal=%d schedFull=%d clients=%d mult=%d",
 				r.auth.calls(), r.bal.relCalls(), r.sched.fullCalls(), r.cl.calls(), r.bal.multCalls())
@@ -280,6 +284,11 @@ func TestMatrixPerEntity(t *testing.T) {
 		r := newRig(t, &recAuth{})
 		r.markAndFire(KindTemplates, nil)
 		waitCalls(t, r.sched.fullCalls, 1)
+		// 同一 goroutine 内先 Sched.InvalidateAll（invalidate.go:329）后
+		// Clients.InvalidateAll（:341），中间无同步点。clients 是本行最后一个
+		// 效果，必须等它到位再断言，否则会读到 sched 已完成、clients 尚未触发的
+		// 中间态（clients = 0）。
+		waitCalls(t, r.cl.calls, 1)
 		if r.cl.calls() != 1 || r.auth.calls() != 0 || r.bal.relCalls() != 0 {
 			t.Fatalf("templates 只应 sched+clients")
 		}
