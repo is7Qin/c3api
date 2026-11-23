@@ -1,19 +1,41 @@
 // Package architecture 是仓库级 import-graph 门禁：本目录只有测试文件，不产出任何
 // 生产代码，只在 go test 时读取真实 import 图。
 //
-// # 强制力在哪里（诚实定位）
+// # 三类保证，强度完全不同（不要混为一谈）
 //
-// 真正有强制力的是三条硬规则：
+// ① 三条硬规则 —— 机械强制：
 //
 //  1. pkg/* 不得 import 任何 internal/*（零豁免，连 legacy 都登记不进去）；
 //  2. 未显式声明层级的包落到 leafRule，默认只允许 domain/credential/worker/pkg，
 //     也就是「未知包默认拒绝」；
-//  3. allow 矩阵新增边即红：任何不在 allow 里的边，只能显式登记成债务，否则失败。
+//  3. allow 矩阵之外的边默认拒绝：任何不在 allow 里的边，只能显式登记成债务，
+//     否则失败。
 //
-// legacy 不是门禁，是债务账本：它只靠两件事保证「只减不增」——
-// stale 检查（登记了但图上没有 / 已被 allow 覆盖都要红）与条数精确相等
-// （len(debt) == debtMax，删一条必须同步改小，加一条必须单独评审）。
-// 账本本身不会让代码变好，它只防止债务悄悄变大。
+// ② legacy 债务账本 —— 机械部分 + 人工部分：
+//
+//   - 机械：stale 检查（登记了但图上没有 / 已被 allow 覆盖都要红）与条数精确相等
+//     （len(debt) == debtMax，删一条必须同步改小）；
+//   - 人工：「新边 + 当场登记 legacy{reason, phase} + 同步调大上限」这三步合起来
+//     在机械上完全合法，账本无法区分「偿还债务」与「偷偷加债」，只能靠 diff 复核。
+//     账本本身不会让代码变好，它只防止债务悄悄变大。
+//
+// ③ allow 矩阵 —— 指纹 tripwire（机械信号 + 评审），不是硬规则：
+//
+//   - allowMatrixFingerprint 是整张策略（allowRules + leafRule）规范化序列化后的
+//     sha256：规则按 from 排序，all / to / deny 各自排序后按固定字段顺序拼接。
+//     因此任何矩阵改动——加一条 from、加宽一条 to、多一个 deny、把 to 换成 all、
+//     动 leafRule——都会让指纹变化，必须先显式更新 const 才能过测试；
+//
+//   - allMax 单独限制 all: true 的条数（精确相等，只许改小），因为 all: true 是
+//     最危险的改动方向：一条规则等于整棵子树立即可依赖；
+//
+//   - 两者互补：指纹抓「任何矩阵改动」，allMax 抓「最危险的改动方向」。没有指纹时
+//     放宽矩阵是零信号（allowRule 没有 reason / phase / 上限，比 legacy 还宽松）；
+//     这正是本 tripwire 存在的理由。
+//
+//     但必须诚实：没有任何机制能阻止有意同时改矩阵与指纹。门禁的作用是让这类改动
+//     不可静默——它必须同时出现在 diff 的矩阵与指纹（必要时还有 allMax）两处，评审
+//     看得见理由，而不是不可发生。
 //
 // # 本门禁挡不住什么
 //
@@ -28,7 +50,8 @@
 //   - 重命名 / 拆包时，旧边必须在同一个提交里从账本删除（否则 stale 会红）；
 //   - 新边若确属既有债务，必须单独提交并单写理由，不许在「结构迁移」提交里
 //     顺手放宽 allow 矩阵或调大上限；
-//   - phaseKeep（结构性不消除）单独计上限，不许用它给新边开口子。
+//   - phaseKeep（结构性不消除）单独计上限，不许用它给新边开口子；
+//   - 搬包（P3/P5）时新树只能写 to: 白名单，不许用 all: true。
 //
 // # 扫描口径
 //
@@ -37,11 +60,19 @@
 // -tags 改变包集。包集必须与文件系统遍历结果（减去 unscannedDirs）双向相等：
 // 少扫、多扫都要显式说明。Imports 走严格矩阵，TestImports / XTestImports 走
 // 更宽口径，并各自维护独立账本。
+//
+// 文件系统遍历与 go list 同一口径：testdata / tmp / vendor / node_modules 按
+// basename 在任意深度都不深入（Go 工具链同样忽略 testdata；vendor 是依赖副本；
+// tmp 是临时目录；node_modules 不装 Go 包）。根级的 testdata / tmp / vendor 仍要
+// 在 unscannedDirs 里写明「为什么根级这些目录不被扫」，其余深度既不深入也不登记，
+// 否则每个叶子包的 testdata 夹具都会变成一条假失败。
 package architecture
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -313,6 +344,100 @@ var testFixtureAllow = []string{
 
 func productionPolicy() policy {
 	return policy{rules: allowRules, fallback: leafRule}
+}
+
+// ---------------------------------------------------------------------------
+// allow 矩阵指纹（加宽的唯一机械信号）
+// ---------------------------------------------------------------------------
+
+const (
+	// allowMatrixFingerprint 钉住整张策略（allowRules + leafRule）的规范化 sha256。
+	//
+	// 背景：allowRule 没有 reason / phase / 上限，而 legacyRow 三者都有——放宽
+	// 矩阵比增加债务还便宜。指纹把「放宽矩阵」变成一次不可静默的改动：矩阵变了
+	// 指纹就变，必须先显式更新本常量才能过测试。
+	//
+	// 诚实边界：它挡不住有意同时改矩阵与指纹。它只保证这类改动在 diff 里两处同时
+	// 可见、必须写理由（见文件头 ③），不保证它不会发生。
+	allowMatrixFingerprint = "abe5fa655398ba69e95fc287aa0ac57307b0c981d0c11f3600eaf97ca5c541e1"
+
+	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
+	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
+	// （执行面）、internal/service（控制器层）——都是「装配点/执行面」这类真的
+	// 需要看全局的位置。all: true 是最危险的放宽方向（一条规则等于整棵子树立即
+	// 可依赖），单列上限是为了让「把 to 换成 all」除了指纹变化之外还有第二道可读信号。
+	allMax = 5
+)
+
+// canonicalRule 把一条规则规范成一行无歧义的字符串：字段顺序固定，to/deny 先排序，
+// from 用 %q 转义。因此「元素顺序不同」得到同一行，而「多/少/改任何一个元素」
+// （包括把 to 清空并置 all）必然得到不同行。
+func canonicalRule(r allowRule) string {
+	to := append([]string(nil), r.to...)
+	sort.Strings(to)
+	deny := append([]string(nil), r.deny...)
+	sort.Strings(deny)
+	return fmt.Sprintf("from=%q all=%t to=[%s] deny=[%s]",
+		r.from, r.all, strings.Join(to, " "), strings.Join(deny, " "))
+}
+
+// policyFingerprint 返回整张策略的规范化序列化 + sha256：
+// 每条 allowRule 规范化成一行后整体排序（等价于按 from 排序，同 from 时按内容
+// 排序，因此结果确定），leafRule 作为独立的 leaf 行追加，不会与 allowRules 混淆。
+func policyFingerprint(pol policy) string {
+	lines := make([]string, 0, len(pol.rules))
+	for _, r := range pol.rules {
+		lines = append(lines, "allow\t"+canonicalRule(r))
+	}
+	sort.Strings(lines)
+
+	var b strings.Builder
+	b.WriteString("import-graph-policy/v1\n")
+	for _, line := range lines {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("leaf\t" + canonicalRule(pol.fallback) + "\n")
+
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+// countAllRules 数 all: true 的规则条数（fallback 不带 all，不计入）。
+func countAllRules(pol policy) int {
+	n := 0
+	for _, r := range pol.rules {
+		if r.all {
+			n++
+		}
+	}
+	return n
+}
+
+// TestImportGraphAllowMatrixFingerprint 是加宽 allow 矩阵的唯一机械信号：
+// 绿表示矩阵与钉住的指纹一致；红表示矩阵被改动，必须先说明理由再更新常量。
+func TestImportGraphAllowMatrixFingerprint(t *testing.T) {
+	got := policyFingerprint(productionPolicy())
+	require.Equalf(t, allowMatrixFingerprint, got,
+		`allow 矩阵被改动：加宽任何 to/deny/all 都必须显式更新指纹，并在评审里说明理由——这是加宽的唯一机械信号。
+实际指纹：%s
+钉住指纹：%s
+收紧（删规则 / 收窄 to / 多一个 deny）时把上面常量改成实际值即可；加宽时必须写清理由。
+注意：没有任何机制能阻止有意同时改矩阵与指纹，指纹只保证这类改动不可静默，不是不可发生。`, got, allowMatrixFingerprint)
+}
+
+// checkAllCap 检查 all: true 的规则条数是否精确等于 max（只许改小）。
+func checkAllCap(pol policy, max int) error {
+	got := countAllRules(pol)
+	if got != max {
+		return fmt.Errorf("all: true 的规则有 %d 条，上限常量 allMax=%d：all 是最危险的放宽方向（一条规则等于整棵子树立即可依赖），只允许改小；新增必须单独提交，说明为什么不能用 to: 白名单", got, max)
+	}
+	return nil
+}
+
+// TestImportGraphAllRuleCap 给最危险的放宽方向（all: true）单列第二道信号。
+func TestImportGraphAllRuleCap(t *testing.T) {
+	require.NoError(t, checkAllCap(productionPolicy(), allMax))
 }
 
 // ---------------------------------------------------------------------------
@@ -660,10 +785,27 @@ func sortEdges(edges []edge) {
 	})
 }
 
+// opaqueDirNames 是「即使含 .go 文件也不是可 import 的包」的目录名，按 basename
+// 在任意深度生效，与 go list 的语义一致：
+//   - testdata：Go 工具链显式忽略，里面只会是夹具；
+//   - vendor：依赖副本，第三方代码不受本仓库分层约束；
+//   - tmp：临时/调试目录，可能含互相冲突的 main 包；
+//   - node_modules：不装 Go 包。
+//
+// 只有根级的 testdata / tmp / vendor 需要另行在 unscannedDirs 里写明理由（它们
+// 解释「为什么根级这些目录不被扫」），任意深度的同名目录既不深入也不登记。
+var opaqueDirNames = map[string]string{
+	"testdata":     "Go 工具链显式忽略，里面只会是夹具",
+	"tmp":          "临时/调试目录，可能含互相冲突的 main 包",
+	"vendor":       "依赖副本，第三方代码不受本仓库分层约束",
+	"node_modules": "不装 Go 包",
+}
+
 // dirsWithGoFiles 返回仓库里所有含 .go 文件的目录（相对路径，斜杠分隔）。
-// 隐藏目录与 node_modules 不可能装 Go 包，直接跳过（有明确理由）；
-// 顶层 tmp/vendor/testdata 只登记、不深入，它们必须在 unscannedDirs 里显式声明；
-// 其余任意深度的 testdata 由 Go 工具链忽略，是夹具目录，同样不深入。
+// 隐藏目录直接跳过（不可能装 Go 包）；opaqueDirNames 里的 basename 在任意深度都
+// 不深入（见该变量注释），因此嵌套的 testdata 夹具不会变成假失败；根级的
+// testdata / tmp / vendor 仍然登记到结果里，好让 unscannedDirs 的存在性检查
+// （「声明了就必须被遍历看到」）对它们继续生效。
 func dirsWithGoFiles(root string) ([]string, error) {
 	var dirs []string
 	var walk func(dir string) error
@@ -676,21 +818,23 @@ func dirsWithGoFiles(root string) ([]string, error) {
 		for _, e := range entries {
 			if e.IsDir() {
 				name := e.Name()
-				if strings.HasPrefix(name, ".") || name == "node_modules" {
+				if strings.HasPrefix(name, ".") {
 					continue
 				}
-				rel, err := filepath.Rel(root, filepath.Join(dir, name))
-				if err != nil {
-					return err
-				}
-				opaque := name == "testdata" || (dir == root && (name == "tmp" || name == "vendor"))
-				if opaque {
-					if dir == root || hasGoFiles(filepath.Join(dir, name)) {
+				child := filepath.Join(dir, name)
+				if _, opaque := opaqueDirNames[name]; opaque {
+					// 不深入。根级仍要登记，供 unscannedDirs 的存在性检查使用；
+					// node_modules 不在 unscannedDirs 里，根级也不登记。
+					if dir == root && name != "node_modules" {
+						rel, err := filepath.Rel(root, child)
+						if err != nil {
+							return err
+						}
 						dirs = append(dirs, filepath.ToSlash(rel))
 					}
 					continue
 				}
-				if err := walk(filepath.Join(dir, name)); err != nil {
+				if err := walk(child); err != nil {
 					return err
 				}
 				continue
@@ -714,20 +858,6 @@ func dirsWithGoFiles(root string) ([]string, error) {
 	}
 	sort.Strings(dirs)
 	return dirs, nil
-}
-
-// hasGoFiles 只看目录第一层（不递归），用于判断 testdata 里是否真的躺着 .go 夹具。
-func hasGoFiles(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-			return true
-		}
-	}
-	return false
 }
 
 func containsString(list []string, want string) bool {
