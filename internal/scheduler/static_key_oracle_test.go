@@ -6,25 +6,49 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+// frozenCredentialPair 是 acc58144（本单元之前）**真正进 planKey** 的那对凭据原文。
+// 口径逐行取自改前的构造函数：上游鉴权键无条件入键；PAT 只在「ext 存在 ∧ 模板非
+// BPS」分支入键（BPS 分支从来不写该字段），因此 BPS / 无 ext 时 pat 恒为 ""。
+type frozenCredentialPair struct {
+	upstream string
+	pat      string
+}
+
 // frozenPlanKey re-implements the ORIGINAL plan-key derivation independently of
-// planKeyOf / newSnapshotStatic (a frozen old-algorithm oracle). The constructor
-// must produce a key equal to this derivation for the same inputs; comparing the
-// constructor against itself would prove nothing.
-func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planKey {
+// planKeyOf / newSnapshotStatic (a frozen old-algorithm oracle) **except** for the
+// credential pair, which it returns as the frozen raw pair instead of writing it
+// into a key field.
+//
+// 凭据维度的 oracle 地位已被 static_key_credential_test.go 的 1125 组等价类测试
+// **接管**（本单元：planKey 去载荷）。理由不是省事：改前凭据面是两枚 string 字段，
+// 判据就是"逐字节相等"；改后键里只剩 sha256 摘要，在包内再"独立"写一份同款
+// 长度前缀 + sha256 只是把实现抄一遍（自证），既证不出等价关系，也证不出"没有
+// 合并今天不同的键"。等价类测试断言的是**关系**——新键相等 ⟺ 这对原文逐字节
+// 相等——比逐值相等更强：它同时锁住两个方向（不得合并、不得拆分）。
+//
+// 本函数因此只证其余维度（账号/模板/组归属/出口/可用性）仍与改前同源：比较时把
+// 构造函数产出的 credentialPairDigest 抹零，再与这里的 planKey 逐字段相等。
+func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (planKey, frozenCredentialPair) {
 	var k planKey
+	var pair frozenCredentialPair
 	k.accountID = acc.ID
 	k.name = acc.Name
 	k.templateID = acc.TemplateID
 	if tpl != nil {
-		k.baseURL = tpl.BaseURL
+		if tpl.CredentialType.IsBPS() {
+			k.baseURL = domain.BPSDefaultEndpoint
+		} else {
+			k.baseURL = tpl.BaseURL
+		}
 	}
-	if acc.BaseURL != nil && *acc.BaseURL != "" {
+	if (tpl == nil || !tpl.CredentialType.IsBPS()) && acc.BaseURL != nil && *acc.BaseURL != "" {
 		k.baseURL = *acc.BaseURL
 	}
-	k.upstreamKey = acc.UpstreamKey
+	pair.upstream = acc.UpstreamKey
 	k.maxConcurrency = acc.MaxConcurrency
 	k.enabled = acc.Enabled
 	k.cacheDomain = normalizeCacheDomain(acc.CacheDomain)
@@ -38,11 +62,16 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planK
 	// 否则构造函数与 oracle 同源，比对就退化成自证）。
 	k.routable = acc.Enabled && (acc.ProxyID == nil || (acc.Proxy != nil && acc.Proxy.Enabled))
 	if ext := acc.Ext; ext != nil {
-		k.codexAccountID = derefString(ext.CodexAccountID)
-		k.codexEmail = derefString(ext.CodexEmail)
-		k.codexPATKey = derefString(ext.CodexPATKey)
-		if id := ext.CodexIdentity; id != nil {
-			k.codexInstallation = id.InstallationID
+		if tpl != nil && tpl.CredentialType.IsBPS() {
+			// BPS 只吃上游账号归属，不吃 Codex email/PAT/installation。
+			k.codexAccountID = derefString(ext.CodexAccountID)
+		} else {
+			k.codexAccountID = derefString(ext.CodexAccountID)
+			k.codexEmail = derefString(ext.CodexEmail)
+			pair.pat = derefString(ext.CodexPATKey)
+			if id := ext.CodexIdentity; id != nil {
+				k.codexInstallation = id.InstallationID
+			}
 		}
 	}
 	if tpl != nil {
@@ -54,15 +83,39 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planK
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
 		// custom 路径同样进键（编码由 TestDigestUpstreamPaths 单独冻结）
 		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
+		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
+		if tpl.CredentialType.IsBPS() && acc.Ext != nil {
+			k.bpsProfileDigest = domain.BPSProfileHash(acc.Ext.BPSProfile)
+		}
 	}
 	k.groupIDsDigest = digestInt64s(gids)
-	return k
+	return k, pair
+}
+
+// requirePlanKeyMatchesFrozen 断言 got 与冻结推导除**凭据摘要**外逐字段相等，并断言
+// 凭据摘要确实由构造期写入（非零值——否则下面的抹零比对会让凭据维度整个逃逸）。
+//
+// 为什么要抹掉那一维：凭据原文已折叠为摘要，包内任何"独立"的摘要推导都只是把实现
+// 抄一遍；凭据面的判据是**等价类**，由 TestPlanKeyCredentialPairEquivalenceClasses
+// 的 1125 组参照测试覆盖（见 frozenPlanKey 的注释）。其余维度仍逐字段对照冻结推导。
+func requirePlanKeyMatchesFrozen(t *testing.T, got planKey, acc domain.Account, tpl *domain.Template, gids []int64, msgAndArgs ...any) {
+	t.Helper()
+	want, _ := frozenPlanKey(acc, tpl, gids)
+	require.NotEqual(t, [32]byte{}, got.credentialPairDigest,
+		"凭据摘要必须由构造期写入：零值意味着凭据面整个逃逸了冻结比对")
+	got.credentialPairDigest = [32]byte{}
+	require.Equal(t, want, got, msgAndArgs...)
 }
 
 // TestFrozenPlanKeyOracleMatchesConstructor checks the cached key against the
 // frozen old-algorithm oracle for nil/empty inputs, groupIDs order permutation,
 // duplicates, and content changes, and confirms the sensitivity that the key is
 // meant to carry.
+//
+// 凭据维度（本次改动的维度）在这里只断言两件事：冻结推导的**进键 pair** 与手写
+// 期望一致（BPS 残留 pat 被排除、无 ext 时为 ""），以及构造函数确实写了非零摘要
+// （否则下面的抹零比较会让凭据维度整个逃逸）。凭据维度的**等价类**由
+// static_key_credential_test.go 的 1125 组参照测试承担。
 func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m-a", "m-b"})
 	tpl.FormatModels = map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {"m-a"}}
@@ -71,20 +124,51 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	a.Ext = &domain.AccountExt{CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat")}
 	a.SupplierUserID = 42
 
+	// BPS 模板：残留 ext pat **不进键**（改前也不进），上游鉴权键与 profile 摘要进键。
+	bpsTpl := tplWith(domain.FormatOpenAIResponses, []string{"m-a"})
+	bpsTpl.CredentialType = credential.TypeBPS
+	bpsAcc := *acc(8, bpsTpl, 4)
+	bpsAcc.Ext = &domain.AccountExt{
+		CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat-residual"),
+		BPSProfile: []byte(`{"profile_id":"p","device_id":"d"}`),
+	}
+
+	// 无 ext：PAT 维度恒为 ""（改前该分支根本不写字段）。
+	noExt := *acc(9, tpl, 4)
+	noExt.Ext = nil
+
+	// ext 存在但没有 pat：同样恒为 ""，与"pat 为空串"同键（改前就是同一枚 string）。
+	noPat := *acc(10, tpl, 4)
+	noPat.Ext = &domain.AccountExt{CodexAccountID: new("cid")}
+
+	// ws 出站传输：改前也进键（模板开关变更必须换新叶子）。
+	wsTpl := *tpl
+	wsTpl.CodexResponsesTransport = domain.CodexResponsesTransportWS
+
 	cases := []struct {
 		name string
 		acc  domain.Account
 		tpl  *domain.Template
 		gids []int64
+		pair frozenCredentialPair
 	}{
-		{"nil-tpl-empty-gids", domain.Account{ID: 1}, nil, nil},
-		{"base", a, tpl, []int64{3, 1, 2}},
-		{"permuted", a, tpl, []int64{1, 2, 3}},
-		{"duplicates", a, tpl, []int64{1, 1, 2}},
+		{"nil-tpl-empty-gids", domain.Account{ID: 1}, nil, nil, frozenCredentialPair{}},
+		{"base", a, tpl, []int64{3, 1, 2}, frozenCredentialPair{upstream: a.UpstreamKey, pat: "pat"}},
+		{"permuted", a, tpl, []int64{1, 2, 3}, frozenCredentialPair{upstream: a.UpstreamKey, pat: "pat"}},
+		{"duplicates", a, tpl, []int64{1, 1, 2}, frozenCredentialPair{upstream: a.UpstreamKey, pat: "pat"}},
+		{"bps residual pat excluded", bpsAcc, bpsTpl, nil, frozenCredentialPair{upstream: bpsAcc.UpstreamKey}},
+		{"no ext", noExt, tpl, nil, frozenCredentialPair{upstream: noExt.UpstreamKey}},
+		{"ext without pat", noPat, tpl, nil, frozenCredentialPair{upstream: noPat.UpstreamKey}},
+		{"ws transport", a, &wsTpl, nil, frozenCredentialPair{upstream: a.UpstreamKey, pat: "pat"}},
 	}
 	for _, tc := range cases {
 		got := planKeyOf(newSnapshotStatic(tc.acc, tc.tpl, tc.gids, directEgress(), nil))
-		require.Equal(t, frozenPlanKey(tc.acc, tc.tpl, tc.gids), got, tc.name)
+		want, pair := frozenPlanKey(tc.acc, tc.tpl, tc.gids)
+		require.Equal(t, tc.pair, pair, "%s: 冻结推导的凭据口径", tc.name)
+		// 非空性：构造函数真的写了摘要。否则下面"抹零后相等"会让凭据维度整个逃逸。
+		require.NotEqual(t, [32]byte{}, got.credentialPairDigest, "%s: 摘要必须非零值", tc.name)
+		got.credentialPairDigest = [32]byte{}
+		require.Equal(t, want, got, "%s: 除凭据摘要外的全部维度必须与冻结推导同源", tc.name)
 	}
 
 	// Permutation of the same groupID set is invariant (canonical digest).

@@ -22,20 +22,21 @@ import (
 //
 // 比较规则第 2 项（`CandidateFingerprint` 本身按值比较）在这里**未接线**：
 // 它按值覆盖 accountID/templateID/credential_type/生效 baseURL/stripImageTools/
-// upstreamKey/凭据摘要/installation_id/codexAccountID，这些事实**均已逐项**落在
-// 下列字段里（digest 是 upstreamKey|patKey 的纯函数：
-// domain/routing.go 的 stableCredentialDigest），
+// 上游鉴权键/凭据摘要/installation_id/codexAccountID，这些事实**均已逐项**落在
+// 下列字段里（凭据原文折叠为 credentialPairDigest：hashCredentialPair），
 // 故覆盖面无缺口。
 //
 // 两枚 struct 都只含值语义字段（标量 / `[32]byte` 摘要），`==` 仍是唯一算子
 // （沿用 static_key_test.go 的反射守卫）。
 type planKey struct {
 	// --- §5.5 账号侧（静态快照消费 = 是） ---
-	accountID                int64
-	name                     string
-	templateID               int64
-	baseURL                  string // 生效 baseURL：账号覆盖优先，否则模板值（覆盖率最广，同时覆盖 §5.5 的 base_url 行与 §5.5b 的 Template.BaseURL 行）
-	upstreamKey              string
+	accountID  int64
+	name       string
+	templateID int64
+	baseURL    string // 生效 baseURL：账号覆盖优先，否则模板值（覆盖率最广，同时覆盖 §5.5 的 base_url 行与 §5.5b 的 Template.BaseURL 行）
+	// 声明表里的 upstream_key 行不单独占字段：它**只**因会把凭据身份换掉而进键，
+	// 该语义由凭据面的 credentialPairDigest 承载（见该字段）。改前它是独立的
+	// string 字段，本单元把它与 pat 原文一起折叠为摘要。
 	maxConcurrency           int
 	enabled                  bool
 	cacheDomain              string // 规范化：nil 与 "" 对消费者等价（cacheDomainForAccount）
@@ -73,15 +74,11 @@ type planKey struct {
 	// 身份三件套 session/thread/window 已退役为运行时槽状态（scheduler 槽位池），
 	// **不再**进键——否则每次槽轮换都会作废在途计划。
 	//
-	// codexPATKey 落在这里：stableCredentialDigest 对 codex-pat 就是
-	// sha256(patKey)，pat 轮转确实改变候选指纹 ⇒ 确实必须打断计划。而
-	// codex-oauth 分支返回常量（domain/routing.go 的 stableCredentialDigest），故 OAuth 令牌不是
-	// 决策输入——两个分支的差异正是"载荷 vs 决策输入"的分界线，键的拆分与
-	// 指纹函数的拆分同源。
+	// credentialPairDigest 是「上游鉴权键 + PAT」这对凭据**原文**的 32 字节摘要。
+	// 它排在 planKey **末尾**——详见结构体末尾的字段声明与那里的比较顺序说明。
 	codexAccountID    string
 	codexInstallation string
 	codexEmail        string
-	codexPATKey       string // 凭据值：pat（api_key/pat 类型上游鉴权用；同时进候选指纹）
 	// bpsProfileDigest is the canonical digest of the opaque BPS profile. It is
 	// independent from Codex installation identity and participates in the
 	// routing/leaf fence for TypeBPS only.
@@ -107,6 +104,31 @@ type planKey struct {
 
 	// --- §5.5 group_ids 行（Slice 类事实以规范序摘要入键） ---
 	groupIDsDigest [32]byte
+
+	// credentialPairDigest 是「上游鉴权键 + PAT」这对凭据**原文**的 32 字节摘要
+	// （hashCredentialPair：8 字节大端长度前缀 + 内容，再 sha256）。改前它们是两枚
+	// 独立 string 字段（上游键无条件入键、PAT 只在非 BPS 分支入键）；本单元把原文
+	// 从键里去掉，但**等价关系逐字节不变**——摘要吃同一份"进键 PAT"（ext 缺失或
+	// 模板为 BPS 时为 ""），带长度前缀使 ("ab","c") 与 ("a","bc") 仍不同键。
+	//
+	// 为什么 PAT 轮转必须打断计划：domain/routing.go 的 stableCredentialDigest 对
+	// codex-pat 就是 sha256(pat)，pat 轮转确实改变候选指纹；而 codex-oauth 分支返回
+	// 常量 ⇒ OAuth 令牌不是决策输入（它落在 payloadKey）。两个分支的差异正是
+	// "载荷 vs 决策输入"的分界线。
+	//
+	// 为什么不复用 stableCredentialDigest（那会**合并今天不同的键**）：它按凭据类型
+	// 分派——codex-oauth 恒回常量、静态类型只看上游键而忽略残留 ext 的 pat、空值
+	// 直接返 error、BPS 返 error。构造函数不能新增失败路径，也不能把"上游键变而
+	// pat 不变"与"pat 变而上游键不变"折叠成同一类。口径与用例见
+	// static_key_credential_test.go 的 1125 组等价类测试。
+	//
+	// **为什么它在末尾：比较顺序优化，不是字段归属变更。** `==` 对结构体按字段逐个
+	// 比，而 32 字节数组是这里最贵的单字段比较（定长数组比较优先于 string 段）：放在
+	// 末位后，凡在其它维度上就能判"不等"的分支（如组归属变更）永远不会付这笔钱；
+	// 反之它若在数组块中间，"只差更晚那个数组"的比较会多走一届。它与
+	// `acc.UpstreamKey` / `Ext.CodexPATKey` 的映射关系不变（static_read_closure_test.go
+	// 的映射也不因此改动），只是声明位置变了。
+	credentialPairDigest [32]byte
 }
 
 // specOfDomain 把领域代理对象降为出口规格值（egress.Spec）——**唯一转换点已
@@ -262,7 +284,9 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	if (av.tpl == nil || !av.tpl.CredentialType.IsBPS()) && av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 		k.baseURL = *av.acc.BaseURL
 	}
-	k.upstreamKey = av.acc.UpstreamKey
+	// 凭据原文不再单独入键，但读点与改前逐行同源（闭包门禁把 `$S.acc.UpstreamKey`
+	// 与 `$S.acc.Ext.CodexPATKey` 都登记到 credentialPairDigest 上）：上游键与 PAT
+	// 在下面合成一枚摘要，不再各占一枚 string 字段。
 	k.maxConcurrency = av.acc.MaxConcurrency
 	k.enabled = av.acc.Enabled
 	k.cacheDomain = normalizeCacheDomain(av.acc.CacheDomain)
@@ -271,6 +295,9 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.supplierUserID = av.acc.SupplierUserID
 	k.proxyDigest = specOfDomain(av.acc.Proxy).Key()
 	k.routable = av.routable
+	// 凭据面：模板为 BPS 时 PAT 不进键（BPS 分支从来不写它），故进键 pat 保持 ""；
+	// 其余模板形状（含 tpl == nil ⇒ isBPS 为假）沿用 pre-BPS 语义。
+	var credentialPAT string
 	if ext := av.acc.Ext; ext != nil {
 		isBPS := av.tpl != nil && av.tpl.CredentialType.IsBPS()
 		if isBPS {
@@ -282,12 +309,15 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 			// template shapes. BPS is the only provider-specific exclusion.
 			k.codexAccountID = derefString(ext.CodexAccountID)
 			k.codexEmail = derefString(ext.CodexEmail)
-			k.codexPATKey = derefString(ext.CodexPATKey)
+			credentialPAT = derefString(ext.CodexPATKey)
 			if id := ext.CodexIdentity; id != nil {
 				k.codexInstallation = id.InstallationID
 			}
 		}
 	}
+	// 上游键无条件参与（与改前一致），PAT 只在非 BPS 分支参与：两者合成一枚摘要，
+	// 每次重载一次 sha256，与模板侧 5 项摘要同量级。
+	k.credentialPairDigest = hashCredentialPair(av.acc.UpstreamKey, credentialPAT)
 	if tpl := av.tpl; tpl != nil {
 		k.credentialType = tpl.CredentialType
 		k.stripImageTools = tpl.StripImageTools
@@ -391,6 +421,37 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// hashCredentialPair 把「上游鉴权键 + PAT」这对凭据原文折叠为 planKey 的 32 字节摘要
+// （planKey 去载荷：键里不再出现凭据原文本身）。
+//
+// 为什么自己写而**不复用** domain/routing.go 的 stableCredentialDigest：那枚函数编码的
+// 是**候选指纹**的语义，不是"键相等"的语义——它按凭据类型分派（codex-oauth 恒回常量、
+// 静态类型只看上游键而忽略残留 ext 的 pat、空值直接返 error、BPS 返 error）。拿它来算
+// planKey 会把今天**不同**的键合并，并且给唯一构造函数新增失败路径。
+//
+// 编码：8 字节大端长度前缀 + 内容，两段依次为上游键、PAT，再 sha256。长度前缀是承重的
+// ——裸拼接会把 ("ab","c") 与 ("a","bc") 折成同摘要，而它们在改前是两个不同的 string
+// 字段。分段顺序同样承重：(上游键="x", pat="") ≠ (上游键="", pat="x")。
+//
+// 分配：常见凭据（两段合计 ≤ 240 字节）走栈上缓冲，零堆分配；更长时退化一次 make。
+func hashCredentialPair(upstream, pat string) [32]byte {
+	const inlineCap = 256 // 16 字节前缀 + 两段内容
+	var inline [inlineCap]byte
+	total := 16 + len(upstream) + len(pat)
+	buf := inline[:]
+	if total > inlineCap {
+		buf = make([]byte, total)
+	}
+	n := 0
+	binary.BigEndian.PutUint64(buf[n:], uint64(len(upstream)))
+	n += 8
+	n += copy(buf[n:], upstream)
+	binary.BigEndian.PutUint64(buf[n:], uint64(len(pat)))
+	n += 8
+	n += copy(buf[n:], pat)
+	return sha256.Sum256(buf[:n])
 }
 
 // digestStrings 对字符串列表取规范序摘要（先排序，再长度前缀串联，最后 sha256）。

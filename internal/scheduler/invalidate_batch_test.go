@@ -697,8 +697,8 @@ func TestInvalidateGroupLeafKeysMatchFrozenOracle(t *testing.T) {
 	require.Equal(t, []int64{2}, st1.groupIDs, "a1 removed from G1 must retain only G2 (retained-strip branch)")
 	require.NotSame(t, oldLeaf, sv.byID[1], "the strip must build a new immutable leaf (not clone in place)")
 	require.Same(t, rtA1, sv.byID[1].runtime, "the strip must preserve the shared runtime")
-	require.Equal(t, frozenPlanKey(*a1, a1.Template, []int64{2}), planKeyOf(st1),
-		"the stripped leaf key must equal the frozen oracle over its own groupIDs")
+	requirePlanKeyMatchesFrozen(t, planKeyOf(st1), *a1, a1.Template, []int64{2},
+		"the stripped leaf key must equal the frozen oracle over its own groupIDs (credential digest dimension covered by the 1125-group reference test)")
 
 	// a2 still in G1; a4 added.
 	require.Equal(t, []int64{1}, sv.byID[2].static.Load().groupIDs)
@@ -706,7 +706,7 @@ func TestInvalidateGroupLeafKeysMatchFrozenOracle(t *testing.T) {
 	// Remaining retained leaves' keys also match the frozen oracle.
 	for id, a := range map[int64]*domain.Account{2: a2, 3: a3, 4: a4} {
 		st := sv.byID[id].static.Load()
-		require.Equal(t, frozenPlanKey(*a, a.Template, st.groupIDs), planKeyOf(st),
+		requirePlanKeyMatchesFrozen(t, planKeyOf(st), *a, a.Template, st.groupIDs,
 			"leaf %d cached key must equal the frozen oracle", id)
 	}
 	// G2 must now reference a1's NEW retained leaf (shared-instance discipline).

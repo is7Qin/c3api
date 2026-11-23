@@ -878,9 +878,9 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 
 // tplRouteFactsKey 是 buildRoutes 的去重键：**模板侧路由事实**的投影。
 //
-// 为什么不是整枚 planKey：planKey 里还有 accountID / upstreamKey / proxyDigest /
-// identityRevision / baseURL … 等**账号侧**字段——拿整枚 key 当去重键等于按账号
-// 去重，恰好是这个单元要消灭的东西。
+// 为什么不是整枚 planKey：planKey 里还有 accountID / 凭据摘要（credentialPairDigest，
+// 凭据原文已从键里去掉）/ proxyDigest / identityRevision / baseURL … 等**账号侧**
+// 字段——拿整枚 key 当去重键等于按账号去重，恰好是这个单元要消灭的东西。
 // 为什么不是 `*domain.Template` 指针：生产上每个账号各有一份独立模板
 // （repository/mapping.go 的 toDomainAccount 逐账号 toDomainTemplate，ent 的
 // eager-load 不按 ID 共享指针）⇒ 指针去重在生产恒不命中。

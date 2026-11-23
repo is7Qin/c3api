@@ -162,8 +162,9 @@ func TestTemplateDigestCacheMatchesDirectDerivation(t *testing.T) {
 		require.Equal(t, plain.modelMappingKey, got.modelMappingKey, "case %d: modelMappingKey 必须逐字节相等", i)
 		require.Equal(t, plain.upstreamPathsKey, got.upstreamPathsKey, "case %d: upstreamPathsKey 必须逐字节相等（漏一项即红）", i)
 		require.Equal(t, planKeyOf(direct), planKeyOf(cached), "case %d: 整枚 planKey 必须相等", i)
-		// 独立的旧算法 oracle：缓存路径不得只在"自己和自己比"时成立。
-		require.Equal(t, frozenPlanKey(acc, tp, gids), planKeyOf(cached), "case %d: 与独立 oracle 必须相等", i)
+		// 独立的旧算法 oracle：缓存路径不得只在"自己和自己比"时成立（凭据摘要维度
+		// 由 1125 组参照测试覆盖，不在这里逐值对照）。
+		requirePlanKeyMatchesFrozen(t, planKeyOf(cached), acc, tp, gids, "case %d: 与独立 oracle 必须相等", i)
 		want[i] = got
 	}
 	require.Equal(t, len(tpls), cache.misses, "misses = 不同模板对象数")
@@ -398,11 +399,12 @@ func TestBatchInvalidationDigestCacheSpansWholeBatch(t *testing.T) {
 
 	sv := s.publisher.pending
 	require.NotNil(t, sv)
-	// 命中路径不得改变任何事实：三枚叶的缓存键仍等于独立 oracle。
-	require.Equal(t, frozenPlanKey(*a1, tp, []int64{1, 2}), planKeyOf(sv.byID[1].static.Load()))
-	require.Equal(t, frozenPlanKey(*a2, tp, []int64{2}), planKeyOf(sv.byID[2].static.Load()),
+	// 命中路径不得改变任何事实：三枚叶的缓存键仍等于独立 oracle（凭据摘要维度由
+	// 1125 组参照测试覆盖）。
+	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[1].static.Load()), *a1, tp, []int64{1, 2})
+	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[2].static.Load()), *a2, tp, []int64{2},
 		"保留剥离分支（:188）的键必须按自己的 groupIDs 重派生")
-	require.Equal(t, frozenPlanKey(*a3, tp, []int64{1}), planKeyOf(sv.byID[3].static.Load()))
+	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[3].static.Load()), *a3, tp, []int64{1})
 }
 
 // TestDigestCacheHitSkipsDerivation 把"命中 = 不再执行派生"变成分配数字：首次

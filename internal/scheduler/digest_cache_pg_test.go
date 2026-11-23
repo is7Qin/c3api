@@ -89,10 +89,8 @@ func TestPGLoadGroupAccountsFeedsDigestCache(t *testing.T) {
 	require.NotEmpty(t, accs[0].Template.Models, "precondition: 模板行带模型集")
 	require.Equal(t, digestStrings(accs[0].Template.Models),
 		byID[accs[0].ID].static.Load().key.modelsDigest)
-	require.Equal(t, frozenPlanKey(*accs[0], accs[0].Template, []int64{g.ID}),
-		planKeyOf(byID[accs[0].ID].static.Load()))
-	require.Equal(t, frozenPlanKey(*accs[1], accs[1].Template, []int64{g.ID}),
-		planKeyOf(byID[accs[1].ID].static.Load()))
+	requirePlanKeyMatchesFrozen(t, planKeyOf(byID[accs[0].ID].static.Load()), *accs[0], accs[0].Template, []int64{g.ID})
+	requirePlanKeyMatchesFrozen(t, planKeyOf(byID[accs[1].ID].static.Load()), *accs[1], accs[1].Template, []int64{g.ID})
 }
 
 // pgDigestFixture 是一次真库夹具：**一枚**模板 + 两个组 + 每组两个账号。跨组共享
@@ -207,8 +205,8 @@ func TestPGBatchInvalidationHitsDigestCacheAcrossGroups(t *testing.T) {
 		"跨组的叶必须共享同一枚模板对象——摘要缓存跨组命中的唯一来源")
 	for _, acc := range f.accounts() {
 		av := sv.byID[acc.ID].static.Load()
-		require.Equal(t, frozenPlanKey(av.acc, av.tpl, av.groupIDs), planKeyOf(av),
-			"账号 %d：命中路径的键必须与独立 oracle 相等（缓存不得改变任何事实）", acc.ID)
+		requirePlanKeyMatchesFrozen(t, planKeyOf(av), av.acc, av.tpl, av.groupIDs,
+			"账号 %d：命中路径的键必须与独立 oracle 相等（缓存不得改变任何事实；凭据摘要维度由 1125 组参照测试覆盖）", acc.ID)
 	}
 }
 
@@ -315,7 +313,7 @@ func TestPGWarmBatchDigestCacheMissesExceedTemplateCount(t *testing.T) {
 	// 计数偏离不改变任何事实：每枚叶的键仍等于按它**自己**的输入独立重算的结果。
 	for _, acc := range f.accounts() {
 		static := sv.byID[acc.ID].static.Load()
-		require.Equal(t, frozenPlanKey(static.acc, static.tpl, static.groupIDs), planKeyOf(static),
-			"账号 %d：warm 批次的键必须与独立 oracle 相等（多出的一次未命中不改变事实）", acc.ID)
+		requirePlanKeyMatchesFrozen(t, planKeyOf(static), static.acc, static.tpl, static.groupIDs,
+			"账号 %d：warm 批次的键必须与独立 oracle 相等（多出的一次未命中不改变事实；凭据摘要维度由 1125 组参照测试覆盖）", acc.ID)
 	}
 }

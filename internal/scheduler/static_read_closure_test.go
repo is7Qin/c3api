@@ -115,7 +115,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.Name":                     {staticPathField, "name"},
 	"$S.acc.TemplateID":               {staticPathField, "templateID"},
 	"$S.acc.BaseURL":                  {staticPathField, "baseURL"},
-	"$S.acc.UpstreamKey":              {staticPathField, "upstreamKey"},
+	"$S.acc.UpstreamKey":              {staticPathField, "credentialPairDigest"}, // 上游鉴权键：与 pat 原文一起折叠进凭据 pair 摘要（消费面另有 Selection.UpstreamKey 的数据面透传，同源于本路径）
 	"$S.acc.MaxConcurrency":           {staticPathField, "maxConcurrency"},
 	"$S.acc.Enabled":                  {staticPathField, "enabled"},
 	"$S.acc.CacheDomain":              {staticPathField, "cacheDomain"},
@@ -126,7 +126,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	// --- 账号凭据面（决策输入子集） ---
 	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},
 	"$S.acc.Ext.CodexEmail":                   {staticPathField, "codexEmail"},
-	"$S.acc.Ext.CodexPATKey":                  {staticPathField, "codexPATKey"},
+	"$S.acc.Ext.CodexPATKey":                  {staticPathField, "credentialPairDigest"}, // pat 原文：与上游鉴权键合并为同一枚摘要（BPS 分支不读 ⇒ 不进 BPS 的键）
 	"$S.acc.Ext.BPSProfile":                   {staticPathField, "bpsProfileDigest"},
 	"$S.acc.Ext.CodexIdentity.InstallationID": {staticPathField, "codexInstallation"},
 
@@ -1039,9 +1039,11 @@ func TestBuildRoutesShapeGateRejectsDrift(t *testing.T) {
 	})
 
 	t.Run("多读一条 planKey 子路径", func(t *testing.T) {
-		got := buildRoutesShapeViolations(pathsOf(compliant + "\n\t_ = k.upstreamKey"))
+		// 夹具用**现存的**键字段（baseURL）：注入一个已删字段只会测到扫描器的语法层，
+		// 证明不了"真实字段被多读一维"这条判据。
+		got := buildRoutesShapeViolations(pathsOf(compliant + "\n\t_ = k.baseURL"))
 		require.Len(t, got, 1, "只该报一条未登记子路径：%v", got)
-		require.Contains(t, got[0], "$S.key.upstreamKey")
+		require.Contains(t, got[0], "$S.key.baseURL")
 	})
 
 	t.Run("去重键维度消失", func(t *testing.T) {

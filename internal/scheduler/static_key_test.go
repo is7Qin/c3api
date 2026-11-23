@@ -79,14 +79,14 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 	// 同一处：字段挪错组、增删字段，都必须有意为之。
 	var (
 		declaredPlanKeyFields = []string{
-			"accountID", "name", "templateID", "baseURL", "upstreamKey",
+			"accountID", "name", "templateID", "baseURL",
 			"maxConcurrency", "enabled", "cacheDomain", "upstreamCostMultiplierBp",
 			"identityRevision", "supplierUserID", "proxyDigest",
 			// routable 可用性决策位（spec-proxy-pool §4.1/§4.7）：代理 enabled 翻转
 			// 不碰任何账号字段，没有这一位键就判等 ⇒ 旧叶子继续带着"可派发"结论入场。
 			"routable",
 			"codexAccountID", "codexInstallation",
-			"codexEmail", "codexPATKey", "bpsProfileDigest",
+			"codexEmail", "bpsProfileDigest",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
 			"supportedFormats", "modelMappingKey",
 			"upstreamPathsKey", // custom 路径进 planKey：改路径必须换新计划
@@ -94,6 +94,9 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			// 复用分支让 reserveOnView 读到旧 tpl，开关永远不生效（spec §5）。
 			"codexResponsesTransport",
 			"groupIDsDigest",
+			// credentialPairDigest 声明在**末尾**：比较顺序优化（32 字节数组是这里最贵的
+			// 单字段比较，放末位让"其它维不同"的分支永不付这笔钱），不是归属变更。
+			"credentialPairDigest",
 		}
 		declaredPayloadKeyFields = []string{
 			"codexOAuthToken", "codexOAuthRefresh", "codexOAuthExpires",
@@ -121,11 +124,15 @@ func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 	// proxy_id 的承载字段是 proxyDigest：单纯依赖「身份类 ⇒ 必推 K」不够——K 只
 	// 证明「变过」，而计划需要「现在走哪条线」这一事实本身（egress 规格摘要）。
 	// 摘要与 K 冗余是**有意**的：任一失效路径单独失守都不会让旧计划继续打旧出口。
+	//
+	// upstream_key 的承载字段是 credentialPairDigest：它只以「凭据原文」的身份进键
+	// （上游键轮转 ⇒ 换计划），本单元把上游键与 pat 原文一起折叠成一枚摘要，故两条
+	// 声明行/路径都落到同一枚字段上。
 	carrier := map[domain.AccountField]string{
 		domain.FieldName:                   "name",
 		domain.FieldTemplateID:             "templateID",
 		domain.FieldBaseURL:                "baseURL",
-		domain.FieldUpstreamKey:            "upstreamKey",
+		domain.FieldUpstreamKey:            "credentialPairDigest",
 		domain.FieldMaxConcurrency:         "maxConcurrency",
 		domain.FieldGroupIDs:               "groupIDsDigest",
 		domain.FieldEnabled:                "enabled",
@@ -264,7 +271,10 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 			Template:         tp,
 			Ext: &domain.AccountExt{
 				CodexAccountID: new("acct-up"),
-				CodexPATKey:    &pat, // 凭据明文：**不进键**（§5.5b(2)：digest 已由 upstreamKey|patKey 覆盖，且 token 刷新不该改身份）
+				// 凭据原文**进键**——但只以 credentialPairDigest（长度前缀 + sha256 的
+				// pair 摘要）形式：改前它是 planKey 里的 string 字段，本单元把原文从键里
+				// 去掉，键仍必须对 pat 轮转敏感（否则复用旧叶 ⇒ 上游拿旧凭据）。
+				CodexPATKey: &pat,
 				CodexIdentity: &domain.CodexIdentity{
 					InstallationID: "inst",
 				},
