@@ -94,6 +94,13 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // identical to the last successful compile (same static root, zero drift)
 // takes fireSkip and compiles nothing at all. exec/observe boundary: compile
 // EXECUTES off-path; request observation only READS the published view.
+//
+// The decision digest is computed ONLY when the skip guard could match
+// (D1): the guard needs the same static root, and a staged fire always has a
+// brand-new root, so a staged fire can never skip — hashing the canonical
+// encoding there would be pure cost. A publish that could not hash therefore
+// unloads the guard (lastDigestSet = armed) instead of keeping a digest that
+// no longer describes the published view.
 func (s *Scheduler) compileOnce() {
 	scopes, scopeOverflow := s.drainCompileScopes()
 	// now is read ONCE per fire (single-M discipline): the fire-minute stamp
@@ -190,7 +197,14 @@ func (s *Scheduler) compileOnce() {
 	}
 	s.incidentActive.Store(int64(s.incidents.activeCount()))
 	s.incidentEvalMs.Store(s.timeNow().UnixMilli())
-	digest := s.digester.digest(dv)
+	// D1 arming: the skip guard below is only reachable when this fire compiles
+	// against the root that is already published, so hash only then. A staged
+	// fire (target is a freshly staged root) can never match the guard.
+	armed := s.lastCompiledStatic == target
+	var digest decisionDigest
+	if armed {
+		digest = s.digester.digest(dv)
+	}
 
 	s.publisher.mu.Lock()
 	if s.publisher.pending != pendingSnap {
@@ -201,14 +215,14 @@ func (s *Scheduler) compileOnce() {
 		s.RequestCompile()
 		return
 	}
-	if s.lastDigestSet && s.lastDigest == digest && s.lastCompiledStatic == target {
+	if armed && s.lastDigestSet && s.lastDigest == digest {
 		s.publisher.mu.Unlock()
 		return
 	}
 	if pendingSnap != nil {
 		published := s.publisher.publishPairLocked(target, dv)
 		s.lastDigest = digest
-		s.lastDigestSet = true
+		s.lastDigestSet = armed
 		s.lastCompiledStatic = published
 		s.publisher.mu.Unlock()
 		return
@@ -216,7 +230,7 @@ func (s *Scheduler) compileOnce() {
 	s.publisher.mu.Unlock()
 	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
 		s.lastDigest = digest
-		s.lastDigestSet = true
+		s.lastDigestSet = armed
 		s.lastCompiledStatic = target
 	}
 }

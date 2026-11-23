@@ -305,8 +305,8 @@ type Scheduler struct {
 	sources            *CompilerSources
 	compileCh          chan struct{}
 	digester           decisionDigester // compile-lane owned bounded digest sink (serial caller; 32 KiB scratch reused)
-	lastDigest         decisionDigest   // compile-lane owned retain of the last published digest
-	lastDigestSet      bool             // compile-lane owned explicit initialized bit (zero digest is not "first")
+	lastDigest         decisionDigest   // compile-lane owned digest of the published view; zero unless lastDigestSet
+	lastDigestSet      bool             // compile-lane owned: lastDigest describes the published view (armed); a staged publish unloads it
 	lastCompiledStatic *StaticView      // compile-lane owned; digest alone omits static identity
 	// v5 event-driven compile lane (single mechanism replacing the
 	// unconditional rebuild; owners+lifecycles in compile_event.go):

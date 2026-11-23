@@ -263,9 +263,11 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	require.NotNil(t, dv)
 	var dig decisionDigester
 	want := dig.digest(dv)
-	require.True(t, s.lastDigestSet, "a successful publish must arm the digest guard")
-	require.Equal(t, want, s.lastDigest,
-		"held digest must equal the canonical digest of the published view (the bounded sink retains no encoding-sized buffer)")
+	// U31 D1: this scheduler published a freshly staged root, so the guard is
+	// deliberately unloaded and the canonical encoding was never streamed.
+	require.False(t, s.lastDigestSet, "a staged publish must leave the digest guard unloaded")
+	require.Equal(t, decisionDigest{}, s.lastDigest,
+		"a staged fire must not hash the decision (the bounded sink retains no encoding-sized buffer)")
 
 	// ESTIMATED inline planKey bytes: planKey is stored inline in each
 	// snapshotStatic leaf, so its logical contribution is sizeof(planKey) per
@@ -273,7 +275,7 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	// increment; it is logged so a BASE/HEAD retained differential can be read.
 	planKeyBytes := int(unsafe.Sizeof(planKey{})) * len(sv.byID)
 	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); canonical stream length bytes=%d (the guard stores only a 32-byte digest + count, not the encoding); leaves=%d",
-		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), s.lastDigest.count, len(sv.byID))
+		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), want.count, len(sv.byID))
 }
 
 // sleepLoader blocks one group's load for a fixed duration under publisher.mu,

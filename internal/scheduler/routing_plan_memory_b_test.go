@@ -123,16 +123,28 @@ func TestRPM_B2_DigestGuardPublishState(t *testing.T) {
 	s.compileOnce()
 
 	var dig decisionDigester
-	require.True(t, s.lastDigestSet)
-	require.Equal(t, dig.digest(s.View().DecisionView()), s.lastDigest)
+	// U31 D1: this fire compiled against a freshly staged root, so the skip
+	// guard was unreachable and the decision was never hashed; the publish
+	// unloads the guard instead of keeping a digest the view no longer matches.
+	require.False(t, s.lastDigestSet, "a staged publish must unload the digest guard")
+	require.Equal(t, decisionDigest{}, s.lastDigest, "a staged fire must not hash the decision")
 	gen0 := s.View().Generation()
+
+	// The first same-root fire cannot skip (nothing describes the published
+	// view yet), so it publishes identical bytes once and re-arms the guard.
+	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+	s.compileOnce()
+	gen1 := s.View().Generation()
+	require.Greater(t, gen1, gen0, "the re-arming fire publishes once")
+	require.True(t, s.lastDigestSet, "an armed publish arms the digest guard")
+	require.Equal(t, dig.digest(s.View().DecisionView()), s.lastDigest)
 	dig0 := s.lastDigest
 
 	// Equal fire with a forced route scope (not fireSkip, no root staging):
-	// digest equal + same root -> no publish.
+	// digest equal + same root + armed -> no publish.
 	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 	s.compileOnce()
-	require.Equal(t, gen0, s.View().Generation(), "equal digest + same root must not publish")
+	require.Equal(t, gen1, s.View().Generation(), "equal digest + same root must not publish")
 	require.Equal(t, dig0, s.lastDigest)
 
 	// Changed content publishes and advances the digest.
@@ -141,9 +153,10 @@ func TestRPM_B2_DigestGuardPublishState(t *testing.T) {
 	}, accs)
 	wireSources(s, qB, prices)
 	s.compileOnce()
-	require.Greater(t, s.View().Generation(), gen0, "changed digest must publish")
+	require.Greater(t, s.View().Generation(), gen1, "changed digest must publish")
 	require.NotEqual(t, dig0, s.lastDigest)
 	require.Equal(t, dig.digest(s.View().DecisionView()), s.lastDigest)
+	require.True(t, s.lastDigestSet)
 
 	// Compile error retains the exact digest/static.
 	genErr := s.View().Generation()
@@ -161,12 +174,18 @@ func TestRPM_B2_SupersededLeavesGuard(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
+	// Arm the guard first (the constructor's fire published a staged root, which
+	// leaves it unloaded): a same-root fire is what puts the digest in charge.
+	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+	s.compileOnce()
+	require.True(t, s.lastDigestSet)
 	dig0 := s.lastDigest
 	gen0 := s.View().Generation()
 
 	s.compiler = &rpmSupersedeCompiler{inner: NewRoutingCompiler(), sched: s}
 	s.compileOnce()
 	require.Equal(t, dig0, s.lastDigest, "superseded fire must not advance the digest")
+	require.True(t, s.lastDigestSet, "superseded fire must not unload the guard")
 	require.Equal(t, gen0, s.View().Generation(), "superseded fire must not publish")
 }
 
@@ -179,22 +198,28 @@ func TestRPM_B2_BaseCASFailureLeavesGuard(t *testing.T) {
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	wireSources(s, qA, prices)
 	s.compileOnce()
+	// Staged publish: no digest, guard unloaded (U31 D1).
+	require.False(t, s.lastDigestSet)
+	require.Equal(t, decisionDigest{}, s.lastDigest)
 	dig0 := s.lastDigest
 
 	// Changed content, but the generation is advanced mid-compile so the
-	// base-CAS fails: the guard must stay on the old digest.
+	// base-CAS fails: the guard must stay exactly as it was (unloaded).
 	qB := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(10, 5, 100, 100)}, accs)
 	wireSources(s, qB, prices)
 	s.compiler = &rpmAdvanceGenCompiler{inner: NewRoutingCompiler(), sched: s}
 	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 	s.compileOnce()
 	require.Equal(t, dig0, s.lastDigest, "failed base-CAS must not advance the digest")
+	require.False(t, s.lastDigestSet, "failed base-CAS must not arm the guard")
 
-	// A subsequent valid compile still publishes.
+	// A subsequent valid compile still publishes (and arms the guard, because it
+	// compiles against the root that is already published).
 	s.compiler = NewRoutingCompiler()
 	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 	s.compileOnce()
 	require.NotEqual(t, dig0, s.lastDigest, "valid compile must publish a new digest")
+	require.True(t, s.lastDigestSet, "a same-root publish arms the guard")
 }
 
 // --- B3 ---
@@ -239,11 +264,12 @@ func (rpmNilCompiler) Compile(CompilerInputs) (*DecisionView, error) { return ni
 
 // TestRPM_B2_NilDecisionPendingPairProtocol pins the publication protocol for a
 // successful nil decision (custom seam): the first pending pair publishes and
-// tracks the publisher-RETURNED static wrapper; an equal nil decision against
-// the same static root does not republish (digest+root guard); an equal nil
-// decision against a freshly staged root publishes. This is the same protocol
-// BASE implements with `bytes.Equal(lastDecisionBytes, b) && lastCompiledStatic
-// == target` (raw BASE evidence: .omo/reports/routing-plan-memory-fix-r1.md).
+// tracks the publisher-RETURNED static wrapper, leaving the guard unloaded
+// (U31 D1); an equal nil decision against a freshly staged root publishes
+// again. The equal-nil / same-root skip is not reachable through this seam any
+// more — see the note in the body. This is the same protocol BASE implements
+// with `bytes.Equal(lastDecisionBytes, b) && lastCompiledStatic == target`
+// (raw BASE evidence: .omo/reports/routing-plan-memory-fix-r1.md).
 func TestRPM_B2_NilDecisionPendingPairProtocol(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
@@ -272,21 +298,24 @@ func TestRPM_B2_NilDecisionPendingPairProtocol(t *testing.T) {
 		"the guard must track the publisher-returned static root")
 	require.NotSame(t, staged, s.lastCompiledStatic,
 		"the published wrapper is not the staged input root")
-	require.True(t, s.lastDigestSet)
-	require.Equal(t, nilDigest, s.lastDigest)
+	require.False(t, s.lastDigestSet, "a staged publish unloads the guard (U31 D1)")
+	require.Equal(t, decisionDigest{}, s.lastDigest, "a staged fire must not hash the decision")
 
-	// Equal nil / same root: the guard must skip the republish. Force a route
-	// scope so the fire is not a fireSkip and actually reaches the digest guard.
+	// The armed same-root skip is deliberately NOT exercised with a nil decision:
+	// re-arming requires publishing that nil decision on the decision-only path
+	// (pendingSnap == nil), which dereferences it in publishWithBase, so the fire
+	// would panic. A production compiler never returns (nil, nil), so that
+	// combination is a custom-seam artefact only; the armed skip protocol is
+	// pinned with a real view by TestU31D1_SameRootDriftRearmsThenSkips and
+	// TestRPM_B2_DigestGuardPublishState.
 	gen1 := s.View().Generation()
-	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
-	s.compileOnce()
-	require.Equal(t, gen1, s.View().Generation(), "equal nil + same root must not republish")
-	require.Equal(t, nilDigest, s.lastDigest)
 
-	// Equal nil / fresh staged root: the root changed, so it must publish.
+	// Equal nil / fresh staged root: the root changed, so it must publish — and
+	// the publish unloads the guard again.
 	require.NoError(t, s.reload(context.Background()))
 	s.compileOnce()
 	require.Greater(t, s.View().Generation(), gen1, "equal nil + changed root must publish")
 	require.Nil(t, s.View().DecisionView())
-	require.Equal(t, nilDigest, s.lastDigest)
+	require.False(t, s.lastDigestSet)
+	require.Equal(t, decisionDigest{}, s.lastDigest)
 }
