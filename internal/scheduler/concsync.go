@@ -254,8 +254,12 @@ func (w *AccConcSyncWorker) tick(ctx context.Context) {
 		}
 		view.accounts[t.id] = snap
 	}
-	w.sched.concView.Store(view)
+	// 顺序契约：先清错误态、再发布视图。Go 的 sync/atomic 是顺序一致(SC)，故观察者
+	// 「读到本 tick 的新视图 ⇒ 必然读到 errs==0」。errs 只是诊断量（Stats().LastTickOk
+	// 与 WARN 日志），不参与选号 fail-open（那由 snap.at / concViewStale 判定），
+	// 因此提前清零不改变行为；反向不成立——errs==0 不代表视图新鲜。
 	w.errs.Store(0)
+	w.sched.concView.Store(view)
 }
 
 // parseConcValue 解析 "<inflight> <unixmilli>" 上报值；畸形返回 false。
