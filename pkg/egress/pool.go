@@ -8,65 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
-// Client 是一条出口：连接规格 + 专属 *http.Client。
-//
-// 专属的是 **Transport**（= 专属连接池）：换出口必须换连接池，否则同一条 upstream
-// keep-alive 连接会被跨出口复用——出口配置换了，实际走的连接没换。底座 client
-// 的其余行为（Timeout/CheckRedirect/Jar）按值克隆，出口不改它们的语义。
-//
-// Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"
-// 的第二个分支（spec-proxy-pool §4.2 的核心）。
-//
-// NoCompression 是同一条出口的**关闭自动压缩**出站 client：底座 transport 派生的副本（`DisableCompression=true`——Go 默认自动加 `Accept-Encoding: gzip`，官方
-// Codex 客户端不发）。它有自己的连接池，与 HTTP 同 Spec、同代理；需要"不发 Accept-Encoding"的调用面
-// （Codex 的 HTTP/WS 与探测 seam）只用它。底座 transport 类型未知（只有测试会
-// 走到）时不派生，Codex 与 HTTP 是同一个 *http.Client。生产里 Codex 恒非 nil。
-// Flavour 是出口 client 的**口味**：闭集，枚举的是"同一条出口上需要几种出站行为"。
-//
-// 为什么是闭集数组而不是 map/接口/字符串键：口味派生是**构造期**动作，读取是每请求
-// 动作。数组 + 具名 accessor（**常量下标**）内联后与读字段同价（实测 0.225 ns vs
-// 0.231 ns/次）；换成 map 是哈希查找，换成 `Client(f Flavour)` 变量下标是 1.8×
-// （0.41 ns/次，边界检查 + 常数折叠不了）。见 specs/2026-11-16-egress-flavours-design.md §2。
-type Flavour uint8
-
-const (
-	// FlavourHTTP 标准出站（压缩语义按 Go 默认）。
-	FlavourHTTP Flavour = iota
-	// FlavourNoCompression 关闭自动压缩的出站：对齐那些不发 `Accept-Encoding: gzip`
-	// 的上游客户端（Codex 的 HTTP/WS 与探测 seam 用它）。
-	FlavourNoCompression
-
-	numFlavours
-)
-
-// Client 是一条出口：连接规格 + 每种口味一个专属 *http.Client。
-//
-// 专属的是 **Transport**（= 专属连接池）：换出口必须换连接池，否则同一条 upstream
-// keep-alive 连接会被跨出口复用——出口配置换了，实际走的连接没换。底座 client 的
-// 其余行为（Timeout/CheckRedirect/Jar）按值克隆，出口不改它们的语义。
-//
-// Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"的第二
-// 个分支（spec-proxy-pool §4.2 的核心）。
-//
-// 口味存在数组里（而不是按名字摊成字段）：**新增一种口味只改常量表与底座表**，
-// `For` 的派生循环与 `CloseClients` 的关闭循环自动覆盖——"加了口味忘了关连接池"
-// 这个静默泄漏因此写不出来。
-type Client struct {
-	Spec    Spec // 零值 = 直连
-	clients [numFlavours]*http.Client
-}
-
-// HTTP 标准出站 client。
-func (c *Client) HTTP() *http.Client { return c.clients[FlavourHTTP] }
-
-// NoCompression 关闭自动压缩的出站 client。
-//
-// 与 HTTP 同 Spec、同代理、同 Timeout/CheckRedirect/Jar，差别只在
-// `DisableCompression=true` 与它自己的连接池（独立连接池 ⇒ 每个出口的实际连接上限
-// 是配置值的倍数：每种口味各一份）。
-func (c *Client) NoCompression() *http.Client { return c.clients[FlavourNoCompression] }
+// 值类型（Spec / Client / Flavour）与它们的全部方法都在 pkg/egressapi；本包只剩
+// 别名（compat.go）与下面的实现。`Client` 的槽位表归它自己所有，所以"每条出口
+// 每种口味一份连接池"这个不变量由 `egressapi.Client.CloseIdle` 收口，本包的
+// `For` 只负责把派生出来的 client 填进槽位、`CloseClients` 只负责逐个转交。
 
 // Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
 // （改 base_url 不该重建代理连接池），旧规格靠显式 Detach + 锁外关闭并移除。
@@ -101,7 +50,7 @@ func NewPool(base *http.Client) *Pool {
 	p.bases[FlavourHTTP] = base
 	p.bases[FlavourNoCompression] = noCompression
 	// 直连出口：各口味用底座本身（不克隆，直连就是底座）。
-	p.direct = &Client{clients: p.bases}
+	p.direct = egressapi.NewClient(Spec{}, p.bases)
 	return p
 }
 
@@ -123,22 +72,24 @@ func (p *Pool) For(spec Spec) *Client {
 	if c, ok := p.byKey[key]; ok {
 		return c
 	}
-	c := &Client{Spec: spec}
-	for f := range c.clients {
-		if c.clients[f] != nil {
+	// 槽位表在本包派生（transport/Proxy 都在实现侧），句柄由 egressapi 装配。
+	var slots [numFlavours]*http.Client
+	for f := range slots {
+		if slots[f] != nil {
 			continue
 		}
 		// 每种口味一份独立连接池、同一代理；口味间的差异（如 DisableCompression）
 		// 已在 bases 里定型，这里不认任何具体口味。
-		c.clients[f] = NewClient(p.bases[f], spec)
+		slots[f] = NewClient(p.bases[f], spec)
 		for g := f + 1; g < int(numFlavours); g++ {
 			if p.bases[g] == p.bases[f] {
 				// 同一底座 ⇒ 共用同一个克隆（旧语义：底座不能派生时两个口味就是
 				// 同一个 *http.Client）。
-				c.clients[g] = c.clients[f]
+				slots[g] = slots[f]
 			}
 		}
 	}
+	c := egressapi.NewClient(spec, slots)
 	p.byKey[key] = c
 	return c
 }
@@ -170,16 +121,10 @@ func (p *Pool) Detach(active map[[16]byte]struct{}) []*Client {
 // HTTP 与 NoCompression 是两个连接池，两份都关（同一个 client 时只关一次）。
 func CloseClients(clients []*Client) {
 	for _, c := range clients {
-		if c == nil {
-			continue
-		}
-		// 遍历口味：新增口味自动被关闭（漏关是静默泄漏，所以不能靠人记得写第二段）。
-		// 同一 client 出现两次是允许的——CloseIdleConnections 幂等，不需要判重。
-		for _, hc := range c.clients {
-			if hc != nil {
-				hc.CloseIdleConnections()
-			}
-		}
+		// 遍历口味由 `Client.CloseIdle` 收口：新增口味自动被关闭（漏关是静默泄漏，
+		// 所以不能靠人记得写第二段）。同一 client 出现两次是允许的——
+		// CloseIdleConnections 幂等，不需要判重；nil client 也由它兜住。
+		c.CloseIdle()
 	}
 }
 

@@ -25,14 +25,16 @@ import (
 	"maps"
 
 	"github.com/is7qin/c3api/internal/domain"
+	// 值类型一律走 pkg/egressapi；pkg/egress 只剩 *Pool（B 单把它换成消费方端口）。
 	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
 // accountConfig 一个配置批次的**不可变快照**：账号全集 → 当前 responses 出口，
 // 批次代号，以及派生出的资源指令。
 type accountConfig struct {
 	gen    uint64
-	egress map[int64]*egress.Client
+	egress map[int64]*egressapi.Client
 	// batch 交给传输资源表的指令（账号动作 + 保留键 + 批次代号）。表不认识账号
 	// 全集与"直连必须保留"——那些判断已经在本文件里做完。
 	batch domain.ResourceBatch
@@ -44,7 +46,7 @@ type accountRuntime struct {
 	// universe 上一批的账号全集（id → 当前 responses 出口）。issue 之后归快照
 	// 所有、调用方只读；mergedLocked 每次克隆后覆盖，绝不原地改写——上一批的 map
 	// 可能仍在锁外的 reclaim/ApplyBatch 手里。
-	universe map[int64]*egress.Client
+	universe map[int64]*egressapi.Client
 }
 
 // fullLocked 全量装载的批次。`all` 是账号全集（含未编组、`MaxConcurrency=0`、
@@ -54,16 +56,16 @@ type accountRuntime struct {
 // `held` 是传输资源表当前持有的账号 id 快照（配置权威向表要；表不自己差分）。
 // 账号删除由这份全集的差分判定：表里持有、全集里没有 ⇒ 点名 ResourceDelete。
 func (r *accountRuntime) fullLocked(byID map[int64]*accountSnapshot, all []*domain.Account, pool *egress.Pool, held []int64) accountConfig {
-	var universe map[int64]*egress.Client
+	var universe map[int64]*egressapi.Client
 	if all == nil {
-		universe = make(map[int64]*egress.Client, len(byID))
+		universe = make(map[int64]*egressapi.Client, len(byID))
 		for id, as := range byID {
 			if av := as.static.Load(); av != nil {
 				universe[id] = av.egress
 			}
 		}
 	} else {
-		universe = make(map[int64]*egress.Client, len(all))
+		universe = make(map[int64]*egressapi.Client, len(all))
 		for _, acc := range all {
 			if acc == nil {
 				continue
@@ -80,7 +82,7 @@ func (r *accountRuntime) fullLocked(byID map[int64]*accountSnapshot, all []*doma
 // 由此得到的语义（§3.3b-4）：从组里移除账号**不是**账号移除——它仍在账号全集里，
 // 资源保留；真正的删除只由下一次全量装载的账号全集差分发现（与池注册表差分无关）。
 func (r *accountRuntime) mergedLocked(byID map[int64]*accountSnapshot, pool *egress.Pool, held []int64) accountConfig {
-	universe := make(map[int64]*egress.Client, len(r.universe)+len(byID))
+	universe := make(map[int64]*egressapi.Client, len(r.universe)+len(byID))
 	maps.Copy(universe, r.universe)
 	for id, as := range byID {
 		if av := as.static.Load(); av != nil {
@@ -92,7 +94,7 @@ func (r *accountRuntime) mergedLocked(byID map[int64]*accountSnapshot, pool *egr
 
 // issue 取号并把快照定型为当前配置。调用方持 publisher.mu —— 代号因此按锁内顺序
 // 单调，传输资源表用"只接受更新的号"拒绝迟到的旧批次。
-func (r *accountRuntime) issue(universe map[int64]*egress.Client, held []int64) accountConfig {
+func (r *accountRuntime) issue(universe map[int64]*egressapi.Client, held []int64) accountConfig {
 	r.gen++
 	r.universe = universe
 	return accountConfig{gen: r.gen, egress: universe, batch: resourceBatch(r.gen, universe, held)}
@@ -108,12 +110,12 @@ func (r *accountRuntime) issue(universe map[int64]*egress.Client, held []int64) 
 //     账号全集差分，在这里落实成点名删除；传输表不做任何"没被提到就删"的推断）。
 //
 // 没有会话池的账号同样在全集里（池注册表差分看不见它们）。
-func resourceBatch(gen uint64, universe map[int64]*egress.Client, held []int64) domain.ResourceBatch {
+func resourceBatch(gen uint64, universe map[int64]*egressapi.Client, held []int64) domain.ResourceBatch {
 	direct := domain.EgressResourceKey{}
 	directives := make([]domain.AccountResourceDirective, 0, len(universe)+len(held))
 	for id, eg := range universe {
 		keep := make([]domain.EgressResourceKey, 0, 2)
-		if k := domain.EgressResourceKey(egress.ResourceKey(eg)); k != direct {
+		if k := domain.EgressResourceKey(egressapi.ResourceKey(eg)); k != direct {
 			keep = append(keep, k)
 		}
 		// 直连键恒入列（同上：策略在这里，不在表里）。代理出口 ⇒ 两项；直连出口
@@ -154,7 +156,7 @@ func (r *accountRuntime) hasDropped(held []int64) bool {
 
 // egressForAccount 账号当前 responses 出口（未装配池 ⇒ nil = 直连语义）。与
 // buildSnapshots 对组内账号的派生同源：有代理 → 规格 client；无 → 池直连。
-func egressForAccount(acc *domain.Account, pool *egress.Pool) *egress.Client {
+func egressForAccount(acc *domain.Account, pool *egress.Pool) *egressapi.Client {
 	if pool == nil {
 		return nil
 	}
@@ -175,7 +177,7 @@ func egressForAccount(acc *domain.Account, pool *egress.Pool) *egress.Client {
 //
 // **只摘不关**：返回被摘除的 client，由调用方在 publisher.mu 之外关闭
 // （egress.Pool.Detach 的纪律：CloseIdleConnections 可能在连接收尾上等待）。
-func (s *Scheduler) pruneEgress(universe map[int64]*egress.Client) []*egress.Client {
+func (s *Scheduler) pruneEgress(universe map[int64]*egressapi.Client) []*egressapi.Client {
 	pool := s.cfg.Egress
 	if pool == nil || pool.Size() == 0 {
 		return nil

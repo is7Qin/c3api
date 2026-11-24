@@ -68,9 +68,11 @@ func TestFlavourCloseCoversEverySlot(t *testing.T) {
 		require.NotSame(t, direct.HTTP(), direct.NoCompression(), "可派生 ⇒ 两个独立连接池")
 
 		c := p.For(New("socks5", "10.0.0.1", 1080, "u", "p"))
-		for f := range c.clients {
-			require.NotNil(t, c.clients[f], "口味 %d 未派生 ⇒ 它的连接池永远不会被关闭", f)
-		}
+		// 槽位表归 egressapi.Client 所有（值类型搬走后本包不再能逐格断言）：判据改成
+		// "每个口味都派生过、都被关闭"——nil 槽位由 CloseIdle 跳过，下面的关闭计数就
+		// 少了；新增口味忘派生同样落在那条断言上。
+		require.NotNil(t, c.HTTP(), "标准口味未派生 ⇒ 它的连接池永远不会被关闭")
+		require.NotNil(t, c.NoCompression(), "关闭压缩口味未派生 ⇒ 它的连接池永远不会被关闭")
 		require.NotSame(t, c.HTTP(), c.NoCompression())
 
 		before := closes.Load()

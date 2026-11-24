@@ -12,7 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
 // planKey 是编译计划/决策的有效性判据（值语义）：已编译候选在预留与复用
@@ -56,7 +56,7 @@ type planKey struct {
 	// 当前归属（否则叶子复用会带来陈旧归属读，正是静态读闭包门要防的缺陷）。
 	supplierUserID int64
 	// proxyDigest 出口代理规格摘要（spec-proxy-pool §3.4/§4.1）：scheme/host/
-	// port/认证四项的 egress.Spec.Key()。**身份类**（换出口 = 换上游看到的身份
+	// port/认证四项的 egressapi.Spec.Key()。**身份类**（换出口 = 换上游看到的身份
 	// 第三维 ⇒ 本来就会推 K），但摘要仍独立进键：K 只证「变过」，计划还需要
 	// 「现在走哪条线」这一事实；未绑定 = 零值 Spec 的摘要（与任何真实代理不同）。
 	proxyDigest [16]byte
@@ -116,11 +116,11 @@ type planKey struct {
 	factsDigest [32]byte
 }
 
-// specOfDomain 把领域代理对象降为出口规格值（egress.Spec）——**唯一转换点已
+// specOfDomain 把领域代理对象降为出口规格值（egressapi.Spec）——**唯一转换点已
 // 下沉到 domain**（spec account-model-test §4.2：调度静态键与探测执行共用
 // (*domain.Proxy).EgressSpec，不得在别处重新拼 scheme/host/port）。nil（未绑定）
 // = 零值 Spec（摘要 = 空规格摘要，直连是一个确定状态，不是缺失）。
-func specOfDomain(p *domain.Proxy) egress.Spec {
+func specOfDomain(p *domain.Proxy) egressapi.Spec {
 	return p.EgressSpec()
 }
 
@@ -248,7 +248,7 @@ var newTemplateDigestCache = func() *templateDigestCache {
 //
 // eg 是**已解析好的**出口 client（buildSnapshots 解析、恒非 nil）：把"解析"留在
 // 根不在静态读观测集内的 buildSnapshots，把"使用"留在热路径（spec §4.3）。
-func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64, eg *egress.Client, digests *templateDigestCache) *snapshotStatic {
+func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64, eg *egressapi.Client, digests *templateDigestCache) *snapshotStatic {
 	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...), egress: eg}
 	// 唯一决策位在**构造期一次定型**（不是装载器的活儿，也不是热路径的判断）：
 	// 之后候选过滤与计划 fence 都只读这一个 bool。放在 key 派生之前，使

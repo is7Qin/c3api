@@ -9,7 +9,7 @@
 //	Reclaimer 锁内只收集退役（poolReclaim 嵌入 identitypool.Reclaim）
 //
 // 池本体（Session/Pool/Registry/Resize/Sync/CollectRetiredPools）已下沉到
-// internal/identitypool：它不知道 accountConfig / egress.Client / 资源批次，也
+// internal/identitypool：它不知道 accountConfig / egressapi.Client / 资源批次，也
 // 不 import 本包（方向由 internal/architecture 硬钉）。这里只留"哪些账号该有池"
 // （读账号快照/静态根）与"退役之外的锁外副作用"（配置批次 + 出口 client）。
 package scheduler
@@ -18,7 +18,9 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
+	// 只留 egress.CloseClients（实现）；出口的值类型走 pkg/egressapi。
 	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -28,7 +30,7 @@ import (
 //
 // 线程退役部分**就是** `identitypool.Reclaim`（嵌入，不复制）：池侧只认
 // `Reclaimer` 这一个接口，收集实现只有一份、路径只有一条；配置/出口两段仍属
-// 调度器——它们与池无关，池也不该知道 `accountConfig`/`egress.Client`。
+// 调度器——它们与池无关，池也不该知道 `accountConfig`/`egressapi.Client`。
 type poolReclaim struct {
 	identitypool.Reclaim
 	// config 本批次的账号配置快照（账号全集 → 当前出口 + 资源指令 + 批次代号）。
@@ -37,7 +39,7 @@ type poolReclaim struct {
 	// egress 本批次被摘出注册表的出口 client（egress.Pool.Detach 的返回）：与配置
 	// 指令共享"锁内只收集、锁外才动系统调用"的纪律——关闭空闲连接可能在连接收尾上
 	// 等待，不能留在 publisher.mu 里。
-	egress []*egress.Client
+	egress []*egressapi.Client
 	retire func(accountID int64, threadKey string)
 	apply  func(batch domain.ResourceBatch)
 }

@@ -322,10 +322,17 @@ var allowRules = []allowRule{
 	//     在实现包内，故它不再需要 internal/repository（账本 574 那条边消失）；
 	//   - internal/identityfence：候选指纹与三个哨兵的 canonical 定义。scheduler 只留
 	//     迁移期兼容层（同名别名 + 一行转发），哨兵必须是同一 error 值。
+	// P5-3-A 起多一条 pkg/egressapi：出口的**值类型**（Spec / Client / Flavour /
+	// ResourceKey 及其全部方法）已迁到该中立包，快照、静态键与资源键只认它。
+	// 它与 deny 里的 "pkg/egress" 是**两个不同的包**：deny 走段感知前缀
+	// （matchesPrefix：`pkg == prefix || HasPrefix(pkg, prefix+"/")`），所以
+	// pkg/egressapi 不会被 "pkg/egress" 误伤——落地前实测确认（本包用例绿）。
+	// scheduler 仍留 pkg/egress 的 `*Pool` / `NewPool` / `CloseClients`（实现，不是值
+	// 类型），故 deny 与账本 576 在本单都原样保留，等 B 单端口化后一起收。
 	{from: "internal/scheduler", to: []string{
 		"internal/domain", "internal/credential", "internal/worker", "internal/api",
 		"internal/latch", "internal/rule", "internal/identitypool", "pkg/logx",
-		"internal/loadport", "internal/identityfence",
+		"internal/loadport", "internal/identityfence", "pkg/egressapi",
 	}, deny: []string{"pkg/egress"}},
 
 	// 上游 SDK 桥：执行面的一端，允许 pkg/egress 实现。
@@ -435,8 +442,13 @@ const (
 	//   4. 新规则 internal/rulepersist → {domain, identityfence, latch, repository, rule, pkg/logx}
 	//      （这一条含 2 条边：到 identityfence 的契约依赖 + 到 repository 的实现依赖）
 	// 同时新增两条叶子规则 internal/loadport 与 internal/identityfence。
-	// 前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8
-	allowMatrixFingerprint = "6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b"
+	// P5-3-A 变更（1 条新增 allow 边，仍只有 to: 白名单，没有新增 all: true）：
+	//   scheduler 的 to 加 pkg/egressapi（出口值类型的中立落点；P5-3-B 会把
+	//   pkg/egress 从 scheduler 的 import 表里彻底去掉，那时候才删账本 576）。
+	//   注意 deny 仍是 ["pkg/egress"]、debtMax 仍是 19：本单只做类型中立化。
+	// 前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
+	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
+	allowMatrixFingerprint = "bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy

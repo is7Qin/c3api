@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
 // errRateScale 是错误率 EWMA 的定点缩放（0..1e6）。
@@ -59,7 +59,7 @@ type snapshotStatic struct {
 	// 热路径只读这个指针交给 Selection（0 次 map 读、0 次 nil 判断）。
 	// 它不进 staticKey：键里的 planKey.proxyDigest 已承载"走哪条线"，client
 	// 指针只是同一事实的运行期载体（换规格 ⇒ 摘要变 ⇒ 新叶子 ⇒ 新指针）。
-	egress *egress.Client
+	egress *egressapi.Client
 	// cacheDomain 账号**生效**缓存域（同 cacheDomainForAccount：未配置 = 私有域
 	// `private:<账号ID>`）；installationID 账号 ext 的 installation（同
 	// installationIDOf，缺列 = ""）。两者都在构造期一次定型，预留时只做字段拷贝进

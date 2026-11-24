@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
+	// 只剩 *Pool 与 NewPool（实现，B 单把它们换成消费方端口）；出口的值类型走 pkg/egressapi。
 	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -695,7 +696,7 @@ func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Accoun
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
 //
 // pool 是出口 client 池（**恒非 nil**，由 cfg.Egress 保证）：这里做**唯一一次**
-// 规格解析——快照上存的是解析好的 `*egress.Client`，热路径只读指针。仍保持包级
+// 规格解析——快照上存的是解析好的 `*egressapi.Client`，热路径只读指针。仍保持包级
 // 函数（不为了 pool 改成方法）：复用/发布的调用面太多，改接收者等于改一片。
 //
 // digests 是**调用方作用域**的模板摘要表（可为 nil = 逐次计算）：reloadLocked
