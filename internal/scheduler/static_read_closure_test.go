@@ -69,9 +69,9 @@ var staticReaderFuncs = map[string]string{
 	"indexRoutesForAccount":      "账号的组引用集登记",
 	"mergedLocked":               "账号配置快照（组级增量）：用工作根叶子 egress 覆盖基线",
 	"newAccountSnapshot":         "叶子构造：账号 ID",
-	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey（读全部源字段，写 $S.key）",
+	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey 与载荷摘要（读全部源字段，写 $S.key / $S.payload）",
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
-	"payloadKeyOf":               "载荷投影",
+	"payloadKeyOf":               "载荷投影：只读回构造期缓存的 $S.payload（零调用、零 $S.acc 路径）",
 	"planKeyOf":                  "决策输入投影",
 	"reloadLocked":               "全量重载：K 变化检测",
 	"reserveOnView":              "预留谓词与 Selection 装配",
@@ -145,9 +145,15 @@ var staticReadPaths = map[string]staticReadSpec{
 	// 收紧到"实际没有这条读"。
 
 	// --- 账号凭据面（载荷：只影响叶子内容是否新鲜） ---
-	"$S.acc.Ext.CodexOAuthToken":        {staticPathField, "codexOAuthToken"},
-	"$S.acc.Ext.CodexOAuthRefreshToken": {staticPathField, "codexOAuthRefresh"},
-	"$S.acc.Ext.CodexOAuthExpiresAt":    {staticPathField, "codexOAuthExpires"},
+	//
+	// 三枚明文字段在 P3a 折叠成一枚 payloadDigest（与 U40 对 provider 事实做的同一件
+	// 事）。`field` 类的 detail 因此从三个名字收敛成一个——这**不是放宽**：③ 的
+	// 「键字段集 ≡ 消费字段集」仍是双向相等断言，只是把"哪条读点落哪枚字段"重新算了
+	// 一遍。读者同时也收紧了：这三条路径如今唯一的读者是唯一构造函数（见
+	// payloadProjectionFuncs 的双向相等断言）——payloadKeyOf 已不再读原文。
+	"$S.acc.Ext.CodexOAuthToken":        {staticPathField, "payloadDigest"},
+	"$S.acc.Ext.CodexOAuthRefreshToken": {staticPathField, "payloadDigest"},
+	"$S.acc.Ext.CodexOAuthExpiresAt":    {staticPathField, "payloadDigest"},
 
 	// --- 模板侧源字段（候选指纹 I 不覆盖的那些） ---
 	"$S.tpl.ID":                      {staticPathField, "templateID"}, // 与 $S.acc.TemplateID 同源：加载器按 template_id 联结，键用账号侧拼写覆盖同一事实
@@ -165,7 +171,8 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.groupIDs": {staticPathField, "groupIDsDigest"},
 
 	// --- 派生缓存位点（写目标 + 读回；非源字段） ---
-	"$S.key": {staticPathDerived, "canonical digest 复用位点：newSnapshotStatic 单次 av.key=k 写入、planKeyOf 读回；源字段读经 $S.acc.*/$S.tpl.*/$S.groupIDs 完整登记"},
+	"$S.key":     {staticPathDerived, "canonical digest 复用位点：newSnapshotStatic 单次 av.key=k 写入、planKeyOf 读回；源字段读经 $S.acc.*/$S.tpl.*/$S.groupIDs 完整登记"},
+	"$S.payload": {staticPathDerived, "载荷摘要缓存位点（与 $S.key 同款，P3a）：newSnapshotStatic 单次 av.payload=… 写入、payloadKeyOf 读回；源字段读经 $S.acc.Ext.CodexOAuth* 完整登记（三条都是 field 行，落在 payloadDigest 上）"},
 
 	// --- planKey 的**逐字段**消费（buildRoutes 的路由事实去重键） ---
 	//
@@ -180,12 +187,80 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.key.modelMappingKey":  {staticPathField, "modelMappingKey"},
 }
 
-// payloadProjectionFuncs 是允许读**载荷**字段（OAuth 三元组）的函数全集：载荷只用于
-// 上游鉴权，任何决策/装配路径读它都意味着"token 刷新会 churn 计划"。读取面收在这两处，
-// 消费者拿令牌只能经 Selection.Ext（叶子内容，非静态读）。
+// payloadProjectionFuncs 是允许读**凭据原文**的函数全集：载荷只用于上游鉴权，任何
+// 决策/装配路径读它都意味着"token 刷新会 churn 计划"。P3a 之后读取面收在**唯一构造
+// 函数**一处——原文在构造期折叠成摘要（$S.payload），此后全包只剩摘要。
+//
+// 判据是**相等**（双向，照抄 proxyMaterialPathFuncs 的 violation 形态）：
+//   - 多一个读者 ⇒ 红（"只有构造函数读凭据原文"就不再是机械事实）；
+//   - 少一个读者 ⇒ 红（登记表腐化成"曾经读过"，下一个人会以为缓存路径还在）。
+//
+// 为什么不能只靠行为用例（payload_key_test.go 的 H3/H4）：一个"payloadKeyOf 仍读
+// av.acc.Ext、构造函数也写了缓存"的实现会让 H3/H4 全绿——缓存写了没人读，比较期
+// 仍在碰明文。这条与 payload_digest_gate_test.go 的 H2（payloadKeyOf 体内零调用、
+// 零 $S.acc 路径）是同一条不变式的两个方向：一个钉读者集合，一个钉函数体形状。
 var payloadProjectionFuncs = map[string]string{
-	"payloadKeyOf": "载荷投影：只读 OAuth 三元组",
-	"staticKeyOf":  "叶子复用判据：调用两个投影，自身不直接读",
+	"newSnapshotStatic": "唯一构造函数：三条凭据原文读点在这里一次折叠成 payloadDigest（$S.payload）",
+}
+
+// payloadReadPaths 返回"落在载荷字段上的读路径"全集：staticReadPaths 的 field 行
+// 与 payloadKey 的字段集交叉。它给下面两条判据同一份输入，避免"路径表里漏写一条"
+// 静默缩小扫描面（那是 ③ 在扫的东西，这里不重复兜底）。
+func payloadReadPaths(payloadFields map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for p, spec := range staticReadPaths {
+		if spec.class == staticPathField && payloadFields[spec.detail] {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// payloadReaderUnregistered 报告"读了凭据原文但没在白名单里"的函数（空 = 合规）。
+//
+// 与 proxyMaterialUnregisteredReaders 同样的分工：这一侧可以用一小段真实源码证明
+// （负例把绕过写成函数体、走完整扫描链再交给同一个判据），陈旧那一侧只能用注入。
+func payloadReaderUnregistered(pathFuncs map[string]map[string]bool, payloadFields map[string]bool) []string {
+	var out []string
+	for p := range payloadReadPaths(payloadFields) {
+		for fn := range pathFuncs[p] {
+			if _, ok := payloadProjectionFuncs[fn]; !ok {
+				out = append(out, fmt.Sprintf(
+					"未登记的凭据原文读者：%s 读 %s——原文只在 newSnapshotStatic 读一次并折叠成 $S.payload；消费期请读摘要，别读原文", fn, p))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// payloadReaderStale 报告"白名单声称读了、扫描面上却没读"的条目（空 = 合规）。
+func payloadReaderStale(pathFuncs map[string]map[string]bool, payloadFields map[string]bool) []string {
+	paths := payloadReadPaths(payloadFields)
+	var out []string
+	for fn, why := range payloadProjectionFuncs {
+		if strings.TrimSpace(why) == "" {
+			out = append(out, fmt.Sprintf("白名单缺理由：%s", fn))
+		}
+		reads := false
+		for p := range paths {
+			if pathFuncs[p][fn] {
+				reads = true
+			}
+		}
+		if !reads {
+			out = append(out, fmt.Sprintf("陈旧条目：白名单声称 %s 读凭据原文，但扫描面上它已不再读", fn))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// payloadReaderViolations 是上面两条的合并（主断言用）：相等性判据必须双向。
+func payloadReaderViolations(pathFuncs map[string]map[string]bool, payloadFields map[string]bool) []string {
+	out := append(payloadReaderUnregistered(pathFuncs, payloadFields), payloadReaderStale(pathFuncs, payloadFields)...)
+	sort.Strings(out)
+	return out
 }
 
 // proxyMaterialPathFuncs 是**代理原料**路径的读者白名单：路径 → 函数 → 为什么它可以读。
@@ -691,23 +766,11 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 	require.Equal(t, wantConsumed, gotConsumed,
 		"键字段集与消费到的字段集必须相等：键里不得有消费者读不到的字段，消费面也不得读到键外的字段")
 
-	// ④ 载荷字段只允许被载荷投影函数读到——决策/装配路径读到 token 就意味着
-	// "SDK 刷新 token 会 churn 计划"。
-	for p, spec := range staticReadPaths {
-		if spec.class != staticPathField || !payloadFields[spec.detail] {
-			continue
-		}
-		funcs := make([]string, 0, len(pathFuncs[p]))
-		for f := range pathFuncs[p] {
-			funcs = append(funcs, f)
-		}
-		sort.Strings(funcs)
-		for _, f := range funcs {
-			require.Contains(t, payloadProjectionFuncs, f,
-				"载荷字段 %s（路径 %s）不得被 %s 读到：载荷只服务上游鉴权", spec.detail, p, f)
-		}
-		require.NotEmpty(t, funcs, "载荷路径 %s 必须真的被投影函数读到", p)
-	}
+	// ④ 凭据原文只允许被**唯一构造函数**读到——决策/装配路径读到 token 意味着
+	// "SDK 刷新 token 会 churn 计划"，而比较期读原文会让"构造期缓存"退化成本地投影。
+	// 判据是相等（双向）：这条同时钉住"缓存写了有人读"与"没有第二个读者"。
+	require.Empty(t, payloadReaderViolations(pathFuncs, payloadFields),
+		"凭据原文的读者必须与 payloadProjectionFuncs **相等**：新增读者要说明它为什么必须在消费期读明文（正常答案是：不需要）")
 
 	// ⑤ 代理原料的"路径 × 函数"白名单：原料（acc.Proxy / acc.ProxyID / acc.Enabled）
 	// 只许在构造/判据期读，消费期只能读键与派生位。① 只证明"函数登记过"，④ 只管载荷，
@@ -881,6 +944,62 @@ func TestPayloadProjectionIsTheOnlyCredentialReader(t *testing.T) {
 		require.NotEmpty(t, strings.TrimSpace(why), "载荷投影白名单必须写明理由：%s", f)
 		require.Contains(t, staticReaderFuncs, f, "载荷投影函数必须是声明的静态读者：%s", f)
 	}
+}
+
+// TestPayloadReaderGateRejectsConsumptionTimeRead 负例：证明 ④ 的双向判据真的会拒。
+//
+// 只加正例等于自证，而 ④ 的两个方向能被证明的方式不同：
+//   - **未登记读者**用一小段真实源码证明：把它当函数体解析、走完整的
+//     解析 → roots → paths → pathFuncs 链，再交给同一个判据；
+//   - **陈旧条目**（白名单声称某人读、代码里已经不读）在现实里不成立，只能用注入
+//     真实扫描结果来证明。
+//
+// 注入的形状正是 M3 变异（"缓存写了没人读"）的可编译形态：构造函数照写
+// $S.payload，而某个消费期函数仍去读 av.acc.Ext 的三枚明文字段。
+func TestPayloadReaderGateRejectsConsumptionTimeRead(t *testing.T) {
+	root := gateRoot(t)
+	srcs := gateSources(t, root, []string{"internal/scheduler"})
+	payloadShape, ok := gateStructShape(t, srcs, "internal/scheduler", "payloadKey")
+	require.True(t, ok, "payloadKey 必须存在")
+	payloadFields := payloadShape.fields
+	require.NotEmpty(t, payloadFields, "载荷字段集不得为空（否则下面的判据恒绿）")
+
+	scan := collectStaticReads(t)
+	require.Empty(t, payloadReaderViolations(scan.pathFuncs, payloadFields),
+		"真实扫描结果必须本来就合规，否则后面的负例证明不了任何东西")
+
+	rejects := func(t *testing.T, body string, wantPaths ...string) {
+		t.Helper()
+		got := payloadReaderUnregistered(proxyMaterialReadsOf(t, body), payloadFields)
+		require.NotEmpty(t, got, "这个函数体必须被拒：%s", body)
+		joined := strings.Join(got, "\n")
+		require.Contains(t, joined, "injected", "违规必须点名注入的函数：%s", joined)
+		for _, p := range wantPaths {
+			require.Contains(t, joined, p, "违规必须点名被越界读取的路径：%s", joined)
+		}
+		require.Contains(t, joined, "$S.payload", "红点必须指出正确去处（构造期缓存的摘要）")
+	}
+
+	t.Run("消费期读明文（M3 的可编译形态）", func(t *testing.T) {
+		rejects(t, `_ = derefString(av.acc.Ext.CodexOAuthToken)`, "$S.acc.Ext.CodexOAuthToken")
+	})
+	t.Run("消费期读 expires", func(t *testing.T) {
+		rejects(t, `_ = av.acc.Ext.CodexOAuthExpiresAt`, "$S.acc.Ext.CodexOAuthExpiresAt")
+	})
+	t.Run("对照：读摘要不报", func(t *testing.T) {
+		require.Empty(t, payloadReaderUnregistered(proxyMaterialReadsOf(t, `_ = av.payload`), payloadFields),
+			"摘要本身不是凭据原文：读它不构成消费期明文读")
+	})
+	t.Run("登记表腐化", func(t *testing.T) {
+		pathFuncs := clonePathFuncs(scan.pathFuncs)
+		for p := range payloadReadPaths(payloadFields) {
+			delete(pathFuncs[p], "newSnapshotStatic")
+		}
+		got := payloadReaderStale(pathFuncs, payloadFields)
+		require.Len(t, got, 1, "只该报一条陈旧条目：%v", got)
+		require.Contains(t, got[0], "newSnapshotStatic")
+		require.Contains(t, got[0], "陈旧条目")
+	})
 }
 
 // --- buildRoutes 的形状门禁（spec §4.3 末的两条） ---

@@ -136,3 +136,16 @@ func putFactsSegment(dst []byte, seg string) int {
 	binary.BigEndian.PutUint64(dst[:factsDigestPrefixLen], uint64(len(seg)))
 	return factsDigestPrefixLen + copy(dst[factsDigestPrefixLen:], seg)
 }
+
+// putFactsInt64 写入 seg64：8 字节大端长度前缀（恒 8）+ 8 字节大端二补数，共 16B。
+//
+// 它与 putFactsSegment 是**同一套段编码**的两个形状（前缀 + 定长/变长内容），故共用
+// factsDigestPrefixLen，也共用"前缀写长度、内容紧跟其后"这条不变式。不合并成一个
+// 函数是因为变长那条要走 copy、定长这条只写两个字——合并会把热路径上的分支带回来。
+//
+// uint64(v) 是双射，故 int64 的整个取值范围都单射（负数按二补数编码）。
+func putFactsInt64(dst []byte, v int64) int {
+	binary.BigEndian.PutUint64(dst[:factsDigestPrefixLen], uint64(8))
+	binary.BigEndian.PutUint64(dst[factsDigestPrefixLen:], uint64(v))
+	return factsDigestPrefixLen + 8
+}

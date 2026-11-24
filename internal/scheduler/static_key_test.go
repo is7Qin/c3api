@@ -7,6 +7,7 @@ package scheduler
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -101,17 +102,19 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			// 它承载 provider 身份事实 + 凭据原文（static_facts.go 的六段编码）。
 			"factsDigest",
 		}
-		declaredPayloadKeyFields = []string{
-			"codexOAuthToken", "codexOAuthRefresh", "codexOAuthExpires",
-		}
+		// 1 项 = 3 枚明文字段（codexOAuthToken / codexOAuthRefresh /
+		// codexOAuthExpires）折叠而成的一枚 32 字节摘要（P3a）。形状另有两条断言：
+		// payload_key_test.go 的 H6（恰好 1 字段、类型 [32]byte）与 payload 读者
+		// 集合（static_read_closure_test.go 的 payloadProjectionFuncs 双向相等）。
+		declaredPayloadKeyFields = []string{"payloadDigest"}
 	)
 
 	require.Equal(t, append(append([]string{}, declaredPlanKeyFields...), declaredPayloadKeyFields...), names, "staticKey field set changed: this assertion is the review tripwire for the §5.5b field list; "+
 		"update it deliberately together with spec §5.5/§5.5b, not incidentally")
-	// 归属 tripwire：同一处同时钉住"字段集"与"字段归属"——载荷三元组必须在
+	// 归属 tripwire：同一处同时钉住"字段集"与"字段归属"——载荷摘要必须在
 	// payloadKey，其余必须在 planKey。字段挪错组即改判据语义。
 	require.Equal(t, declaredPlanKeyFields, flattenKeyFieldNames(reflect.TypeFor[planKey]()), "planKey must carry exactly the decision inputs")
-	require.Equal(t, declaredPayloadKeyFields, flattenKeyFieldNames(reflect.TypeFor[payloadKey]()), "payloadKey must carry exactly the OAuth credential triple")
+	require.Equal(t, declaredPayloadKeyFields, flattenKeyFieldNames(reflect.TypeFor[payloadKey]()), "payloadKey must carry exactly the folded OAuth credential digest (P3a)")
 }
 
 // TestStaticKeyCoversEveryDeclaredAccountField 是字段声明表与静态键之间的机械
@@ -380,6 +383,17 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated refresh token must change the key")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated refresh token must NOT invalidate in-flight plans (payload only)")
+	})
+	t.Run("codexOAuthExpires rotation MUST change the key", func(t *testing.T) {
+		// 三枚明文字段里最容易被漏掉的一枚：改前它只出现在声明表里，全仓零条敏感度
+		// 断言（"摘要漏掉 expires"的机械抓点是 KAT 向量 ④；这条是它在**真键**上的
+		// 对应物——KAT 钉编码，这里钉"摘要真的进了键"）。
+		a, tp, gids := inputs()
+		exp := time.Unix(0, 1893456000000000001)
+		a.Ext.CodexOAuthExpiresAt = &exp
+		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
+		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated OAuth expiry must change the key")
+		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated OAuth expiry must NOT invalidate in-flight plans (payload only)")
 	})
 	t.Run("codexEmail edit MUST NOT change the key", func(t *testing.T) {
 		// U40 删掉了 codexEmail：它不是决策输入（domain.CandidateFingerprint 的

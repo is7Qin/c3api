@@ -76,6 +76,12 @@ type snapshotStatic struct {
 	// 现算五类摘要。key 在首次读取前有效、发布后只读；src 切片/映射只读，
 	// 禁止原地 canonicalization（digest 内部先拷贝/排序）。
 	key planKey
+	// payload 是载荷摘要的**构造期缓存位点**（P3a，与 key 同款）：$S.acc.Ext 上的
+	// OAuth 令牌三元组在 newSnapshotStatic 里一次折叠成 payloadKey.payloadDigest，
+	// 此后 payloadKeyOf(av) 只读回它。三条明文读点因此只存在于构造期——消费期
+	// （含叶子复用判据）不再看令牌原文，源对象被就地改写也不会让已发布的叶漂移；
+	// 反过来，**就地轮转 + 重建**能判出不等（改前两侧读同一枚 Ext ⇒ 判等 ⇒ 漏检）。
+	payload payloadKey
 }
 
 // eventGID 是事件投递归组用的单组代表值：**由 groupIDs 现算**，不是存储字段。

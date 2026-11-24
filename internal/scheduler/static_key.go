@@ -160,10 +160,17 @@ func routableFor(enabled bool, proxyID *int64, px *domain.Proxy) bool {
 // 上游鉴权（stableCredentialDigest 对 codex-oauth 返回常量，token/refresh/
 // expiry 完全不进指纹），不是任何路由决策的输入。载荷变化必须换新叶子
 // （SDK 拿到新 token，staticKey 变）但不得作废在途计划（planKey 不变）。
+//
+// 三枚明文字段（codexOAuthToken / codexOAuthRefresh / codexOAuthExpires）已折叠成
+// 一枚 32 字节摘要（P3a）：键类型里不再出现凭据原文。摘要由 newSnapshotStatic 在
+// **构造期一次定型**（payloadDigestOf），$S.payload 持有，payloadKeyOf 只读回——
+// 比较路径因此不碰令牌原文，也不会因为源对象被就地改写而漂移。
+//
+// 摘要**不承载「哪个令牌变了」**：轮转只换叶子，不作废在途计划（那是 K 的职责）。
+// [32]byte 是这里唯一允许的载体：[32]byte 可比较（`==` 仍是键的唯一算子），且与
+// 其它事实族（factsDigest / groupIDsDigest）同一种表示。
 type payloadKey struct {
-	codexOAuthToken   string // 凭据值：上游鉴权访问令牌
-	codexOAuthRefresh string // 凭据值：刷新令牌
-	codexOAuthExpires int64  // 凭据值：访问令牌过期时刻（UnixNano；0 = 未设置）
+	payloadDigest [32]byte
 }
 
 // staticKey 是快照静态事实的**可比较值类型**（spec §5.5b「结构保证」）：
@@ -257,6 +264,27 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	if av.tpl != nil {
 		av.bpsProfileDigest = domain.BPSProfileDigest(av.tpl.CredentialType, av.acc.Ext)
 	}
+	// 载荷摘要：三枚凭据原文的读点**只在这里**（P3a）。改前它们在 payloadKeyOf 里
+	// 逐次读——那与"构造期缓存"直接矛盾（缓存写了没人读，且每次比较都要付一遍明文
+	// 解引用）。搬进来之后，"调度包里只有构造函数读 OAuth 令牌"成为机械事实
+	// （static_read_closure_test.go 的 payloadProjectionFuncs 是**双向相等**断言）。
+	//
+	// 空三元组也照样取摘要（ext == nil 与全空字段因此同键，沿用改前语义：nil 与
+	// ptr("") 同键、nil expires 与 UnixNano 0 同键）。代价是一次 24B 前像的 sha256
+	// ——构造期每叶一次，换来比较期零明文读。
+	var (
+		oauthToken   string
+		oauthRefresh string
+		oauthExpires int64
+	)
+	if ext := av.acc.Ext; ext != nil {
+		oauthToken = derefString(ext.CodexOAuthToken)
+		oauthRefresh = derefString(ext.CodexOAuthRefreshToken)
+		if ext.CodexOAuthExpiresAt != nil {
+			oauthExpires = ext.CodexOAuthExpiresAt.UnixNano()
+		}
+	}
+	av.payload = payloadKey{payloadDigest: payloadDigestOf(oauthToken, oauthRefresh, oauthExpires)}
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
@@ -351,28 +379,26 @@ func planKeyOf(av *snapshotStatic) planKey {
 	return av.key
 }
 
-// payloadKeyOf 由快照静态视图派生载荷判据：只读 OAuth 令牌三元组。av 为 nil
-// 时返回零值。
+// payloadKeyOf 由快照静态视图读取**构造期缓存**的载荷摘要（$S.payload）：零调用、
+// 零 $S.acc 路径。av 为 nil（首轮无旧快照）时返回零值键。
+//
+// 它不再派生任何东西——这是 P3a 的全部意义：载荷判据在叶构造时定型一次，比较期
+// 只是读回一枚 [32]byte（改前是每次比较都解引用三枚明文字段）。
 func payloadKeyOf(av *snapshotStatic) payloadKey {
-	var k payloadKey
 	if av == nil {
-		return k
+		return payloadKey{}
 	}
-	if ext := av.acc.Ext; ext != nil {
-		k.codexOAuthToken = derefString(ext.CodexOAuthToken)
-		k.codexOAuthRefresh = derefString(ext.CodexOAuthRefreshToken)
-		if ext.CodexOAuthExpiresAt != nil {
-			k.codexOAuthExpires = ext.CodexOAuthExpiresAt.UnixNano()
-		}
-	}
-	return k
+	return av.payload
 }
 
 // staticKeyOf 由快照静态视图派生比较键。av 为 nil（首轮无旧快照）时返回零值键；
 // 零值键只在两侧都为空时相等（首轮无复用分支，oldByID 为空 map）。
 //
-// 两枚子键从**同一份**快照派生，字段归属只声明一次：planKeyOf 读决策输入，
-// payloadKeyOf 读载荷。
+// 两枚子键从**同一份**快照派生，字段归属只声明一次：planKeyOf 读决策输入（含
+// 构造期定型的 factsDigest），payloadKeyOf 读载荷摘要（$S.payload）。两枚都是缓存
+// 读回——本函数体内不存在任何摘要计算（sha256 / FactsDigest / payloadDigestOf），
+// 这条由 payload_digest_gate_test.go 的 H1（AST 门禁）机械保证：谁在这里现场算
+// 摘要，谁就把"构造期一次定型"变成了"比较期再次派生"，键与叶会从两条路径分叉。
 //
 // 出口摘要这一项**从原料重算**（`specOfDomain(acc.Proxy).Key()`），不读 av.key 的
 // 缓存位：复用比较与构造期键因此各自独立地从 acc.Proxy 派生——任一处漏写出口都不会
