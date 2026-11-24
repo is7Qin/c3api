@@ -275,11 +275,20 @@ var allowRules = []allowRule{
 		"internal/domain", "internal/credential", "internal/sdkbridge", "pkg/",
 	}},
 
+	// 身份池（P5b）：会话池的唯一职责是持有"线程生命周期"，因此它依赖上游 SDK 桥的
+	// **线程值类型/工厂**（sdkbridge.ThreadHandle / Threads / RotatePolicy）；除此之外
+	// 只有 stdlib。它**不知道** scheduler 的任何类型（accountConfig / egress.Client /
+	// 资源批次），反向边由 TestImportGraphProduction 的 allow 矩阵直接拒绝——这条
+	// 规则是本单唯一新增的边，指纹随之显式更新（加宽必须可见）。
+	{from: "internal/identitypool", to: []string{"internal/sdkbridge"}},
+
 	// 调度：只依赖值类型层 + worker；执行面细节按 P5 收口（见账本）。
 	// P3b 起多一条 internal/api：控制面把 Selection 别名为契约类型、并实现 SelectionHandle。
+	// P5b 起多一条 internal/identitypool：codex 会话池下沉为独立包（只搬"线程生命
+	// 周期"，不搬配置/出口），scheduler 经 Spec/Claim/Reclaimer 三处窄缝用它。
 	{from: "internal/scheduler", to: []string{
 		"internal/domain", "internal/credential", "internal/worker", "internal/api",
-		"internal/latch", "internal/rule", "pkg/logx",
+		"internal/latch", "internal/rule", "internal/identitypool", "pkg/logx",
 	}, deny: []string{"pkg/egress"}},
 
 	// 上游 SDK 桥：执行面的一端，允许 pkg/egress 实现。
@@ -369,7 +378,7 @@ const (
 	//
 	// 诚实边界：它挡不住有意同时改矩阵与指纹。它只保证这类改动在 diff 里两处同时
 	// 可见、必须写理由（见文件头 ③），不保证它不会发生。
-	allowMatrixFingerprint = "976b113dcaef31904f28216ea9e807a508da11e3d0090195c067c8f940ea04d5"
+	allowMatrixFingerprint = "f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy

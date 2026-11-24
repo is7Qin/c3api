@@ -615,36 +615,36 @@ func TestInvalidateGroupsPoolLifecycle(t *testing.T) {
 	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 
-	pool1 := s.publisher.pending.identityPools.pools[1]
+	pool1 := s.publisher.pending.identityPools.Pools[1]
 	require.NotNil(t, pool1)
-	require.Len(t, pool1.slots, 2)
+	require.Equal(t, 2, pool1.Len())
 
-	// In-flight slot on the original pool.
-	require.True(t, pool1.slots[0].busy.CompareAndSwap(false, true))
+	// In-flight slot on the original pool（经 Claim 占用：独占协议只有这一个入口）。
+	require.NotNil(t, pool1.Claim())
 
 	// Delete the codex account → its pool is gone.
 	ldr.mu.Lock()
 	ldr.byGroup[10] = nil
 	ldr.mu.Unlock()
 	s.InvalidateGroups([]int64{10})
-	require.Nil(t, s.publisher.pending.identityPools.pools[1], "departed account's pool must GC")
+	require.Nil(t, s.publisher.pending.identityPools.Pools[1], "departed account's pool must GC")
 
 	// Re-add → a fresh pool, never the old (still-busy) one.
 	ldr.mu.Lock()
 	ldr.byGroup[10] = []*domain.Account{a}
 	ldr.mu.Unlock()
 	s.InvalidateGroups([]int64{10})
-	pool2 := s.publisher.pending.identityPools.pools[1]
+	pool2 := s.publisher.pending.identityPools.Pools[1]
 	require.NotNil(t, pool2)
 	require.NotSame(t, pool1, pool2, "a re-added account must not reuse the departed pool")
 
 	// K change 2 → 1 then back 2 resizes the pool slice.
 	a.MaxConcurrency = 1
 	s.InvalidateGroups([]int64{10})
-	require.Len(t, s.publisher.pending.identityPools.pools[1].slots, 1)
+	require.Equal(t, 1, s.publisher.pending.identityPools.Pools[1].Len())
 	a.MaxConcurrency = 2
 	s.InvalidateGroups([]int64{10})
-	require.Len(t, s.publisher.pending.identityPools.pools[1].slots, 2)
+	require.Equal(t, 2, s.publisher.pending.identityPools.Pools[1].Len())
 
 	// codex → non-codex → codex drops and recreates the pool.
 	nonCodex := acc(1, tpl(1, domain.FormatOpenAIResponses, []string{"gpt-5"}), 2)
@@ -652,13 +652,13 @@ func TestInvalidateGroupsPoolLifecycle(t *testing.T) {
 	ldr.byGroup[10] = []*domain.Account{nonCodex}
 	ldr.mu.Unlock()
 	s.InvalidateGroups([]int64{10})
-	require.Nil(t, s.publisher.pending.identityPools.pools[1], "non-codex account has no pool")
+	require.Nil(t, s.publisher.pending.identityPools.Pools[1], "non-codex account has no pool")
 
 	ldr.mu.Lock()
 	ldr.byGroup[10] = []*domain.Account{a}
 	ldr.mu.Unlock()
 	s.InvalidateGroups([]int64{10})
-	require.NotNil(t, s.publisher.pending.identityPools.pools[1], "codex account gets a pool again")
+	require.NotNil(t, s.publisher.pending.identityPools.Pools[1], "codex account gets a pool again")
 }
 
 // --- T2: delete-group (old :771) and clone (old :826) leaf-key paths ---

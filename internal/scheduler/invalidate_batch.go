@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -126,7 +127,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	if !succeeded {
 		return
 	}
-	collectRetiredPools(prevPools, pools, reclaim)
+	identitypool.CollectRetiredPools(prevPools, pools, reclaim.retireSink())
 	// 账号配置快照：以全量装载的全集为基线，用折叠后的工作根（byID）覆盖本次触达的
 	// 账号。从组里移除账号不是账号移除——它仍在全集里，资源保留；真正的删除由下一次
 	// 全量装载的全集差分发现（§3.3b-4）。
@@ -146,7 +147,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 // (groups + byID) from the newest staged-or-published static root, plus the
 // latest pending-or-published identity registry as the prev pool source.
 // Caller must hold publisher.mu.
-func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*accountSnapshot, *identityRegistry) {
+func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*accountSnapshot, *identitypool.Registry) {
 	cur := s.view.Load()
 	var m map[int64]*groupSnapshot
 	var byID map[int64]*accountSnapshot
@@ -182,7 +183,7 @@ func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*ac
 // digests 是**批次作用域**的模板摘要表（由 invalidateGroupsLocked 建、整批共享）：
 // 它必须一路传到这里，否则 :188/:245 两个单叶构造点会各自退回逐次计算——
 // 功能不变，但批次内"每模板一次"的收益只剩 buildSnapshots 那一半。
-func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, digests *templateDigestCache, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
+func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identitypool.Registry, gid int64, accs []*domain.Account, digests *templateDigestCache, reclaim *poolReclaim) (scope []int64, poolsOut *identitypool.Registry) {
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]

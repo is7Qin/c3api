@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 )
 
 // reserveConversationBaseAllocs 是 BASE（85c1ed0）实测的
@@ -38,10 +39,10 @@ func reserveOnce(t *testing.T, s *Scheduler, route RouteRef, conv bool) *Selecti
 	return sel
 }
 
-func requirePoolIdle(t *testing.T, pool *identityPool) {
+func requirePoolIdle(t *testing.T, pool *identitypool.Pool) {
 	t.Helper()
-	for i, sl := range pool.slots {
-		require.False(t, sl.busy.Load(), "槽位 %d 不得被占用", i)
+	for i := range pool.Len() {
+		require.False(t, pool.Slot(i).Busy(), "槽位 %d 不得被占用", i)
 	}
 }
 
@@ -53,11 +54,11 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 	t.Run("conversation does not claim", func(t *testing.T) {
 		a := codexAcc(1, domain.FormatOpenAIResponses, "m", 2, "inst-1")
 		s, route := newConversationSched(t, a)
-		pool := s.View().static.identityPools.pools[1]
+		pool := s.View().static.identityPools.Pools[1]
 		require.NotNil(t, pool)
-		threads := make([]string, len(pool.slots))
-		for i, sl := range pool.slots {
-			threads[i] = sessionThreadKey(sl)
+		threads := make([]string, pool.Len())
+		for i := range pool.Len() {
+			threads[i] = sessionThreadKey(pool.Slot(i))
 		}
 
 		sel := reserveOnce(t, s, route, true)
@@ -69,21 +70,21 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		requirePoolIdle(t, pool)
 		sel.Handle.Release()
 		requirePoolIdle(t, pool)
-		for i, sl := range pool.slots {
-			require.Equal(t, threads[i], sessionThreadKey(sl), "槽位 %d 不得推进", i)
+		for i := range pool.Len() {
+			require.Equal(t, threads[i], sessionThreadKey(pool.Slot(i)), "槽位 %d 不得推进", i)
 		}
 	})
 
 	t.Run("slot path still claims", func(t *testing.T) {
 		a := codexAcc(1, domain.FormatOpenAIResponses, "m", 2, "inst-1")
 		s, route := newConversationSched(t, a)
-		pool := s.View().static.identityPools.pools[1]
+		pool := s.View().static.identityPools.Pools[1]
 
 		sel := reserveOnce(t, s, route, false)
 		require.False(t, sel.Conversation)
 		require.NotNil(t, handleOf(t, sel).session)
 		require.Same(t, pool, handleOf(t, sel).pool)
-		require.True(t, handleOf(t, sel).session.busy.Load())
+		require.True(t, handleOf(t, sel).session.Busy())
 		require.Equal(t, "private:1", sel.CacheDomain, "槽位路径同样携带账号事实")
 		require.Equal(t, "inst-1", sel.InstallationID)
 		sel.Handle.Release()
@@ -117,7 +118,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 	t.Run("no pool when max concurrency zero", func(t *testing.T) {
 		a := codexAcc(4, domain.FormatOpenAIResponses, "m", 0, "inst-4")
 		s, route := newConversationSched(t, a)
-		require.Nil(t, s.View().static.identityPools.pools[4], "MaxConcurrency=0 不建池")
+		require.Nil(t, s.View().static.identityPools.Pools[4], "MaxConcurrency=0 不建池")
 
 		for _, conv := range []bool{false, true} {
 			sel := reserveOnce(t, s, route, conv)

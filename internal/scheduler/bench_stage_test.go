@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 )
 
 // Final delivery scope (record only; the spec's frozen thresholds are NOT
@@ -82,7 +83,7 @@ func BenchmarkInvalidateGroupsStageCodex(b *testing.B) {
 			b.Fatalf("LoadGroupAccounts calls = %d, want %d", len(got), m)
 		}
 		reused, created, resized := poolLedger(prev, s.publisher.pending.identityPools)
-		b.Logf("codex pool ledger: reused=%d created=%d resized=%d (pools before=%d)", reused, created, resized, len(prev.pools))
+		b.Logf("codex pool ledger: reused=%d created=%d resized=%d (pools before=%d)", reused, created, resized, len(prev.Pools))
 	})
 }
 
@@ -120,14 +121,14 @@ func codexBatchStageFixture(b *testing.B, m int) (*Scheduler, *t1Loader) {
 // poolLedger classifies each pool in next by its relationship to prev: reused
 // (same pointer), created (no previous pool for the account) or resized
 // (present before but a fresh pointer).
-func poolLedger(prev, next *identityRegistry) (reused, created, resized int) {
+func poolLedger(prev, next *identitypool.Registry) (reused, created, resized int) {
 	if next == nil {
 		return
 	}
-	for id, np := range next.pools {
-		var op *identityPool
+	for id, np := range next.Pools {
+		var op *identitypool.Pool
 		if prev != nil {
-			op = prev.pools[id]
+			op = prev.Pools[id]
 		}
 		switch {
 		case op == nil:
@@ -152,7 +153,7 @@ func TestInvalidateGroupsCodexPoolLedger(t *testing.T) {
 	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	prev := s.publisher.pending.identityPools
-	require.Len(t, prev.pools, 3)
+	require.Len(t, prev.Pools, 3)
 
 	s.InvalidateGroups([]int64{1, 2})
 	reused, created, resized := poolLedger(prev, s.publisher.pending.identityPools)

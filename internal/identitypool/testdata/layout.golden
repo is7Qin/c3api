@@ -1,0 +1,26 @@
+Session size=40 align=8
+  busy atomic.Bool offset=0 size=4
+  h sdkbridge.ThreadHandle offset=8 size=8
+  threadKey string offset=16 size=16
+  threads *sdkbridge.Threads offset=32 size=8
+Pool size=88 align=8
+  slots []*identitypool.Session offset=0 size=24
+  cursor atomic.Uint64 offset=24 size=8
+  installationID string offset=32 size=16
+  accountID int64 offset=48 size=8
+  policy sdkbridge.RotatePolicy offset=56 size=16
+  retireThread func(int64, string) offset=72 size=8
+  hooks *identitypool.hooks offset=80 size=8
+Spec size=56 align=8
+  AccountID int64 offset=0 size=8
+  K int offset=8 size=8
+  InstallationID string offset=16 size=16
+  Policy sdkbridge.RotatePolicy offset=32 size=16
+  Retire func(int64, string) offset=48 size=8
+Registry size=8 align=8
+  Pools map[int64]*identitypool.Pool offset=0 size=8
+Reclaim size=24 align=8
+  Threads []identitypool.ThreadRetire offset=0 size=24
+ThreadRetire size=24 align=8
+  AccountID int64 offset=0 size=8
+  ThreadKey string offset=8 size=16

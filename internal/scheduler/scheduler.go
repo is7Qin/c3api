@@ -17,6 +17,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
@@ -490,7 +491,7 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 删除的账号其池随注册表替换自然 GC。仅 codex 凭据建池。
 	prevReg := s.prevIdentityPoolsLocked()
 	pools := s.buildIdentityPools(byID, prevReg, reclaim)
-	collectRetiredPools(prevReg, pools, reclaim)
+	identitypool.CollectRetiredPools(prevReg, pools, reclaim.retireSink())
 	// 账号配置快照（账号全集 → 当前出口 + 资源指令）：一次算好，两级资源共用。
 	cfg := s.accounts.fullLocked(byID, all, s.cfg.Egress, s.clientAccounts())
 	sv := newStaticView(groups, byID, pools)
@@ -737,8 +738,8 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		// 而 reload 持 publisher.mu 按 K 同步分配 K 个 UUID（写面只校验 ≥1，
 		// tools/loadtest 曾配 100000）。钳在 acc 上使门禁与池 K 读同一份值，恒同源。
 		acc := *a
-		if acc.Template != nil && credential.ChannelOf(acc.Template.CredentialType) == credential.ChannelCodex && acc.MaxConcurrency > maxIdentityPoolSlots {
-			acc.MaxConcurrency = maxIdentityPoolSlots
+		if acc.Template != nil && credential.ChannelOf(acc.Template.CredentialType) == credential.ChannelCodex && acc.MaxConcurrency > identitypool.MaxSlots {
+			acc.MaxConcurrency = identitypool.MaxSlots
 		}
 		// 出口解析：**只在这里发生一次**（快照期，非热路径）。未绑定 = 直连
 		// 单例；已绑定 = 按规格摘要取/建（同规格跨重载复用同一 client）。

@@ -7,6 +7,7 @@ package scheduler
 import (
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -25,7 +26,7 @@ var (
 // selection 是 Selection 在控制面的实体：契约字段 + 三个私有生命周期指针。
 //
 // 为什么私有指针放在**包装**而不是 Selection 里：api 是中立包，不能持有
-// codexSession/identityPool/leaseToken 这些控制面类型。包装与嵌入的 Selection
+// identitypool.Session/identitypool.Pool/leaseToken 这些控制面类型。包装与嵌入的 Selection
 // 在同一个堆对象上（对外返回的是 &selected.Selection 内指针），所以这次拆分
 // **不多分配**：总尺寸 288B 仍落在同一个 288B 分配档（3 allocs / 328 B 基准）。
 type selection struct {
@@ -33,9 +34,9 @@ type selection struct {
 	lease *leaseToken
 	// session 本次预留认领的 codex 会话（仅 codex 凭据；nil = 无会话——非 codex
 	// 面不认领）。Release 归还；Thread/StepIdentity 经它读写。
-	session *codexSession
+	session *identitypool.Session
 	// pool 会话所属池（线程退役出口）。全忙兜底的临时会话无池。
-	pool *identityPool
+	pool *identitypool.Pool
 }
 
 // Release 归还租约（幂等）。nil / 无租约 ⇒ no-op——数据面把「没有预留」的
@@ -49,7 +50,7 @@ func (s *selection) Release() {
 		// 窗口内可出现「K 会话全忙而 concurrency=K-1」——新预留放行后
 		// claim()==nil（兜底临时身份 + Warn，破坏「K 条稳定会话」）。归还会话
 		// 先于计数，使门禁观测到的空闲额度对应的会话已真正可用。
-		s.session.release()
+		s.session.Release()
 		s.lease.acc.runtime.concurrency.Add(-1)
 	}
 }
@@ -66,7 +67,7 @@ func (s *selection) Thread() sdkbridge.ThreadHandle {
 	if s == nil || s.session == nil {
 		return sdkbridge.ThreadHandle{}
 	}
-	return s.session.h
+	return s.session.Thread()
 }
 
 // StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游
@@ -78,8 +79,8 @@ func (s *selection) StepIdentity() {
 	if s == nil || s.session == nil {
 		return
 	}
-	if old := s.session.step(); old != "" {
-		s.pool.retire(old)
+	if old := s.session.Step(); old != "" {
+		s.pool.Retire(old)
 	}
 }
 

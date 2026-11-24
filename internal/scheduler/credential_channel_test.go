@@ -64,7 +64,7 @@ func TestBPSIgnoresCodexIdentity(t *testing.T) {
 	require.Empty(t, bpsAv.installationID, "BPS 不读 Codex installation")
 	require.Empty(t, bpsAv.cacheDomain, "BPS 不走 codex 会话路径（无缓存域事实）")
 	require.NotEmpty(t, bpsAv.bpsProfileDigest, "BPS 的 profile 摘要才是它的事实")
-	require.Nil(t, v.static.identityPools.pools[1], "BPS 不得建 codex 会话池")
+	require.Nil(t, v.static.identityPools.Pools[1], "BPS 不得建 codex 会话池")
 
 	// 错填的 installation 不得进 BPS 的 factsDigest：与「同一账号但 ext 不带
 	// CodexIdentity」的孪生体**同键**（键里的事实不比叶子带着的事实更细）。
@@ -81,7 +81,7 @@ func TestBPSIgnoresCodexIdentity(t *testing.T) {
 
 	codexAv := v.static.byID[2].static.Load()
 	require.Equal(t, "inst-codex", codexAv.installationID, "反向对照：codex 通道照常读 installation")
-	require.NotNil(t, v.static.identityPools.pools[2], "反向对照：codex 建池")
+	require.NotNil(t, v.static.identityPools.Pools[2], "反向对照：codex 建池")
 	// 反向对照：codex 的 installation 进 factsDigest（同一账号只改 installation）。
 	codexTwin := *codex
 	codexTwin.Ext = mixedExt(2, "inst-other")

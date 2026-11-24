@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 )
 
 // cloneSnapMap 浅拷贝快照 map（语义与原各手写循环逐字一致：恒返回非 nil
@@ -29,7 +30,7 @@ type StaticView struct {
 	// 的 MaxConcurrency（byID 叶）与 request 认领的池 K 由同一 StaticView
 	// 给出，杜绝「门禁上限已变、池仍旧」的双发布路径（P0-3）。nil = 无 codex
 	// 账号 / 未装配。发布后不可变（map 不增删）。
-	identityPools *identityRegistry
+	identityPools *identitypool.Registry
 	// routeIndex maps events to affected routes. Born at stage with
 	// the root, dies with it, read-only between (compile-lane-owned).
 	routeIndex *compileRouteIndex

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/racetest"
 )
 
 // 本文件是 payloadDigest（P3a）的**字节**与**成本**判据：
@@ -384,8 +385,16 @@ func TestStaticDigestBuildCodexOAuthShapeCost(t *testing.T) {
 		codexOAuthTokenBytes, codexOAuthRefreshBytes,
 		payloadDigestPreimageLen(*a.Ext.CodexOAuthToken, *a.Ext.CodexOAuthRefreshToken),
 		got.allocsPerOp, got.bytesPerOp)
+	// 分配**次数**与 -race 无关，两种模式都断言。
 	require.Equal(t, int64(10), got.allocsPerOp,
 		"真实载荷形状不得增加分配：摘要必须留在 4096 的栈上缓冲内")
+	if racetest.Enabled {
+		// P3a 遗留：这里的两个判据是**精确字节数**，而 race 插桩会给部分分配加影子
+		// 元数据（本用例基线 -race 下 920 → 944 B/op）。精确字节数只在非 race 模式成立；
+		// race 模式保留分配次数断言（上面那条）与下面的日志，功能面不受影响。
+		t.Logf("race 模式：跳过精确 B/op 判据（插桩改变分配字节数，实测 920→944）")
+		return
+	}
 	require.Equal(t, int64(920), got.bytesPerOp,
 		"B/op 不得变：snapshotStatic 仍在 768 分配类（缓存位点 32B 不换档）")
 
@@ -408,8 +417,13 @@ func TestStaticKeyOfCost(t *testing.T) {
 			benchmarkStaticKey = staticKeyOf(av)
 		}
 	})
-	t.Logf("staticKeyOf：%d allocs/op，%d B/op", got.allocsPerOp, got.bytesPerOp)
+	t.Logf("staticKeyOf：%d allocs/op，%d B/op（race=%v）", got.allocsPerOp, got.bytesPerOp, racetest.Enabled)
 	require.Equal(t, int64(1), got.allocsPerOp, "staticKeyOf 只允许 1 次分配（返回值的堆槽）")
+	if racetest.Enabled {
+		// 同 P3a 遗留：精确字节数在 race 插桩下不成立（本用例本机恰好没漂，但同类
+		// 断言没有契约保证，按 racetest 的同一规则处理）：分配次数仍断言，字节数只 log。
+		return
+	}
 	require.Equal(t, int64(32), got.bytesPerOp, "staticKeyOf 的 B/op 是 32（现状值，与改前逐项相同）")
 }
 

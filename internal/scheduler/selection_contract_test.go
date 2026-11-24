@@ -12,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/racetest"
 )
 
 // 控制面侧的契约预算门禁（spec 2026-11-23 P3b §2.4/§2.5 T1/T3）：
@@ -52,8 +53,15 @@ func TestSelectAllocationBudget(t *testing.T) {
 	})
 	require.Equal(t, int64(3), cost.allocsPerOp,
 		"分配次数是硬预算：接口化不许引入第二次分配（句柄与 Selection 同属一个堆对象）")
-	require.Equal(t, int64(328), cost.bytesPerOp,
-		"B/op 是尺寸档的读数：288(selection 包装) + 40(既有残留)；越过 328 ⇒ 尺寸档已上移")
+	// 精确字节数在 -race 下不是判据：race 插桩会给部分分配加影子元数据（本用例本机
+	// 恰好没漂，但同类断言没有契约保证，见 internal/testsupport/racetest 的纪律）。
+	// 分配**次数**与插桩无关，两种模式都断言。
+	if racetest.Enabled {
+		t.Logf("race 模式：跳过精确 B/op 判据（实测 %d B/op），尺寸档仍由 TestSelectionWrapperSize 的 Sizeof 门禁兜住", cost.bytesPerOp)
+	} else {
+		require.Equal(t, int64(328), cost.bytesPerOp,
+			"B/op 是尺寸档的读数：288(selection 包装) + 40(既有残留)；越过 328 ⇒ 尺寸档已上移")
+	}
 	require.Empty(t, usageModel)
 	require.Empty(t, responseModel)
 }

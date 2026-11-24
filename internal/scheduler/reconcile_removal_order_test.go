@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -42,7 +43,7 @@ func TestReconcileStaleBatchPreservesNewEntry(t *testing.T) {
 	go func() {
 		defer close(done)
 		s.withPublisherLock(func(b *poolReclaim) {
-			b.threads = []threadRetire{{accountID: 1, threadKey: "old-thread"}}
+			b.Threads = []identitypool.ThreadRetire{{AccountID: 1, ThreadKey: "old-thread"}}
 			// A = 旧配置：账号全集为空（账号 2 已不在配置里）。
 			cfg := s.accounts.fullLocked(nil, []*domain.Account{}, nil, s.clientAccounts())
 			b.config = &cfg
@@ -88,12 +89,12 @@ func TestPoolDisappearanceOnlyRetiresThreads(t *testing.T) {
 
 	pool := newTestPoolWith(2, testPolicy(), spy.fn)
 	reclaim := &poolReclaim{retire: spy.fn, apply: table.ApplyBatch}
-	collectRetiredPools(
-		&identityRegistry{pools: map[int64]*identityPool{7: pool}},
-		&identityRegistry{pools: map[int64]*identityPool{}}, // K=0 / 类型变更 / 退出路由集合
-		reclaim,
+	identitypool.CollectRetiredPools(
+		&identitypool.Registry{Pools: map[int64]*identitypool.Pool{7: pool}},
+		&identitypool.Registry{Pools: map[int64]*identitypool.Pool{}}, // K=0 / 类型变更 / 退出路由集合
+		reclaim.retireSink(),
 	)
-	require.Len(t, reclaim.threads, 2, "池消失只收集会话线程退役")
+	require.Len(t, reclaim.Threads, 2, "池消失只收集会话线程退役")
 	require.Nil(t, reclaim.config, "池差分不产生账号配置批次（账号删除只由全集差分判定）")
 
 	reclaim.run()

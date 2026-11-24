@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package scheduler
 
+import "github.com/is7qin/c3api/internal/identitypool"
+
 // Stage-built route index (v5 §4/C2): maps events to affected routes so scoped
 // fires name exactly the routes a full recompile would visit. Owner: compile
 // lane. Lifecycle: born at stage (attached to the staged root), dies with the
@@ -52,6 +54,6 @@ func buildRouteIndex(groups map[int64]*groupSnapshot) *compileRouteIndex {
 // in one place (copy-modify-Store discipline: the maps are born here, never
 // mutated after staging). pools is the codex identity registry published
 // together with this root (gate limit and pool K share one source).
-func newStaticView(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry) *StaticView {
+func newStaticView(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identitypool.Registry) *StaticView {
 	return &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID), identityPools: pools, routeIndex: buildRouteIndex(groups)}
 }

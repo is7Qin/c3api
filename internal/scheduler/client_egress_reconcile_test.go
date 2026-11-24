@@ -13,6 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/pkg/egress"
 )
 
@@ -228,7 +229,7 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 	go func() {
 		defer close(done)
 		s.withPublisherLock(func(b *poolReclaim) {
-			b.threads = []threadRetire{{accountID: 1, threadKey: "old-thread"}}
+			b.Threads = []identitypool.ThreadRetire{{AccountID: 1, ThreadKey: "old-thread"}}
 			cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 1}}, nil, s.clientAccounts())
 			b.config = &cfg
 		})
