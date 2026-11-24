@@ -6,11 +6,13 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
@@ -176,7 +178,39 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
-	return r.accountWithProxy(ctx, toDomainAccount(row))
+	d := toDomainAccount(row)
+	// 账号侧 ext 边的唯一 eager-load 调用点（WithExt 只在本函数）：投影搬到这里，
+	// mapper 不再碰 Ext（spec 修正 1）。读契约仍带 ext——不许删 .WithExt()。
+	ext, err := projectAccountExtEdge(d, row)
+	if err != nil {
+		return nil, err
+	}
+	d.Ext = ext
+	return r.accountWithProxy(ctx, d)
+}
+
+// projectAccountExtEdge 把账号侧 ext 边投影成 domain.AccountExt。模板是 Responses
+// provider 时先断言 BPS 位一致：不一致是**唯一**允许上抛的投影错误
+// （ErrCredentialTypeMismatch）；其余投影错误（坏 installation_id / validateBPSExt
+// 失败）沿用旧 mapper 的语义——Ext = nil、不报错，让 rule_persist 之类的判决照常
+// 落库（spec 修正 4：错误面不许扩大）。
+func projectAccountExtEdge(d *domain.Account, row *ent.Account) (*domain.AccountExt, error) {
+	if row == nil || len(row.Edges.Ext) == 0 {
+		return nil, nil
+	}
+	e := row.Edges.Ext[0]
+	ext := accountExtColumns(e)
+	var tplType *credential.Type
+	if d != nil && d.Template != nil {
+		tplType = &d.Template.CredentialType
+	}
+	if err := projectExtIdentity(ext, e.CodexIdentity, tplType); err != nil {
+		if errors.Is(err, ErrCredentialTypeMismatch) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return ext, nil
 }
 
 // 读契约（spec-proxy-pool §3.6，C2 之后由本层独占）：返回体的 `Proxy` 已按**调用方 scope**

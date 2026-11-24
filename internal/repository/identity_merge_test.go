@@ -40,7 +40,7 @@ func TestIdentityWritersPreserveProviderAndUnknownKeys(t *testing.T) {
 func TestMalformedBPSIdentityProjectionFailsClosed(t *testing.T) {
 	at, rt, upstream := "at", "rt", "account"
 	ext := &domain.AccountExt{AccountID: 7, CredentialType: credential.TypeBPS, CodexOAuthToken: &at, CodexOAuthRefreshToken: &rt, CodexAccountID: &upstream}
-	err := projectAccountIdentity(ext, &domain.IdentityEnvelope{"bps": json.RawMessage(`[]`)})
+	err := projectAccountIdentity(ext, &domain.IdentityEnvelope{"bps": json.RawMessage(`[]`)}, credential.TypeBPS)
 	require.ErrorIs(t, err, errInvalidBPSAccountExt)
 }
 

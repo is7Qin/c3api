@@ -18,6 +18,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/latch"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
@@ -102,6 +103,17 @@ type Loader interface {
 type AccountUniverseLoader interface {
 	LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*domain.Account, []*domain.Account, error)
 }
+
+// AccountExtMismatchSource 报告**最近一次装载**中被跳过的损坏账号（模板与
+// account_ext 行的 BPS 位不一致）。语义：每次装载覆盖（不累加、不 drain），空
+// 装载为空。装载器不实现 ⇒ 无观测，装载语义不变。Loader 接口本身不改。
+type AccountExtMismatchSource interface {
+	LastAccountExtMismatches() []repository.ExtCredentialMismatch
+}
+
+// accountExtMismatchLogLimit 每次装载最多逐条打印的错配账号数（其余只由
+// LastAccountExtMismatches 的计数体现，避免脏数据刷屏）。
+const accountExtMismatchLogLimit = 20
 
 type leaseToken struct {
 	acc      *accountSnapshot
@@ -600,6 +612,9 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 装载侧审计：非法传输值在这里留 WARN（每模板一条），值本身原样带进快照，
 	// 归一留给 domain 的 Key()/Name()。必须在装配前跑，且不在热路径上。
 	s.warnDirtyCodexTransports(m)
+	// 装载侧审计：BPS 位错配的账号已被装载器跳过（账号级隔离，装载仍成功）。
+	// 只记 ERROR，不因非空拒绝发布（spec J5）。
+	s.logAccountExtMismatches()
 	// 本次重载作用域的模板摘要表：一次 reload 一张，贯穿下面的 buildSnapshots。
 	// 下一次重载从 DB 读回的是新 ent 行 → 新 domain 模板对象 → 新表项，故模板
 	// 内容的改动必然重算（跨 reload 复用同一张表会让摘要陈旧，见类型注释）。
@@ -749,6 +764,28 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 都必须入键**，凭据值（含 OAuth token）亦然——否则凭据轮转后键判等、复用旧叶、
 // 上游用旧令牌（实测 TestInvalidateAccountReloadsExt）。而「token 刷新不该作废
 // 在途计划」由 planKey 承担：**两件事不共用一个比较**。
+
+// logAccountExtMismatches 报告最近一次装载中被跳过的损坏账号（前 N 条，
+// 带 account_id 与两侧类型）。装载器未实现观测接口 ⇒ 静默跳过。
+func (s *Scheduler) logAccountExtMismatches() {
+	if s == nil || s.log == nil {
+		return
+	}
+	src, ok := s.loader.(AccountExtMismatchSource)
+	if !ok {
+		return
+	}
+	rows := src.LastAccountExtMismatches()
+	for i, row := range rows {
+		if i >= accountExtMismatchLogLimit {
+			break
+		}
+		s.log.Error("account skipped: account_ext credential type mismatches its template",
+			logx.Int64("account_id", row.AccountID),
+			logx.String("template_type", string(row.TemplateType)),
+			logx.String("ext_type", string(row.ExtType)))
+	}
+}
 
 // warnDirtyCodexTransports 是模板级 codex responses 传输开关的**装载侧审计面**
 // （spec §5「脏值」）：写面 400 挡住非法值，但 DB 直改/导入绕过写面时值仍会

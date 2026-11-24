@@ -117,6 +117,8 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 			continue
 		}
 		succeeded = true
+		// 组级装载同样的账号级隔离审计（每次装载覆盖，见 AccountExtMismatchSource）。
+		s.logAccountExtMismatches()
 		var stepScope []int64
 		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, digests, reclaim)
 		scope = unionScope(scope, stepScope)

@@ -6,6 +6,7 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -113,33 +114,98 @@ func accountExtColumns(e *ent.AccountExt) *domain.AccountExt {
 	}
 }
 
-func toDomainAccountExt(e *ent.AccountExt) (*domain.AccountExt, error) {
+// ErrCredentialTypeMismatch 模板与 account_ext 行的 BPS 位不一致——一致性判据里
+// **唯一有行为意义**的那一位（spec §0）。导出：PG 用例多在 repository_test 包，
+// service 也用它把账号分流成"该账号不可用"。
+var ErrCredentialTypeMismatch = errors.New("repository: account_ext credential type does not match the template")
+
+// assertExtCredentialType 比较模板类型与 ext 行的凭据类型：**只比 BPS 位**
+// （同通道内 codex-oauth ↔ codex-pat 在身份投影上行为等价，见 spec §0）。
+//
+// 它是全仓唯一允许在 ext 行类型上调用 IsBPS/IsCodex 的地方（门禁 G-B 的注册表
+// 只有这一行）。account_id 由调用方用 %w 包装补上（本函数只拿得到两侧类型）。
+func assertExtCredentialType(want, got credential.Type) error {
+	if want.IsBPS() == got.IsBPS() {
+		return nil
+	}
+	return fmt.Errorf("%w: template=%s ext=%s", ErrCredentialTypeMismatch, want, got)
+}
+
+// accountExtBranchType 选身份投影分支（v4 修正 2 的唯一取值规则）：
+//   - 模板是 Responses provider（codex / bps 通道）⇒ 模板类型；
+//   - 否则（api_key / custom / responses-special 静态通道）⇒ ext 行自身类型
+//     （遗留行保持今天的行为）。
+//
+// 它**只决定分支**：ext.CredentialType 永远保持行原值，任何路径都不覆盖——通道
+// （谁鉴权）由模板决定，但同通道内的列布局（codex-oauth 取 token 组 / codex-pat
+// 取 PATKey）由 ext 行自己的类型决定（domain.CredentialFromExt）。
+func accountExtBranchType(tplType, extType credential.Type) credential.Type {
+	if tplType.IsResponsesProvider() {
+		return tplType
+	}
+	return extType
+}
+
+// projectExtIdentity 是单行 ext 身份投影的唯一入口（快照合并、单读、额度面、
+// 账号侧 ext 边共用）：模板为 Responses provider 时先断言 BPS 位一致，再按
+// accountExtBranchType 选分支。tplType == nil 表示调用点没有模板上下文，分支退回
+// ext 行自身类型（与旧行为逐字节等价）。
+func projectExtIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope, tplType *credential.Type) error {
+	if tplType == nil {
+		return projectAccountIdentity(ext, env, ext.CredentialType)
+	}
+	if tplType.IsResponsesProvider() {
+		if err := assertExtCredentialType(*tplType, ext.CredentialType); err != nil {
+			return fmt.Errorf("account_id=%d: %w", ext.AccountID, err)
+		}
+	}
+	return projectAccountIdentity(ext, env, accountExtBranchType(*tplType, ext.CredentialType))
+}
+
+// toDomainAccountExt ent ext 行 → domain 对象。branchType 只选身份投影分支
+// （见 accountExtBranchType），不写回 ext.CredentialType。
+func toDomainAccountExt(e *ent.AccountExt, branchType credential.Type) (*domain.AccountExt, error) {
 	ext := accountExtColumns(e)
-	if err := projectAccountIdentity(ext, e.CodexIdentity); err != nil {
+	if err := projectAccountIdentity(ext, e.CodexIdentity, branchType); err != nil {
 		return nil, err
 	}
 	return ext, nil
 }
 
-func projectAccountIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope) error {
-	if ext.CredentialType.IsBPS() {
-		if env != nil {
-			ext.BPSProfile = (*env).BPSProfile()
-		}
-		if err := validateBPSExt(ext); err != nil {
-			return fmt.Errorf("%w: account_id=%d: %s", errInvalidBPSAccountExt, ext.AccountID, err.Error())
-		}
+// projectAccountIdentity 是身份投影的薄分发器：分支由调用方按**模板类型**
+// （Responses provider）或遗留行的自身类型选好后传入，函数体**不读** ext 的类型
+// （门禁 G-A：分支只许由模板决定）。
+func projectAccountIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope, branchType credential.Type) error {
+	if branchType.IsBPS() {
+		return projectBPSIdentity(ext, env)
+	}
+	return projectCodexIdentity(ext, env)
+}
+
+// projectBPSIdentity BPS 身份投影：profile 来自 identity envelope，结构性校验
+// 复用写面的 validateBPSExt（门禁 G-A 的活性锚点）。
+func projectBPSIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope) error {
+	if env != nil {
+		ext.BPSProfile = (*env).BPSProfile()
+	}
+	if err := validateBPSExt(ext); err != nil {
+		return fmt.Errorf("%w: account_id=%d: %s", errInvalidBPSAccountExt, ext.AccountID, err.Error())
+	}
+	return nil
+}
+
+// projectCodexIdentity codex 身份投影：只取 installation_id 一个字段。
+func projectCodexIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope) error {
+	if env == nil {
 		return nil
 	}
-	if env != nil {
-		id := &domain.CodexIdentity{}
-		if raw, ok := (*env)["installation_id"]; ok {
-			if err := json.Unmarshal(raw, &id.InstallationID); err != nil {
-				return fmt.Errorf("account_id=%d: invalid installation_id in codex_identity", ext.AccountID)
-			}
+	id := &domain.CodexIdentity{}
+	if raw, ok := (*env)["installation_id"]; ok {
+		if err := json.Unmarshal(raw, &id.InstallationID); err != nil {
+			return fmt.Errorf("account_id=%d: invalid installation_id in codex_identity", ext.AccountID)
 		}
-		ext.CodexIdentity = id
 	}
+	ext.CodexIdentity = id
 	return nil
 }
 
@@ -302,15 +368,10 @@ func toDomainAccountWithTemplateScope(a *ent.Account, scope *TemplateLoadScope) 
 	// 就不展开」）与 `group_repo.expandAccountProxy`（快照装载，全量）。本函数属于
 	// "ent 行 → 领域对象"的最底层，把展开塞进来会让上面两处的口径混成一处。
 	d.ProxyID = a.ProxyID
-	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
-	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
-	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，定死
-	// 路线）。
-	if len(a.Edges.Ext) > 0 {
-		if ext, err := toDomainAccountExt(a.Edges.Ext[0]); err == nil {
-			d.Ext = ext
-		}
-	}
+	// d.Ext 不在这里投影：账号侧 ext 边的唯一 eager-load 调用点是
+	// account_repo.GetAccountWithTemplate（projectAccountExtEdge），快照路径则由
+	// group_repo 的合并点写入（mergeExtSnapshotRow）——两处都需要**模板类型**才能
+	// 选身份投影分支，本函数拿不到（spec J1/修正 1）。
 	return d
 }
 

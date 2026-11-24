@@ -84,6 +84,23 @@ func (s *singleRowScanner) Scan(dest ...any) error {
 	return nil
 }
 
+// accountExtProjectionColumnsFrozen 是 U39 的冻结字面量：快照 SQL **一个字都不许
+// 改**（spec J1）。加 `JOIN templates` 会撞三条列契约（本文件 :97-98、:198、:113），
+// 且 group_repo 的账号扫描没有 `t` 别名；INNER JOIN 在模板悬空时还会静默丢行
+// （fail-open）。冻结断言让"顺手改 SQL"变成可见的失败，而不是靠评审记性。
+const accountExtProjectionColumnsFrozen = `e.account_id, e.credential_type, e.codex_identity,
+       e.codex_oauth_token, e.codex_oauth_refresh_token, e.codex_oauth_expires_at,
+       e.codex_pat_key, e.codex_email, e.codex_account_id`
+
+// TestAccountExtProjectionColumnsFrozen 逐字符钉住投影列清单：任何改动（包括加
+// 一列模板类型）都必须先改这里，并重新论证"零 SQL 改动"。
+func TestAccountExtProjectionColumnsFrozen(t *testing.T) {
+	require.Equal(t, accountExtProjectionColumnsFrozen, accountExtProjectionColumns,
+		"快照投影列必须逐字符等于冻结字面量（U39：快照路径零 SQL 改动）")
+	require.NotContains(t, strings.ToLower(accountExtProjectionColumns), "template",
+		"投影列不得引用模板表（快照查询没有 t 别名，见 group_repo.accountExtSnapshot）")
+}
+
 // accountExtProjectionColumnNames 把 accountExtProjectionColumns 拆成**保留声明
 // 顺序**的列名序列（剥掉固定表别名前缀）：清单是逗号分隔的 SELECT 片段，缩进与
 // 换行不承载语义。
@@ -159,19 +176,21 @@ func TestScanAccountExtRevisionJSONNullIsNil(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ext, identityRevision, err := scanAccountExtRevision(
+			// 扫描器只解码 envelope，不在扫描期投影（投影要模板类型，见 spec J1）。
+			row, err := scanAccountExtRevision(
 				&entsql.Rows{ColumnScanner: accountExtScanFixture(t, tc.identity)})
 			require.NoError(t, err)
-			require.Equal(t, int64(29), identityRevision, "父行 K 紧随投影列")
-			require.Equal(t, int64(7), ext.AccountID)
+			require.Equal(t, int64(29), row.identityRevision, "父行 K 紧随投影列")
+			require.Equal(t, int64(7), row.ext.AccountID)
+			require.Equal(t, credential.TypeCodexOAuth, row.extCredentialType, "ext 行类型原值随行带出")
 			if tc.wantNil {
-				require.Nil(t, ext.CodexIdentity,
+				require.Nil(t, row.env,
 					"codex_identity 的 SQL NULL 与 JSON null 同义（ent 扫描器语义）：必须是 nil，不能是空身份对象")
 				return
 			}
-			require.NotNil(t, ext.CodexIdentity,
+			require.NotNil(t, row.env,
 				"非 null 的 JSON 必须解析成身份对象（{} 也算\"配置了空身份\"，不得按字段全空折叠成 nil）")
-			require.Equal(t, tc.wantInstall, ext.CodexIdentity.InstallationID)
+			require.Equal(t, tc.wantInstall, row.env.InstallationID())
 		})
 	}
 }
@@ -219,13 +238,15 @@ func TestAccountExtProjectionOrderMatchesScanner(t *testing.T) {
 		"codex_email":               sql.NullString{String: "email-sentinel", Valid: true},
 		"codex_account_id":          sql.NullString{String: "account-sentinel", Valid: true},
 	}, 29)
-	ext, identityRevision, err := scanAccountExtRevision(&entsql.Rows{ColumnScanner: rows})
+	row, err := scanAccountExtRevision(&entsql.Rows{ColumnScanner: rows})
 	require.NoError(t, err)
-	require.Equal(t, int64(29), identityRevision, "父行 K 必须来自紧随投影列的那一列")
+	ext := row.ext
+	require.Equal(t, int64(29), row.identityRevision, "父行 K 必须来自紧随投影列的那一列")
 	require.Equal(t, int64(7), ext.AccountID, "account_id 落错列会撞上同为 int64 的 K")
+	require.Equal(t, credential.TypeCodexOAuth, row.extCredentialType)
 	require.Equal(t, credential.TypeCodexOAuth, ext.CredentialType)
-	require.NotNil(t, ext.CodexIdentity)
-	require.Equal(t, "inst-sentinel", ext.CodexIdentity.InstallationID)
+	require.NotNil(t, row.env)
+	require.Equal(t, "inst-sentinel", row.env.InstallationID())
 	require.NotNil(t, ext.CodexOAuthToken)
 	require.Equal(t, "access-sentinel", *ext.CodexOAuthToken, "token 与 refresh_token 相邻且同型：换序静默串列")
 	require.NotNil(t, ext.CodexOAuthRefreshToken)

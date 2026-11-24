@@ -5,8 +5,12 @@
 package repository
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"entgo.io/ent/dialect"
@@ -14,6 +18,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
@@ -28,6 +33,10 @@ type GroupRepo struct {
 	// driver 为成员关系全表扫描用（LoadGroupsAccounts；与 user_repo 同构——
 	// 普通 client 与 tx client 均可用）。
 	driver dialect.Driver
+	// mismatchMu 保护 lastMismatches：装载在 publisher.mu 下串行，但读取方
+	// （调度器装配 / 用例）与装载方不保证同一 goroutine。
+	mismatchMu     sync.Mutex
+	lastMismatches []ExtCredentialMismatch
 }
 
 // accountGroupsMembershipSQL 全量成员关系（account_id, group_id）扫描。
@@ -209,17 +218,29 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool, s
 	// *domain.Template（Ent 同查询同 ID 同实体，见 toDomainAccountWithTemplateScope）。
 	// 作用域由调用方持有：全量构建传一张贯穿全部组，组级失效传一张贯穿整批；
 	// nil 已在上方退化为本次调用私有的一张。
+	var extMismatches []ExtCredentialMismatch
 	for _, a := range accs {
 		d := toDomainAccountWithTemplateScope(a, scope)
-		expandAccountProxy(d, proxies)
 		if snap, ok := extByAccount[a.ID]; ok {
-			// 凭据内容与 K 来自**同一条**语句（见 accountExtSnapshot）：成对覆盖，
-			// 不得一半用账号扫描的 K、一半用 ext 扫描的内容（"旧内容 + 新 K"）。
-			d.Ext = snap.ext
-			d.IdentityRevision = snap.identityRevision
+			// 凭据内容与 K 来自**同一条**语句（见 accountExtSnapshot）：成对覆盖。
+			// BPS 位与模板不一致 ⇒ 该账号跳过（不入快照）、计数、继续装载。
+			mismatched, merr := mergeExtSnapshotRow(d, snap)
+			if merr != nil {
+				return nil, nil, fmt.Errorf("load groups-accounts (account_ext merge, account %d): %w", a.ID, merr)
+			}
+			if mismatched {
+				extMismatches = append(extMismatches, ExtCredentialMismatch{
+					AccountID:    a.ID,
+					TemplateType: d.Template.CredentialType,
+					ExtType:      snap.extCredentialType,
+				})
+				continue
+			}
 		}
+		expandAccountProxy(d, proxies)
 		byID[a.ID] = d
 	}
+	r.recordAccountExtMismatches(extMismatches)
 	gids, err := r.client.Group.Query().Where(group.DeletedAtIsNil()).IDs(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load groups-accounts (groups scan): %w", err)
@@ -389,11 +410,11 @@ FROM account_exts e JOIN accounts a ON a.id = e.account_id`
 	defer rows.Close() // nolint:errcheck // Rows.Err reports iteration failures.
 	out := make(map[int64]accountExtSnapshotRow)
 	for rows.Next() {
-		ext, identityRevision, err := scanAccountExtRevision(rows)
+		row, err := scanAccountExtRevision(rows)
 		if err != nil {
 			return nil, err
 		}
-		out[ext.AccountID] = accountExtSnapshotRow{ext: ext, identityRevision: identityRevision}
+		out[row.ext.AccountID] = *row
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -401,10 +422,63 @@ FROM account_exts e JOIN accounts a ON a.id = e.account_id`
 	return out, nil
 }
 
-// accountExtSnapshotRow 一行 ext 投影与和它同一次读出的父行 K。
+// accountExtSnapshotRow 一行 ext 投影与和它同一次读出的父行 K，外加投影所需的
+// 两个原料：ext 行自己的凭据类型（身份投影分支的兜底输入）与已解码的 identity
+// envelope（投影推迟到合并点，见 mergeExtSnapshotRow）。
 type accountExtSnapshotRow struct {
-	ext              *domain.AccountExt
-	identityRevision int64
+	ext               *domain.AccountExt
+	extCredentialType credential.Type
+	env               *domain.IdentityEnvelope
+	identityRevision  int64
+}
+
+// mergeExtSnapshotRow 把一行 ext 快照合并进 domain 账号——两个合并点
+// （loadGroupsAccounts / LoadGroupAccountsScoped）共用的**唯一**实现。
+//
+// mismatched=true 表示该行 BPS 位与模板不一致：调用方必须跳过该账号（不赋 Ext、
+// 不覆盖 IdentityRevision、不放进快照），计数后继续装载。其余投影错误原样上抛
+// （坏 jsonb / BPS profile 结构性损坏仍是装载失败——既有语义不变）。
+func mergeExtSnapshotRow(d *domain.Account, row accountExtSnapshotRow) (mismatched bool, err error) {
+	if d.Template == nil {
+		return false, fmt.Errorf("account_id=%d: account_ext row without template", row.ext.AccountID)
+	}
+	if err := projectExtIdentity(row.ext, row.env, &d.Template.CredentialType); err != nil {
+		if errors.Is(err, ErrCredentialTypeMismatch) {
+			return true, nil
+		}
+		return false, err
+	}
+	// 凭据内容与 K 成对赋值：不得一半用账号扫描的 K、一半用 ext 扫描的内容
+	// （"旧内容 + 新 K"）。
+	d.Ext = row.ext
+	d.IdentityRevision = row.identityRevision
+	return false, nil
+}
+
+// ExtCredentialMismatch 一条被跳过的损坏账号：模板类型与 account_ext 行的类型
+// BPS 位不一致（spec §0 唯一有行为意义的那一位）。
+type ExtCredentialMismatch struct {
+	AccountID    int64
+	TemplateType credential.Type
+	ExtType      credential.Type
+}
+
+// LastAccountExtMismatches 报告**最近一次**装载中被跳过的损坏账号（每次装载
+// 覆盖，不累加、不 drain；成功装载为空 ⇒ 空）。调度器按需断言本能力接口，
+// 非空时记 ERROR，不拒发布。
+func (r *GroupRepo) LastAccountExtMismatches() []ExtCredentialMismatch {
+	r.mismatchMu.Lock()
+	defer r.mismatchMu.Unlock()
+	return append([]ExtCredentialMismatch(nil), r.lastMismatches...)
+}
+
+// recordAccountExtMismatches 发布本次装载的错配名单（排序后保存，日志与用例不必
+// 依赖扫描顺序）。
+func (r *GroupRepo) recordAccountExtMismatches(rows []ExtCredentialMismatch) {
+	slices.SortFunc(rows, func(a, b ExtCredentialMismatch) int { return cmp.Compare(a.AccountID, b.AccountID) })
+	r.mismatchMu.Lock()
+	r.lastMismatches = rows
+	r.mismatchMu.Unlock()
 }
 
 // LoadGroupAccounts 单组账号（组级定向重载数据源）。崩溃修复：旧实现
@@ -449,16 +523,29 @@ func (r *GroupRepo) LoadGroupAccountsScoped(ctx context.Context, groupID int64, 
 	if err != nil {
 		return nil, fmt.Errorf("load group accounts (proxy scan, group %d): %w", groupID, err)
 	}
+	var extMismatches []ExtCredentialMismatch
 	for _, a := range accs {
 		d := toDomainAccountWithTemplateScope(a, scope)
-		expandAccountProxy(d, proxies)
 		if snap, ok := extByAccount[a.ID]; ok {
-			// 凭据内容与 K 来自同一条语句（见 accountExtSnapshot）。
-			d.Ext = snap.ext
-			d.IdentityRevision = snap.identityRevision
+			// 凭据内容与 K 来自同一条语句（见 accountExtSnapshot）。BPS 位与模板
+			// 不一致 ⇒ 该账号跳过、计数，组装载照常成功。
+			mismatched, merr := mergeExtSnapshotRow(d, snap)
+			if merr != nil {
+				return nil, fmt.Errorf("load group accounts (account_ext merge, group %d, account %d): %w", groupID, a.ID, merr)
+			}
+			if mismatched {
+				extMismatches = append(extMismatches, ExtCredentialMismatch{
+					AccountID:    a.ID,
+					TemplateType: d.Template.CredentialType,
+					ExtType:      snap.extCredentialType,
+				})
+				continue
+			}
 		}
+		expandAccountProxy(d, proxies)
 		out = append(out, d)
 	}
+	r.recordAccountExtMismatches(extMismatches)
 	return out, nil
 }
 

@@ -131,12 +131,17 @@ func accountExtRow(ctx context.Context, tx *ent.Client, accountID int64) (*ent.A
 }
 
 // loadAccountExtInTx returns nil for a missing row and rejects corrupt projections.
+//
+// 分支取行自身类型：本函数只服务写面回读，而写面在同一事务里已经用
+// validateAccountExtTemplate 断言过 ext 行的 BPS 位与模板一致（Responses provider
+// 模板），故"行类型"与"模板类型"在该事务内是同一个分支答案——这里不是在没有
+// 模板上下文时冒充模板类型。
 func loadAccountExtInTx(ctx context.Context, tx *ent.Client, accountID int64) (*domain.AccountExt, error) {
 	row, err := accountExtRow(ctx, tx, accountID)
 	if err != nil || row == nil {
 		return nil, err
 	}
-	return toDomainAccountExt(row)
+	return toDomainAccountExt(row, credential.Type(row.CredentialType))
 }
 
 // bumpAccountGeneration 在同一个 UPDATE 里推进 C（无条件）并按需推进 K：C 用
@@ -409,6 +414,9 @@ func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmai
 			accountext.CodexAccountIDEQ(codexAccountID),
 			accountext.CredentialTypeIn(types...),
 		).
+		// 模板类型与 ext 行在同一次 Query 的一致性边界里带出（eager-load 的
+		// 账号→模板边）：身份投影分支只许由模板决定（spec J4）。
+		WithAccount(func(q *ent.AccountQuery) { q.WithTemplate() }).
 		Order(ent.Asc(accountext.FieldID)).
 		All(ctx)
 	if err != nil {
@@ -419,10 +427,10 @@ func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmai
 	}
 	for _, row := range rows {
 		if credential.Type(row.CredentialType) == credType {
-			return toDomainAccountExt(row)
+			return toDomainAccountExtWithTemplate(row)
 		}
 	}
-	return toDomainAccountExt(rows[0])
+	return toDomainAccountExtWithTemplate(rows[0])
 }
 
 var errInvalidBPSAccountExt = errors.New("repository: invalid stored BPS credentials")
@@ -506,8 +514,12 @@ func validateAccountExtTemplate(ctx context.Context, client *ent.Client, ext *do
 	// Legacy Codex ext rows predate template credential typing and are allowed
 	// to retain their existing method contract. BPS is strict: never write BPS
 	// credentials through a non-BPS template (or a non-BPS ext through BPS).
-	if ct.IsBPS() != ext.CredentialType.IsBPS() {
-		return fmt.Errorf("%w: account template credential type %q does not match BPS extension %q", ErrInvalidInput, ct, ext.CredentialType)
+	//
+	// 判定与读面共用 assertExtCredentialType（门禁 G-B 的唯一注册行）；错误
+	// **双包**：写面调用方按 ErrInvalidInput 分流，读面/运维按
+	// ErrCredentialTypeMismatch 识别同一事实（spec J2）。
+	if err := assertExtCredentialType(ct, ext.CredentialType); err != nil {
+		return fmt.Errorf("%w: account_id=%d: %w", ErrInvalidInput, ext.AccountID, err)
 	}
 	return nil
 }
@@ -543,15 +555,21 @@ func accountOwnerUpdate(ctx context.Context, u *ent.AccountUpdate) *ent.AccountU
 }
 
 // GetAccountExt 按账号取类型化鉴权扩展；缺行 → ErrNotFound。
+//
+// 模板类型与 ext 行在同一次 Query 的 eager-load 里带出（同一一致性边界）：
+// 投影分支只许由模板决定（spec J4）。
 func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
-	row, err := r.client.AccountExt.Query().Where(accountext.AccountIDEQ(accountID)).Only(ctx)
+	row, err := r.client.AccountExt.Query().
+		Where(accountext.AccountIDEQ(accountID)).
+		WithAccount(func(q *ent.AccountQuery) { q.WithTemplate() }).
+		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: account_id=%d missing", ErrNotFound, accountID)
 		}
 		return nil, err
 	}
-	return toDomainAccountExt(row)
+	return toDomainAccountExtWithTemplate(row)
 }
 
 // GetOwnedAccountExt 作用域内的 ext 单读（§2.5）：owner 谓词经**关联子查询
@@ -572,14 +590,38 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 			account.DeletedAtIsNil(),
 		))
 	}
-	row, err := q.Only(ctx)
+	row, err := q.WithAccount(func(q *ent.AccountQuery) { q.WithTemplate() }).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: account_id=%d missing", ErrNotFound, accountID)
 		}
 		return nil, err
 	}
-	return toDomainAccountExt(row)
+	return toDomainAccountExtWithTemplate(row)
+}
+
+// accountExtTemplateType 取 ext 行的模板类型（eager-load 的 账号→模板 边）。
+// 缺边 ⇒ 显式错误：account_ext 的父账号必有模板（template_id NOT NULL），静默退回
+// ext 列就是在没有模板上下文时冒充模板类型（spec J4 禁止）。
+func accountExtTemplateType(e *ent.AccountExt) (credential.Type, error) {
+	if e.Edges.Account == nil || e.Edges.Account.Edges.Template == nil {
+		return "", fmt.Errorf("account_id=%d: account_ext has no template context", e.AccountID)
+	}
+	return credential.Type(e.Edges.Account.Edges.Template.CredentialType), nil
+}
+
+// toDomainAccountExtWithTemplate 单读 ext 行的唯一投影口：模板类型来自同一次
+// Query 的 eager-load（同一一致性边界），再按 projectExtIdentity 断言 + 选分支。
+func toDomainAccountExtWithTemplate(e *ent.AccountExt) (*domain.AccountExt, error) {
+	tplType, err := accountExtTemplateType(e)
+	if err != nil {
+		return nil, err
+	}
+	ext := accountExtColumns(e)
+	if err := projectExtIdentity(ext, e.CodexIdentity, &tplType); err != nil {
+		return nil, err
+	}
+	return ext, nil
 }
 
 // accountExtProjectionColumns ext 投影的列清单：额度面凭据投影与调度器快照共用
@@ -601,7 +643,13 @@ func nullStrPtr(v sql.NullString) *string {
 // 并读出紧随其后的 `a.identity_revision`（两条使用方都按"投影列 + 父行 K"选列）。
 // codex_identity 是 jsonb：NULL → nil，坏 json → 报错原样上抛（与 ent 生成层扫描器
 // 同语义）。
-func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error) {
+//
+// **不做身份投影**：投影分支要模板类型（spec J1），扫描器手上只有 ext 列值；投影
+// 统一由 projectExtIdentity 在拿到模板上下文后完成。
+//
+// extra 是投影列与父行 K **之后**的额外扫描目标（额度面用它同一条语句读出模板
+// 类型）。快照路径不传 extra ⇒ 直接传 10 个目标（零分配），不走 dest 切片。
+func scanAccountExtRevision(rows *entsql.Rows, extra ...any) (*accountExtSnapshotRow, error) {
 	var (
 		ext              domain.AccountExt
 		credentialType   string
@@ -614,9 +662,19 @@ func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error
 		codexAccountID   sql.NullString
 		identityRevision int64
 	)
-	if err := rows.Scan(&ext.AccountID, &credentialType, &identity, &oauthToken, &oauthRefresh,
-		&oauthExpires, &patKey, &email, &codexAccountID, &identityRevision); err != nil {
-		return nil, 0, err
+	if len(extra) == 0 {
+		if err := rows.Scan(&ext.AccountID, &credentialType, &identity, &oauthToken, &oauthRefresh,
+			&oauthExpires, &patKey, &email, &codexAccountID, &identityRevision); err != nil {
+			return nil, err
+		}
+	} else {
+		dest := make([]any, 0, 10+len(extra))
+		dest = append(dest, &ext.AccountID, &credentialType, &identity, &oauthToken, &oauthRefresh,
+			&oauthExpires, &patKey, &email, &codexAccountID, &identityRevision)
+		dest = append(dest, extra...)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
 	}
 	ext.CredentialType = credential.Type(credentialType)
 	ext.CodexOAuthToken = nullStrPtr(oauthToken)
@@ -631,16 +689,20 @@ func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error
 	var env *domain.IdentityEnvelope
 	if raw := bytes.TrimSpace(identity); len(raw) != 0 {
 		if err := json.Unmarshal(raw, &env); err != nil {
-			if ext.CredentialType.IsBPS() {
-				return nil, 0, fmt.Errorf("%w: account_id=%d: invalid identity envelope", errInvalidBPSAccountExt, ext.AccountID)
+			// 坏 jsonb 仍让装载失败（既有语义）。分类只看**被读的这一行**的类型：
+			// 扫描器没有模板上下文，这不是投影分支的选择。
+			if credential.Type(credentialType).IsBPS() {
+				return nil, fmt.Errorf("%w: account_id=%d: invalid identity envelope", errInvalidBPSAccountExt, ext.AccountID)
 			}
-			return nil, 0, fmt.Errorf("account_id=%d codex_identity decode: %w", ext.AccountID, err)
+			return nil, fmt.Errorf("account_id=%d codex_identity decode: %w", ext.AccountID, err)
 		}
 	}
-	if err := projectAccountIdentity(&ext, env); err != nil {
-		return nil, 0, err
-	}
-	return &ext, identityRevision, nil
+	return &accountExtSnapshotRow{
+		ext:               &ext,
+		extCredentialType: credential.Type(credentialType),
+		env:               env,
+		identityRevision:  identityRevision,
+	}, nil
 }
 
 // GetOwnedAccountCredential 额度面（无 Selection）的凭据投影（§2.5）：**一条
@@ -654,9 +716,14 @@ func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error
 //
 // 越域 / 账号缺失 / 无 ext 行 ⇒ ErrNotFound（调用方按"无上游能力"处理，不区分
 // 缺失原因以免泄漏归属）。
+//
+// 模板类型由 **PK LEFT JOIN** 在同一语句里带出（spec J4）：投影分支只许由模板
+// 决定，不许拿 ext 列冒充。模板行缺失（外键保证不会发生）⇒ 显式错误，不用
+// INNER JOIN 把它静默变成 ErrNotFound。
 func (r *AccountExtRepo) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
-	query := `SELECT ` + accountExtProjectionColumns + `, a.identity_revision
+	query := `SELECT ` + accountExtProjectionColumns + `, a.identity_revision, t.credential_type
 FROM account_exts e JOIN accounts a ON a.id = e.account_id
+LEFT JOIN templates t ON t.id = a.template_id
 WHERE e.account_id = $1`
 	args := []any{accountID}
 	if s := domain.AccountScopeFrom(ctx); s.Set {
@@ -674,13 +741,21 @@ WHERE e.account_id = $1`
 		}
 		return nil, fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
 	}
-	ext, identityRevision, err := scanAccountExtRevision(rows)
+	var templateType sql.NullString
+	row, err := scanAccountExtRevision(rows, &templateType)
 	if err != nil {
 		return nil, err
 	}
+	if !templateType.Valid {
+		return nil, fmt.Errorf("account_id=%d: account_ext has no template", accountID)
+	}
+	tplType := credential.Type(templateType.String)
+	if err := projectExtIdentity(row.ext, row.env, &tplType); err != nil {
+		return nil, err
+	}
 	// 凭据组装与类型分发只有一处（CredentialFromExt）；这里补上同一次读出的 K。
-	cred := domain.CredentialFromExt(ext)
-	cred.IdentityRevision = identityRevision
+	cred := domain.CredentialFromExt(row.ext)
+	cred.IdentityRevision = row.identityRevision
 	return &cred, nil
 }
 

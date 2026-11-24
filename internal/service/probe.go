@@ -221,6 +221,11 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 			if errors.Is(cerr, repository.ErrNotFound) {
 				return nil, fmt.Errorf("%w: 账号缺少 BPS 凭据", ErrInvalidInput)
 			}
+			// 模板与 ext 行的 BPS 位不一致：该账号不可用（400），不许退化成
+			// 未分类 500，也不许拿 ext 列的类型继续探测（U39 J2）。
+			if errors.Is(cerr, repository.ErrCredentialTypeMismatch) {
+				return nil, fmt.Errorf("%w: 账号凭据类型与模板不一致: %w", ErrInvalidInput, cerr)
+			}
 			if errors.Is(cerr, context.Canceled) || errors.Is(cerr, context.DeadlineExceeded) {
 				return bpsCtx(cerr), nil
 			}
@@ -271,6 +276,10 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		if cerr != nil {
 			if errors.Is(cerr, repository.ErrNotFound) {
 				return nil, fmt.Errorf("%w: 账号缺少 codex 凭据", ErrInvalidInput)
+			}
+			// 同 BPS 分支：BPS 位错配 = 该账号不可用（400），不是未分类 500。
+			if errors.Is(cerr, repository.ErrCredentialTypeMismatch) {
+				return nil, fmt.Errorf("%w: 账号凭据类型与模板不一致: %w", ErrInvalidInput, cerr)
 			}
 			if errors.Is(cerr, context.Canceled) || errors.Is(cerr, context.DeadlineExceeded) {
 				return ctxResult(cerr), nil
