@@ -364,44 +364,53 @@ func TestReloadBuildsOneDigestCachePerReload(t *testing.T) {
 	require.Equal(t, 2, second.hits)
 }
 
-// TestBatchInvalidationDigestCacheSpansWholeBatch 钉住批次作用域贯穿：一组失效
-// 批次恰好建一张表，并同时喂给 buildSnapshots、:188（保留剥离分支）与 :245
-// （新叶重派生分支）。两处直构点任一漏传缓存，hits 都会少一截。
+// TestBatchInvalidationDigestCacheSpansWholeBatch 钉住批次作用域贯穿**两个组**：
+// 一个批次恰好建一张表（也恰好问一次 NewBatch），并同时喂给 buildSnapshots、
+// :188（保留剥离分支）与 :245（新叶重派生分支）。两处直构点任一漏传缓存，hits 都会
+// 少一截；把批次状态挪进 for 循环，`newBatches` 会从 1 变 2。
 //
-// 夹具：g1={a1,a2}、g2={a1,a2}（同模板共享一枚指针）。批次把 g1 改成 {a1,a3}：
-//   - buildSnapshots(g1) 构造 a1,a3 → 1 miss + 1 hit；
+// 为什么必须是 ≥2 组：只失效 1 个组时 "rec.caches 恰好 1 张" 在"1 组 1 表"下**恒成立**，
+// 名字承诺的"整批"没有任何断言承担（此前正是如此）。
+//
+// 夹具：g1={a1,a2}、g2={a1,a2}（同模板共享一枚指针），批次把 g1 改成 {a1,a3} 后
+// 失效 {1,2}：
+//   - 步 1 buildSnapshots(g1) 构造 a1,a3 → 1 miss + 1 hit；
 //   - a2 从 g1 移除但仍在 g2 ⇒ :188 保留剥离 → +1 hit（用旧叶的模板指针）；
-//   - :245 对 a1,a3 重派生 groupIDs → +2 hit。
+//   - :245 对 a1,a3 重派生 groupIDs → +2 hit；
+//   - 步 2 buildSnapshots(g2) 构造 a1,a2 → +2 hit（同一张表，模板已见过）；
+//   - :245 对 a1,a2 重派生 groupIDs → +2 hit。
 //
-// 合计 misses=1、hits=4（= 5 次构造 − 1 枚模板）。
+// 合计 misses=1、hits=8（= 9 次构造 − 1 枚模板）。groupIDs 的顺序是**最后一次触达
+// 在前**：a1 在步 2 被重派生为 [2,1]（gid 先、其它组按旧序），a2 只剩 [2]。
 func TestBatchInvalidationDigestCacheSpansWholeBatch(t *testing.T) {
 	tp := tpl(31, domain.FormatOpenAIChat, []string{"m"})
 	a1, a2, a3 := acc(1, tp, 4), acc(2, tp, 4), acc(3, tp, 4)
-	ldr := newT1Loader(map[int64][]*domain.Account{
+	ldr := &countingBatchLoader{t1Loader: newT1Loader(map[int64][]*domain.Account{
 		1: {a1, a2},
 		2: {a1, a2},
-	})
+	})}
 	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 
 	rec := installDigestCacheRecorder(t)
 	rec.reset()
-	ldr.mu.Lock()
 	ldr.byGroup[1] = []*domain.Account{a1, a3}
-	ldr.mu.Unlock()
-	s.InvalidateGroups([]int64{1})
+	s.InvalidateGroups([]int64{1, 2})
 
+	require.Equal(t, 1, ldr.newBatches(),
+		"一个批次只问一次 NewBatch：把 newBatchState 挪进 for 循环会变成每组一次（本断言是它的机械防线）")
 	require.Len(t, rec.caches, 1, "一个批次恰好一张作用域表（不是一组一张）")
 	batch := rec.caches[0]
 	require.Equal(t, 1, batch.misses, "misses = 批次内不同模板对象数")
-	require.Equal(t, 4, batch.hits,
-		"hits = 5 次构造 − 1 枚模板：buildSnapshots(2) + 保留剥离(1) + 新叶组归属重派生(2) 都必须吃同一张表")
+	require.Equal(t, 8, batch.hits,
+		"hits = 9 次构造 − 1 枚模板：两个组的 buildSnapshots(2+2) + 保留剥离(1) + 两次重派生(2+2) 都必须吃同一张表")
 
 	sv := s.publisher.pending
 	require.NotNil(t, sv)
 	// 命中路径不得改变任何事实：三枚叶的缓存键仍等于独立 oracle（凭据摘要维度由
 	// 1125 组参照测试覆盖）。
-	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[1].static.Load()), *a1, tp, []int64{1, 2})
+	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[1].static.Load()), *a1, tp, []int64{2, 1},
+		"a1 在批次里被两个组各触达一次：最后一次重派生把 gid=2 放在首位")
 	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[2].static.Load()), *a2, tp, []int64{2},
 		"保留剥离分支（:188）的键必须按自己的 groupIDs 重派生")
 	requirePlanKeyMatchesFrozen(t, planKeyOf(sv.byID[3].static.Load()), *a3, tp, []int64{1})

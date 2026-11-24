@@ -74,6 +74,10 @@ var cmdServerInternalImports = []string{
 	wiringModulePath + "/internal/handler/user",
 	wiringModulePath + "/internal/invalidate",
 	wiringModulePath + "/internal/latch",
+	// 装载端口的中立契约：装配点有一行 `var _ loadport.BatchedGroupLoader = repos.Groups`
+	// 的编译期闸门（U22 §2.1 第三步——生产载入器丢了批次能力时，只用测试抓不到）。
+	// 这条 import 存在的唯一理由就是那行静态断言；实现侧的镜像断言在 internal/repository。
+	wiringModulePath + "/internal/loadport",
 	wiringModulePath + "/internal/notification",
 	wiringModulePath + "/internal/notify",
 	wiringModulePath + "/internal/paymentregistry",
@@ -84,6 +88,8 @@ var cmdServerInternalImports = []string{
 	wiringModulePath + "/internal/quality",
 	wiringModulePath + "/internal/repository",
 	wiringModulePath + "/internal/rule",
+	// 规则判定落库（P5-1）：从 scheduler 迁出后由装配根构造，构造序钉在 rule_wiring_test。
+	wiringModulePath + "/internal/rulepersist",
 	wiringModulePath + "/internal/scheduler",
 	wiringModulePath + "/internal/sdkbridge",
 	wiringModulePath + "/internal/server",

@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// U22 §3 不变量 3 的端到端半边（真库、两个生产载入入口各测一遍）：
+// U22 §3 不变量 3 的端到端半边（真库、两条保留的载入入口各测一遍）：
 //
 //	同一作用域内 | 同 template_id 的两个账号 ⇒ 同一枚 *domain.Template
 //	同一作用域内 | 不同 template_id          ⇒ 不同对象
@@ -37,37 +37,66 @@ func TestPGLoadSharesOneTemplateObjectPerTemplateID(t *testing.T) {
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, id, []int64{g.ID}))
 	}
 
-	// 每个 loader 拿一个**新作用域**，这样"跨 reload 不是同一枚"与本用例的计数
-	// 断言同时成立：3 个账号、2 个模板 ⇒ misses=2、hits=1。
+	// 跨组面：同一模板在两个组里各挂一个账号。NewBatch 行要在**同一个批次会话内**
+	// 比较模板指针——那是摘要缓存跨组命中的唯一来源，也是"作用域被搬进实现包"之后
+	// 唯一还能观测到它的地方。
+	g2 := seedPGGroup(t, repos, "grp-share-2")
+	a3 := seedPGAccount(t, repos, tplA.ID, "share-a3")
+	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a3.ID, []int64{g2.ID}))
+
+	// 两条**保留入口**各一行（LoadGroupsAccountsFullScoped 已作为死代码删除：零生产
+	// 调用者，唯一调用者就是本用例）：
+	//   - NewBatch：生产批次路径。会话自持作用域 ⇒ 计数器不可从外部观测，本行于是把
+	//     "同模板一枚指针"直接钉在指针上（比计数器更强：断言的就是缓存所依赖的不变量）；
+	//     计数器口径由 TestPGBatchScopeSharesTemplateAcrossGroups（scoped 入口、同一条
+	//     代码路径）与 internal/scheduler 的 TestPGBatchInvalidationHitsDigestCacheAcrossGroups
+	//     （生产链路 misses=1）承担。
+	//   - LoadGroupAccounts（经 LoadGroupAccountsScoped）：调用方持作用域的入口，
+	//     计数器断言留在这里：3 个账号、2 个模板 ⇒ misses=2、hits=1。
 	loaders := []struct {
 		name string
-		load func(scope *repository.TemplateLoadScope) map[int64]*domain.Account
+		// wantLen 一次批次里应看到的账号数（NewBatch 行跨两个组，故 4）。
+		wantLen int
+		// sameCrossGroup 该行能否在**同一个批次会话内**跨组比较模板指针。
+		sameCrossGroup bool
+		load           func(scope *repository.TemplateLoadScope) map[int64]*domain.Account
 	}{
-		{"LoadGroupsAccountsFull", func(scope *repository.TemplateLoadScope) map[int64]*domain.Account {
-			byGroup, _, err := repos.Groups.LoadGroupsAccountsFullScoped(ctx, scope)
-			require.NoError(t, err)
-			out := make(map[int64]*domain.Account, len(byGroup[g.ID]))
-			for _, a := range byGroup[g.ID] {
-				out[a.ID] = a
-			}
-			return out
-		}},
-		{"LoadGroupAccounts", func(scope *repository.TemplateLoadScope) map[int64]*domain.Account {
-			members, err := repos.Groups.LoadGroupAccountsScoped(ctx, g.ID, scope)
-			require.NoError(t, err)
-			out := make(map[int64]*domain.Account, len(members))
-			for _, a := range members {
-				out[a.ID] = a
-			}
-			return out
-		}},
+		{
+			name: "NewBatch", wantLen: 4, sameCrossGroup: true,
+			load: func(*repository.TemplateLoadScope) map[int64]*domain.Account {
+				// 一次批次 = 一次 NewBatch；两个组必须载入**同一会話**，否则"跨组同一枚
+				// 指针"永远不会成立（这正是三种静默退化之一）。
+				batch := repos.Groups.NewBatch()
+				out := make(map[int64]*domain.Account, 4)
+				for _, gid := range []int64{g.ID, g2.ID} {
+					accs, err := batch.LoadGroup(ctx, gid)
+					require.NoError(t, err)
+					for _, a := range accs {
+						out[a.ID] = a
+					}
+				}
+				return out
+			},
+		},
+		{
+			name: "LoadGroupAccounts", wantLen: 3,
+			load: func(scope *repository.TemplateLoadScope) map[int64]*domain.Account {
+				members, err := repos.Groups.LoadGroupAccountsScoped(ctx, g.ID, scope)
+				require.NoError(t, err)
+				out := make(map[int64]*domain.Account, len(members))
+				for _, a := range members {
+					out[a.ID] = a
+				}
+				return out
+			},
+		},
 	}
 
 	for _, l := range loaders {
 		t.Run(l.name, func(t *testing.T) {
 			firstScope := repository.NewTemplateLoadScope()
 			first := l.load(firstScope)
-			require.Len(t, first, 3)
+			require.Len(t, first, l.wantLen)
 
 			require.NotNil(t, first[a1.ID].Template)
 			require.Same(t, first[a1.ID].Template, first[a2.ID].Template,
@@ -79,15 +108,27 @@ func TestPGLoadSharesOneTemplateObjectPerTemplateID(t *testing.T) {
 			require.Equal(t, tplA.BaseURL, first[a1.ID].Template.BaseURL,
 				"共享对象的内容仍是从模板行转出来的那一份")
 			require.Equal(t, tplA.ID, first[a1.ID].TemplateID, "账号侧的 template_id 不受共享影响")
-			require.Equal(t, 2, firstScope.Misses(), "misses = 不同 template_id 数")
-			require.Equal(t, 1, firstScope.Hits(), "hits = 账号数 - 不同 template_id 数")
+			if l.sameCrossGroup {
+				require.Same(t, first[a1.ID].Template, first[a3.ID].Template,
+					"同一批次会话内**跨组**也必须共享同一枚指针（摘要缓存跨组命中的唯一来源）")
+			} else {
+				require.Equal(t, 2, firstScope.Misses(), "misses = 不同 template_id 数")
+				require.Equal(t, 1, firstScope.Hits(), "hits = 账号数 - 不同 template_id 数")
+			}
 
-			// 跨 reload：新作用域必须给新对象（同一 template_id 的账号之间仍然共享）。
+			// 跨 reload / 跨批次：新作用域/新会話必须给新对象（同一 template_id 的账号
+			// 之间仍然共享）。
 			second := l.load(repository.NewTemplateLoadScope())
 			require.Same(t, second[a1.ID].Template, second[a2.ID].Template)
 			require.NotSame(t, first[a1.ID].Template, second[a1.ID].Template,
 				"跨 reload 必须是新对象：作用域生命周期 = 一次构建/一个批次")
 			require.NotSame(t, first[b1.ID].Template, second[b1.ID].Template)
+			if l.sameCrossGroup {
+				require.Same(t, second[a1.ID].Template, second[a3.ID].Template,
+					"第二个批次的跨组共享同样必须成立（不是只有建会话那一次凑巧）")
+				require.NotSame(t, first[a3.ID].Template, second[a3.ID].Template,
+					"跨批次必须重新转模板：会话不得跨批次复用（否则模板改动不生效）")
+			}
 		})
 	}
 }

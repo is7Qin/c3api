@@ -22,6 +22,7 @@ import (
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/rulepersist"
 	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/pkg/logx"
 
@@ -187,7 +188,7 @@ func TestRulePersistLandsVerdictWhenExtProjectionFails(t *testing.T) {
 
 	fp, err := CandidateFingerprint(loaded)
 	require.NoError(t, err)
-	persist := NewRulePersistFunc(repos, latch.NewLatchStore(), nil, nil)
+	persist := rulepersist.NewRulePersistFunc(repos, latch.NewLatchStore(), nil, nil)
 	require.NoError(t, persist(ctx, rule.PersistItem{
 		Event: rule.Event{
 			AccountID:                acc,

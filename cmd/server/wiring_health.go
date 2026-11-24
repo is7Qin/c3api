@@ -5,7 +5,7 @@
 // 装配阶段 2/6：运行时健康投影 / 锁存 / 规则引擎 / 调度器 / 用量捕获面。
 //
 // 构造序不变量（rule_wiring_test 钉死）：latch.NewLatchStore → latch.NewHub →
-// scheduler.NewLatchSink → scheduler.NewRulePersistFunc → rule.New → scheduler.New，
+// scheduler.NewLatchSink → rulepersist.NewRulePersistFunc → rule.New → scheduler.New，
 // 无 Set* 回填（sink/persist 构造期一次性注入，sched 构造即持 health）。
 package main
 
@@ -17,9 +17,11 @@ import (
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/latch"
+	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/rulepersist"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/usage"
@@ -97,16 +99,19 @@ func newHealthFace(d healthDeps) *healthFace {
 	f.hub = hub
 	latchSink := scheduler.NewLatchSink(runtimeHealth, latchStore, hub, quotaQueue)
 	f.latchSink = latchSink
-	persistFn := scheduler.NewRulePersistFunc(repos, latchStore, schedGroupPub{pub}, log)
+	persistFn := rulepersist.NewRulePersistFunc(repos, latchStore, schedGroupPub{pub}, log)
 	f.persistFn = persistFn
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
 	f.ruleEngine = ruleEngine
-	// 编译期 fail-fast（U22 §2.1 第三步）：生产载入器必须保持 **scoped 组载入**
-	// 能力。丢了它不会让别处编译失败——invalidateGroupsLocked 会静默退化（每组各
-	// 建一枚模板指针，按指针键的摘要缓存只剩「每组每模板一次」，跨组零命中）。
-	// 这一行是那条退化唯一的静态闸门；删掉它不会有任何测试变红，只能靠评审。
-	var _ scheduler.ScopedGroupLoader = repos.Groups
+	// 编译期 fail-fast（U22 §2.1 第三步）：生产载入器必须保持**批次载入**能力。
+	// 丢了它不会让别处编译失败——invalidateGroupsLocked 会静默退化（退回未 scoped
+	// 的 LoadGroupAccounts，每组各建一枚模板指针，按指针键的摘要缓存只剩
+	// 「每组每模板一次」，跨组零命中）。
+	// 这一行是那条退化在**装配点**唯一的静态闸门；删掉它不会有任何测试变红，只能靠
+	// 评审。实现侧的镜像断言在 internal/repository（NewBatch 声明旁边）——两条都在，
+	// 是因为它们钉的是两件事：这里钉"真的交出去的是这个实现"，那里钉"实现符合契约"。
+	var _ loadport.BatchedGroupLoader = repos.Groups
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,

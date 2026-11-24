@@ -45,6 +45,15 @@ var scanDirs = []string{
 	"internal/repository",
 	"internal/service",
 	"internal/handler",
+	// P5-1 新增：api 是数据面/控制面契约层（实测无 revision 标识符，进面是为了让
+	// "契约层没有代际读取"成为机械事实而不是没扫到）；identitypool 是会话池（P5b
+	// 下沉，同样无代际标识符）；rulepersist 是从 scheduler 迁出的规则落库（只引入
+	// ExpectedIdentityRevision / IdentityRevision，均在词表）；identityfence 是候选
+	// 指纹与三个哨兵的 canonical 所有者（哨兵名含 Revision，必须在枚举面内）。
+	"internal/api",
+	"internal/identitypool",
+	"internal/rulepersist",
+	"internal/identityfence",
 	"cmd/server",
 }
 
@@ -57,6 +66,10 @@ var inFlightDirs = []string{
 	"internal/continuation",
 	"internal/sdkbridge",
 	"internal/proxy",
+	// P5-1：失效判决的落库与身份围栏的 canonical 定义都决定"在途工件是否仍然有效"，
+	// 故它们同样按 (I,K) 判定、不得以 C 作判据。
+	"internal/rulepersist",
+	"internal/identityfence",
 	"cmd/server",
 }
 
@@ -228,6 +241,16 @@ func gateSources(t *testing.T, root string, dirs []string) []gateFile {
 		abs := filepath.Join(root, filepath.FromSlash(d))
 		ents, err := os.ReadDir(abs)
 		require.NoError(t, err, "扫描目录必须存在：%s", d)
+		// 逐目录非空：末尾那条 require.NotEmpty(out) 是**全局**的，一个目录有文件就
+		// 能让所有目录的空扫描面全绿（路径写错 / 目录被清空的静默缩小）。
+		filesInDir := 0
+		for _, e := range ents {
+			n := e.Name()
+			if !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") && !strings.HasSuffix(n, ".gen.go") {
+				filesInDir++
+			}
+		}
+		require.Positive(t, filesInDir, "扫描目录里必须真的有可扫描的非测试 .go：%s（0 = 扫描面静默缩小）", d)
 		for _, e := range ents {
 			n := e.Name()
 			if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || strings.HasSuffix(n, ".gen.go") {
@@ -457,6 +480,30 @@ func TestRevisionVocabularyIsFullyDeclared(t *testing.T) {
 	// 词表必须覆盖 C 的全部字段拼写，否则"在途无 C 读取"可能只是没搜到。
 	for _, s := range cFieldSpellings {
 		require.Contains(t, revisionVocabulary, s, "C 字段拼写必须进词表：%s", s)
+	}
+}
+
+// TestGenerationScanSurfaceDeclaresP5Dirs 是**防静默缩小**的显式断言：目录清单本身必须
+// 含这四/两个包。gateSources 的 require.NoError（目录必须存在）与逐目录非空挡住"路径写
+// 错"，但挡不住"把某一行从 scanDirs 里删掉"——删掉之后没人再去读那个目录，全部门禁照绿，
+// 而扫描面已经少了一个包。新增目录时这里必须一起改，改不动就说明清单被改坏了。
+func TestGenerationScanSurfaceDeclaresP5Dirs(t *testing.T) {
+	// P5-1 新增进符号枚举面的包：api（数据面/控制面契约）、identitypool（会话池）、
+	// rulepersist（规则落库）、identityfence（候选指纹与三个哨兵）。
+	for _, d := range []string{
+		"internal/api",
+		"internal/identitypool",
+		"internal/rulepersist",
+		"internal/identityfence",
+	} {
+		require.Contains(t, scanDirs, d,
+			"%s 必须在 scanDirs 里：从清单删一行会让该包从代际枚举面静默消失（没有断言会红）", d)
+	}
+	// 在途判定归属包：这两个包持有 (I,K) 判据与 canonical 哨兵，必须在 inFlightDirs 里
+	// （否则它们可以悄悄以 C 作在途判据）。
+	for _, d := range []string{"internal/rulepersist", "internal/identityfence"} {
+		require.Contains(t, inFlightDirs, d,
+			"%s 必须在 inFlightDirs 里：在途工件的有效性判定不得以 C 作判据", d)
 	}
 }
 

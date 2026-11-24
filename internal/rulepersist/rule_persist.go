@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-package scheduler
+package rulepersist
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
@@ -14,10 +15,10 @@ import (
 )
 
 // persistClassified 把一次 persist 失败投影成 rule 侧可识别的分类
-// （rule.PersistError）：包依赖方向 scheduler → rule，分类枚举只能由
-// scheduler 侧写入、rule 侧 errors.As 读取。原始错误保留（Unwrap）——
-// ErrMissingExpectedRevision / ErrMissingCandidateFingerprint /
-// ErrCandidateFingerprintMismatch / repository.ErrStaleIdentityRevision 的
+// （rule.PersistError）：包依赖方向 rulepersist → rule，分类枚举只能由
+// 本包写入、rule 侧 errors.As 读取。原始错误保留（Unwrap）——
+// identityfence.ErrMissingExpectedRevision / identityfence.ErrMissingCandidateFingerprint /
+// identityfence.ErrCandidateFingerprintMismatch / repository.ErrStaleIdentityRevision 的
 // errors.Is 语义与 wrap 前完全一致（测试与调用方均依赖）。
 func persistClassified(kind rule.PersistErrorKind, err error) error {
 	return &rule.PersistError{Kind: kind, Err: err}
@@ -41,7 +42,7 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 			return nil
 		}
 		if item.Event.ExpectedIdentityRevision <= 0 {
-			return persistClassified(rule.PersistErrMissingRevision, ErrMissingExpectedRevision)
+			return persistClassified(rule.PersistErrMissingRevision, identityfence.ErrMissingExpectedRevision)
 		}
 		acct, err := store.GetAccount(ctx, item.Event.AccountID)
 		if err != nil {
@@ -55,17 +56,17 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 				}
 			}
 		}
-		fp, ferr := candidateFingerprint(acct)
+		fp, ferr := identityfence.CandidateFingerprint(acct)
 		if ferr != nil {
-			// candidateFingerprint 已 wrap ErrMissingCandidateFingerprint（缺身份字段）——
+			// identityfence.CandidateFingerprint 已 wrap identityfence.ErrMissingCandidateFingerprint（缺身份字段）——
 			// 分类相同：身份不可计算 ⇒ 判决无法与身份绑定。
 			return persistClassified(rule.PersistErrMissingFingerprint, ferr)
 		}
 		if item.Event.CandidateFingerprint == "" {
-			return persistClassified(rule.PersistErrMissingFingerprint, ErrMissingCandidateFingerprint)
+			return persistClassified(rule.PersistErrMissingFingerprint, identityfence.ErrMissingCandidateFingerprint)
 		}
 		if item.Event.CandidateFingerprint != fp {
-			return persistClassified(rule.PersistErrFingerprintMismatch, ErrCandidateFingerprintMismatch)
+			return persistClassified(rule.PersistErrFingerprintMismatch, identityfence.ErrCandidateFingerprintMismatch)
 		}
 		reason := domain.TruncateErrMsg(item.Event.ErrorMessage)
 		if reason == "" {

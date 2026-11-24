@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/latch"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
@@ -36,11 +36,10 @@ var (
 	// publish). Distinct from ErrFormatUnavailable (genuinely unsupported
 	// format/model — no static bucket, never routable): not-ready retries
 	// after ~1s (503 + Retry-After), unroutable does not (404).
-	ErrPlanNotReady                 = errors.New("scheduler: routing plan not ready")
-	ErrNoAvailable                  = errors.New("scheduler: no available account")
-	ErrMissingCandidateFingerprint  = errors.New("scheduler: candidate fingerprint required")
-	ErrCandidateFingerprintMismatch = errors.New("scheduler: candidate fingerprint mismatch")
-	ErrMissingExpectedRevision      = errors.New("scheduler: expected revision required")
+	ErrPlanNotReady = errors.New("scheduler: routing plan not ready")
+	ErrNoAvailable  = errors.New("scheduler: no available account")
+	// 三个身份围栏哨兵不在本块：canonical 定义在 internal/identityfence，本包只留
+	// 别名（见 candidate_identity.go 的迁移期兼容层与移除条件）。
 	// ErrEgressNotWired 是**装配违例**（不是运行期故障）：账号绑定了出口代理，
 	// 但 Config.Egress 从未注入。装载期直接报错并保留旧快照——绝不静默退化成
 	// 直连（那会让"配了代理"的账号从别人的 IP 出栈，且没人知道）。启动期由 main
@@ -108,8 +107,11 @@ type AccountUniverseLoader interface {
 // AccountExtMismatchSource 报告**最近一次装载**中被跳过的损坏账号（模板与
 // account_ext 行的 BPS 位不一致）。语义：每次装载覆盖（不累加、不 drain），空
 // 装载为空。装载器不实现 ⇒ 无观测，装载语义不变。Loader 接口本身不改。
+//
+// 元素类型住在 internal/loadport（装载端口的中立契约），不再是 repository 的导出类型：
+// "账号被装载器跳过"是装载期跨层观测，控制面读它不该把存储实现拉进 import 图。
 type AccountExtMismatchSource interface {
-	LastAccountExtMismatches() []repository.ExtCredentialMismatch
+	LastAccountExtMismatches() []loadport.ExtCredentialMismatch
 }
 
 // accountExtMismatchLogLimit 每次装载最多逐条打印的错配账号数（其余只由

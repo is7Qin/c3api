@@ -264,7 +264,14 @@ var allowRules = []allowRule{
 	{from: "internal/ent", to: []string{"internal/ent/"}},
 
 	// 存储层：允许 ent 与 domain/credential。
-	{from: "internal/repository", to: []string{"internal/domain", "internal/credential", "internal/ent"}},
+	//
+	// P5-1 起多一条 internal/loadport：装载端口（GroupAccountBatch / BatchedGroupLoader
+	// / ExtCredentialMismatch）住在中立叶子包里，repository 作为**实现方**引用契约。
+	// 方向是"实现 → 契约"：loadport 只依赖 domain + credential，绝不反向 import 本包，
+	// 故这条边不构成环。这是本单新增的第 1 条 allow 边。
+	{from: "internal/repository", to: []string{
+		"internal/domain", "internal/credential", "internal/ent", "internal/loadport",
+	}},
 
 	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
 	// 只依赖值类型层与上游 SDK 桥的**值类型**（domain/credential/sdkbridge.ThreadHandle）；
@@ -273,6 +280,30 @@ var allowRules = []allowRule{
 	// （类型随账号快照携带，api 不调实现——把实现挡在数据面/控制面之外）。
 	{from: "internal/api", to: []string{
 		"internal/domain", "internal/credential", "internal/sdkbridge", "pkg/",
+	}},
+
+	// 装载端口（P5-1）：控制面 ↔ 存储实现之间的中立契约——批次会话（同一模板在整批内
+	// 只有一枚 *domain.Template）与被跳过的受损账号这条装载期观测。
+	// 只依赖值类型层；**不**依赖 repository（实现方要 import 它，反向成环）、**不**依赖
+	// scheduler（能力由消费方描述，实现方无需 import 它）。选它而不是 internal/api 的原因
+	// 写在包注释里：api 自己 import sdkbridge，而 sdkbridge import repository。
+	{from: "internal/loadport", to: []string{"internal/domain", "internal/credential"}},
+
+	// 身份围栏（P5-1，R2 的 D5）：候选指纹与三个哨兵的 canonical 定义 + 归属门禁。
+	// 只依赖 domain（指纹由 domain.AccountCandidateFingerprint / CandidateFPHex 派生）；
+	// 不依赖 repository（ErrStaleIdentityRevision 是仓储 CAS 的哨兵，归 repository）、
+	// 不依赖 scheduler（否则等于把哨兵换了个地方住）。
+	{from: "internal/identityfence", to: []string{"internal/domain"}},
+
+	// 规则判定落库（P5-1）：从 scheduler 迁出，只改包声明 + 4 个限定符，其余逐字节不变。
+	// 它自己**不持哨兵**（canonical 在 identityfence），并且**不** import scheduler
+	// （否则"迁出"只是挪了一层，且 scheduler 侧的兼容层会与它成环）。
+	// 两条 to 元素的代价必须写在提交正文：repository 是**实现依赖**（落库 CAS 的
+	// ErrStaleIdentityRevision），identityfence 是**契约依赖**（三个哨兵 + 指纹）——
+	// 这是本单新增的第 3、4 条 allow 边。
+	{from: "internal/rulepersist", to: []string{
+		"internal/domain", "internal/identityfence", "internal/latch",
+		"internal/repository", "internal/rule", "pkg/logx",
 	}},
 
 	// 身份池（P5b）：会话池的唯一职责是持有"线程生命周期"，因此它依赖上游 SDK 桥的
@@ -286,9 +317,15 @@ var allowRules = []allowRule{
 	// P3b 起多一条 internal/api：控制面把 Selection 别名为契约类型、并实现 SelectionHandle。
 	// P5b 起多一条 internal/identitypool：codex 会话池下沉为独立包（只搬"线程生命
 	// 周期"，不搬配置/出口），scheduler 经 Spec/Claim/Reclaimer 三处窄缝用它。
+	// P5-1 起多两条，都是"把实现从核心路由里挪走"的直接结果：
+	//   - internal/loadport：批次会话契约（装载端口）——scheduler 只持**会话**，作用域
+	//     在实现包内，故它不再需要 internal/repository（账本 574 那条边消失）；
+	//   - internal/identityfence：候选指纹与三个哨兵的 canonical 定义。scheduler 只留
+	//     迁移期兼容层（同名别名 + 一行转发），哨兵必须是同一 error 值。
 	{from: "internal/scheduler", to: []string{
 		"internal/domain", "internal/credential", "internal/worker", "internal/api",
 		"internal/latch", "internal/rule", "internal/identitypool", "pkg/logx",
+		"internal/loadport", "internal/identityfence",
 	}, deny: []string{"pkg/egress"}},
 
 	// 上游 SDK 桥：执行面的一端，允许 pkg/egress 实现。
@@ -358,6 +395,12 @@ var testFixtureAllow = []string{
 	"internal/ent/",
 	"internal/db/migrate",
 	"internal/repository",
+	// P5-1：scheduler 的两处用例要构造**真实** persist 函数——PG 用例验证"ext 投影失败
+	// 不得挡住判决落库"（account_ext_mismatch_pg_test.go），兼容层用例验证陈旧 K 的传播
+	// 与锁存清除（candidate_identity_test.go）。用例的主语是 scheduler（脏行装载 + 快照
+	// + latch 行为），不能搬走。生产边仍由 productionLedger 管——scheduler 的**生产**
+	// 代码没有这条 import（见 internal/scheduler 的规则）。
+	"internal/rulepersist",
 	"pkg/",
 }
 
@@ -378,7 +421,16 @@ const (
 	//
 	// 诚实边界：它挡不住有意同时改矩阵与指纹。它只保证这类改动在 diff 里两处同时
 	// 可见、必须写理由（见文件头 ③），不保证它不会发生。
-	allowMatrixFingerprint = "f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8"
+	// P5-1 变更（4 条新增 allow 边，逐条见 allowRules 的注释；全部是 to: 白名单，
+	// 没有新增 all: true）：
+	//   1. repository 的 to 加 internal/loadport（实现 → 装载端口契约）
+	//   2. scheduler 的 to 加 internal/loadport（消费方 → 装载端口契约）
+	//   3. scheduler 的 to 加 internal/identityfence（迁移期兼容层的别名主语）
+	//   4. 新规则 internal/rulepersist → {domain, identityfence, latch, repository, rule, pkg/logx}
+	//      （这一条含 2 条边：到 identityfence 的契约依赖 + 到 repository 的实现依赖）
+	// 同时新增两条叶子规则 internal/loadport 与 internal/identityfence。
+	// 前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8
+	allowMatrixFingerprint = "844fad1f53f6d5576add269a7fe2f544e387baf712666788cee953c75442b9b5"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -551,7 +603,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 20,
+	debtMax: 19,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -571,7 +623,6 @@ var productionLedger = ledger{
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
 		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
-		{"internal/scheduler", "internal/repository", "scheduler 用 repository.TemplateLoadScope 装载模板；P5 执行面收拢时改端口", phaseP5},
 		{"internal/scheduler", "internal/sdkbridge", "scheduler 直接持 sdkbridge 客户端做探测；P5 收拢到执行面", phaseP5},
 		{"internal/scheduler", "pkg/egress", "类型与执行实现暂同包；P5 把 Client/Spec/Flavour/ResourceKey 迁到中立包后，本边转为硬规则（禁止 import 实现包）", phaseP5},
 	},

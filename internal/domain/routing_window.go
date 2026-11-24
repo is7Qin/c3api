@@ -14,9 +14,22 @@ import "time"
 //   - scheduler 内存累计（quality_stats.go 的 Current/Baseline 过滤）
 //   - config 保留期地板校验（observation_retention_days 不得低于回看 + 边际）
 //
-// 常量定义在 domain（叶子包）而非 scheduler：`internal/scheduler` 已 import
-// `internal/repository`（rule_persist.go），故 repository 无法反向引用 scheduler
-// （Go 包级 import 环）。scheduler 侧以同值重导出
+// 常量定义在 domain（叶子包）而非 scheduler：`internal/repository` 要用这四个窗口值
+// （落库窗读 + 基线截断），而它**不得**反向依赖 `internal/scheduler`（控制面）。
+//
+// 这条限制今天有**两道**：编译器（`repository → scheduler` 会经
+// `scheduler → sdkbridge → repository` 闭成 import 环）与 allow 矩阵
+// （repository 的 to 白名单里没有 internal/scheduler）。
+//
+// 注意：编译器的这一道**不是**永久的，而且它比"某一条债"更强也更脆：只要存在
+// **任何**一条从 scheduler 到 sdkbridge 的路径，`repository → scheduler` 就会闭成环。
+// 今天是两条——直接依赖 scheduler → sdkbridge（账本 phaseP5 债 575），以及
+// scheduler → internal/api → sdkbridge。这些路径**全部**消失之后，编译器屏障才会
+// 真的失效，届时拦住反向引用的就只有 allow 矩阵。谁要动矩阵那条规则，必须先回答
+// "为什么 repository 可以直接看控制面"。
+//
+// 常量**不搬**：它仍是"scheduler 与 repository 共用同一字面量"这件事的唯一正确落点，
+// 搬走只会把同一个数字复制两份。scheduler 侧以同值重导出
 // `scheduler.BaselineLookback` / `scheduler.CurrentWindowLen`，spec §5.3 命名的
 // 两个符号仍然存在且仍指向这里的唯一字面量。
 const (

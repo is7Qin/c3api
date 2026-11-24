@@ -130,8 +130,10 @@ var downstreamStoreInterfaces = []struct {
 	iface   string
 	methods []string
 }{
-	{"../scheduler/rule_persist.go", "rulePersistStore", []string{"FailAccountCAS", "GetAccount", "GetAccountGroups"}},
-	{"../scheduler/rule_persist.go", "rulePersistTemplateStore", []string{"GetAccountWithTemplate"}},
+	// P5-1：rule_persist.go 迁到 internal/rulepersist，被钉的两个下游持久化接口随之搬家。
+	// 方法允许集一字不动（迁移不是放宽写面的理由）。
+	{"../rulepersist/rule_persist.go", "rulePersistStore", []string{"FailAccountCAS", "GetAccount", "GetAccountGroups"}},
+	{"../rulepersist/rule_persist.go", "rulePersistTemplateStore", []string{"GetAccountWithTemplate"}},
 	{"../scheduler/scheduler.go", "Loader", []string{"LoadGroupAccounts", "LoadGroupsAccounts"}},
 	{"../sdkbridge/failure.go", "FailureStore", []string{"SetAccountFailed"}},
 	{"../sdkbridge/failure.go", "casStore", []string{"FailAccountCAS", "GetAccount"}},

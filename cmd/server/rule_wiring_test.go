@@ -43,11 +43,13 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 		"sched.LatchStore": 0,
 	}
 	// 构造序钉：首次出现偏移必须严格递增。
+	// persist 站的主语在 P5-1 随 rule_persist.go 迁到 internal/rulepersist：selector 文本
+	// 从 scheduler.NewRulePersistFunc 变成 rulepersist.NewRulePersistFunc。
 	orderKeys := []string{
 		"latch.NewLatchStore",
 		"latch.NewHub",
 		"scheduler.NewLatchSink",
-		"scheduler.NewRulePersistFunc",
+		"rulepersist.NewRulePersistFunc",
 		"rule.New",
 		"scheduler.New",
 	}
@@ -184,6 +186,12 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	require.True(t, depsIdents[newArgName],
 		"service.New 的实参 %q 必须来自含 RecoverProber 的 Deps 字面量", newArgName)
 	require.Equal(t, 1, counts["service.New:identArg"], "service.New 必须收具名 Deps 变量（先 Validate 再构造）")
+	// 存在性钉（对 orderKeys **内容本身**）：改 selector 文本时顺手把条目删掉，会让这一站
+	// 从顺序钉与归属钉（requireSubjectsOnlyIn 遍历的正是 orderKeys）里**同时消失**，
+	// 且不会有任何断言变红——本单把 scheduler.NewRulePersistFunc 改名为
+	// rulepersist.NewRulePersistFunc，正是最容易发生那次删除的时刻。
+	require.Contains(t, orderKeys, "rulepersist.NewRulePersistFunc",
+		"persist 构造站必须留在顺序钉里：删条目会让本站两处断言同时失效（0 防御）")
 	// 构造序钉：六站全在且严格递增。
 	for _, key := range orderKeys {
 		require.Contains(t, firstOffset, key, "%s 必须在 newHealthFace 中构造（顺序钉主语被拆到其它文件 ⇒ 返工）", key)

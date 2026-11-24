@@ -14,6 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/rulepersist"
 )
 
 func TestCandidateFingerprintProducerMatchesSelectionAndFailureEvent(t *testing.T) {
@@ -45,7 +46,7 @@ func TestRulePersistRejectsStaleOrMismatchedFailureIdentity(t *testing.T) {
 	store := &failurePersistStore{account: a}
 	fp, err := candidateFingerprint(a)
 	require.NoError(t, err)
-	persist := NewRulePersistFunc(store, latch.NewLatchStore(), nil, nil)
+	persist := rulepersist.NewRulePersistFunc(store, latch.NewLatchStore(), nil, nil)
 
 	for _, tc := range []struct {
 		name  string
@@ -77,7 +78,7 @@ func TestRulePersistPropagatesStaleIdentityFromCAS(t *testing.T) {
 	ls := latch.NewLatchStore()
 	require.True(t, ls.TryAcquire(1, fp, 1))
 
-	persist := NewRulePersistFunc(store, ls, nil, nil)
+	persist := rulepersist.NewRulePersistFunc(store, ls, nil, nil)
 	err = persist(context.Background(), rule.PersistItem{
 		Event: rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp, ErrorMessage: "boom"},
 		Then:  domain.RuleThen{FailAccount: true},

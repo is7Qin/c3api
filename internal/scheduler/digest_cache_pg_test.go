@@ -15,6 +15,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/pkg/egress"
@@ -177,8 +178,8 @@ func newPGDigestFixture(t *testing.T) *pgDigestFixture {
 func TestPGBatchInvalidationHitsDigestCacheAcrossGroups(t *testing.T) {
 	f := newPGDigestFixture(t)
 	s := f.scheduler(t)
-	require.Implements(t, (*ScopedGroupLoader)(nil), f.repos.Groups,
-		"生产载入器必须提供 scoped 组载入能力（否则批次内模板对象无法跨组复用）")
+	require.Implements(t, (*loadport.BatchedGroupLoader)(nil), f.repos.Groups,
+		"生产载入器必须提供批次载入能力（否则批次内模板对象无法跨组复用）")
 
 	rec := installDigestCacheRecorder(t)
 	rec.reset()

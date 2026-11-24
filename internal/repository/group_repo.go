@@ -25,6 +25,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/proxy"
+	"github.com/is7qin/c3api/internal/loadport"
 )
 
 // GroupRepo 承担调度器 Loader 的快照数据源（LoadGroupsAccounts/LoadGroupAccounts）。
@@ -36,7 +37,7 @@ type GroupRepo struct {
 	// mismatchMu 保护 lastMismatches：装载在 publisher.mu 下串行，但读取方
 	// （调度器装配 / 用例）与装载方不保证同一 goroutine。
 	mismatchMu     sync.Mutex
-	lastMismatches []ExtCredentialMismatch
+	lastMismatches []loadport.ExtCredentialMismatch
 }
 
 // accountGroupsMembershipSQL 全量成员关系（account_id, group_id）扫描。
@@ -151,13 +152,6 @@ func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*do
 	return r.loadGroupsAccounts(ctx, true, nil)
 }
 
-// LoadGroupsAccountsFullScoped 与 LoadGroupsAccountsFull 相同，但模板共享由**调用方
-// 提供**的作用域承载：一次全量构建传一张，作用域贯穿这次扫描的全部组（U22 §2.1）。
-// scope 为 nil 时退化为"本次调用各建一张"，与 LoadGroupsAccountsFull 完全等价。
-func (r *GroupRepo) LoadGroupsAccountsFullScoped(ctx context.Context, scope *TemplateLoadScope) (map[int64][]*domain.Account, []*domain.Account, error) {
-	return r.loadGroupsAccounts(ctx, true, scope)
-}
-
 // loadGroupsAccounts 是全量快照的扫描本体（withUniverse 决定是否额外产出账号全集）。
 //
 // 崩溃修复（实证：847k 组 → 启动 fatal / 运行中静默空结果）：ent
@@ -218,7 +212,7 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool, s
 	// *domain.Template（Ent 同查询同 ID 同实体，见 toDomainAccountWithTemplateScope）。
 	// 作用域由调用方持有：全量构建传一张贯穿全部组，组级失效传一张贯穿整批；
 	// nil 已在上方退化为本次调用私有的一张。
-	var extMismatches []ExtCredentialMismatch
+	var extMismatches []loadport.ExtCredentialMismatch
 	for _, a := range accs {
 		d := toDomainAccountWithTemplateScope(a, scope)
 		if snap, ok := extByAccount[a.ID]; ok {
@@ -229,7 +223,7 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool, s
 				return nil, nil, fmt.Errorf("load groups-accounts (account_ext merge, account %d): %w", a.ID, merr)
 			}
 			if mismatched {
-				extMismatches = append(extMismatches, ExtCredentialMismatch{
+				extMismatches = append(extMismatches, loadport.ExtCredentialMismatch{
 					AccountID:    a.ID,
 					TemplateType: d.Template.CredentialType,
 					ExtType:      snap.extCredentialType,
@@ -455,27 +449,19 @@ func mergeExtSnapshotRow(d *domain.Account, row accountExtSnapshotRow) (mismatch
 	return false, nil
 }
 
-// ExtCredentialMismatch 一条被跳过的损坏账号：模板类型与 account_ext 行的类型
-// BPS 位不一致（spec §0 唯一有行为意义的那一位）。
-type ExtCredentialMismatch struct {
-	AccountID    int64
-	TemplateType credential.Type
-	ExtType      credential.Type
-}
-
 // LastAccountExtMismatches 报告**最近一次**装载中被跳过的损坏账号（每次装载
 // 覆盖，不累加、不 drain；成功装载为空 ⇒ 空）。调度器按需断言本能力接口，
 // 非空时记 ERROR，不拒发布。
-func (r *GroupRepo) LastAccountExtMismatches() []ExtCredentialMismatch {
+func (r *GroupRepo) LastAccountExtMismatches() []loadport.ExtCredentialMismatch {
 	r.mismatchMu.Lock()
 	defer r.mismatchMu.Unlock()
-	return append([]ExtCredentialMismatch(nil), r.lastMismatches...)
+	return append([]loadport.ExtCredentialMismatch(nil), r.lastMismatches...)
 }
 
 // recordAccountExtMismatches 发布本次装载的错配名单（排序后保存，日志与用例不必
 // 依赖扫描顺序）。
-func (r *GroupRepo) recordAccountExtMismatches(rows []ExtCredentialMismatch) {
-	slices.SortFunc(rows, func(a, b ExtCredentialMismatch) int { return cmp.Compare(a.AccountID, b.AccountID) })
+func (r *GroupRepo) recordAccountExtMismatches(rows []loadport.ExtCredentialMismatch) {
+	slices.SortFunc(rows, func(a, b loadport.ExtCredentialMismatch) int { return cmp.Compare(a.AccountID, b.AccountID) })
 	r.mismatchMu.Lock()
 	r.lastMismatches = rows
 	r.mismatchMu.Unlock()
@@ -523,7 +509,7 @@ func (r *GroupRepo) LoadGroupAccountsScoped(ctx context.Context, groupID int64, 
 	if err != nil {
 		return nil, fmt.Errorf("load group accounts (proxy scan, group %d): %w", groupID, err)
 	}
-	var extMismatches []ExtCredentialMismatch
+	var extMismatches []loadport.ExtCredentialMismatch
 	for _, a := range accs {
 		d := toDomainAccountWithTemplateScope(a, scope)
 		if snap, ok := extByAccount[a.ID]; ok {
@@ -534,7 +520,7 @@ func (r *GroupRepo) LoadGroupAccountsScoped(ctx context.Context, groupID int64, 
 				return nil, fmt.Errorf("load group accounts (account_ext merge, group %d, account %d): %w", groupID, a.ID, merr)
 			}
 			if mismatched {
-				extMismatches = append(extMismatches, ExtCredentialMismatch{
+				extMismatches = append(extMismatches, loadport.ExtCredentialMismatch{
 					AccountID:    a.ID,
 					TemplateType: d.Template.CredentialType,
 					ExtType:      snap.extCredentialType,
@@ -548,6 +534,46 @@ func (r *GroupRepo) LoadGroupAccountsScoped(ctx context.Context, groupID int64, 
 	r.recordAccountExtMismatches(extMismatches)
 	return out, nil
 }
+
+// repoBatch 是一次载入批次的会话：**唯一**持有的状态是一张模板作用域，它由本会话
+// 创建、本会话独占、本会话消亡。批次 = 一次 NewBatch() 到它被丢弃。
+//
+// 为什么必须是独立类型而不是让 *GroupRepo 自己实现 LoadGroup：GroupRepo 是长生命周期
+// 单例（进程级装配一次），把 scope 挂上去就是"跨批次复用一张表"——模板内容改动不生效，
+// 且旧模板对象存活期被无限拉长。
+type repoBatch struct {
+	repo *GroupRepo
+	// scope 是本批次的模板表（TemplateLoadScope 本身不动：类型、字段、Hits/Misses 全留，
+	// 它们是 mapping_template_share_internal_test.go 的观测面）。
+	// 生命周期 = 本对象；nil 不允许（NewBatch 保证非 nil）。
+	scope *TemplateLoadScope
+}
+
+// LoadGroup 装载单组账号，模板共享走**本批次**的作用域。
+//
+// 委托 LoadGroupAccountsScoped 而不是自己再写一遍扫描：那条路径同时负责
+// recordAccountExtMismatches（本文件末尾），调度的 AccountExtMismatchSource 观测面
+// 靠它；另起一条装载会让"被跳过的损坏账号"在批次路径上静默消失。
+func (b *repoBatch) LoadGroup(ctx context.Context, groupID int64) ([]*domain.Account, error) {
+	return b.repo.LoadGroupAccountsScoped(ctx, groupID, b.scope)
+}
+
+// NewBatch 开一次载入批次。返回类型**逐字**是 loadport.GroupAccountBatch ——
+// Go 的方法返回类型不协变：写成 `*repoBatch` 时本方法**不满足** loadport.BatchedGroupLoader
+// （返回值类型必须完全相同），会退化成"看起来实现了、能力断言永远失败"的静默降级。
+//
+// 每次调用新建一张空作用域：批次的模板表必须跨批次独立（跨批次复用会让上一轮的模板
+// 对象漏进新快照）。
+func (r *GroupRepo) NewBatch() loadport.GroupAccountBatch {
+	return &repoBatch{repo: r, scope: NewTemplateLoadScope()}
+}
+
+// 两条能力断言：本条与 cmd/server 的装配侧断言互为镜像。改坏 NewBatch 的返回类型时
+// **本行**先编译失败（断言与声明同包），装配侧那行则钉住"真的交给调度器的是这个实现"。
+var (
+	_ loadport.BatchedGroupLoader = (*GroupRepo)(nil)
+	_ loadport.GroupAccountBatch  = (*repoBatch)(nil)
+)
 
 // proxyIndexByID 全表扫 proxy（未软删）→ id 索引，供快照装载把 `Account.ProxyID`
 // 展开成 `Account.Proxy`（spec-proxy-pool §4.1）。

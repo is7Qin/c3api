@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/loadport"
 )
 
 // t1Loader is a fault-injectable mem loader that counts full vs per-group loads
@@ -51,6 +52,82 @@ func (l *t1Loader) LoadGroupAccounts(ctx context.Context, id int64) ([]*domain.A
 		return nil, errors.New("t1Loader: group load failed")
 	}
 	return l.byGroup[id], nil
+}
+
+// nilBatchLoader 声明了批次能力但 NewBatch 返回 **nil**（接口值本身是 nil，不是
+// typed-nil）。这是"实现侧违约"里可以防御的那一半：调用方必须退回未 scoped 的
+// LoadGroupAccounts，而不是把 nil 当会话用。typed-nil 那一半（接口非 nil、底层指针
+// nil）探不到，由 internal/repository 的 TestGroupRepoNewBatchReturnsUsableSession 钉住。
+type nilBatchLoader struct {
+	*t1Loader
+	mu            sync.Mutex
+	newBatchCalls int
+}
+
+func (l *nilBatchLoader) NewBatch() loadport.GroupAccountBatch {
+	l.mu.Lock()
+	l.newBatchCalls++
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *nilBatchLoader) newBatches() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.newBatchCalls
+}
+
+// TestBatchStateFallsBackWhenNewBatchReturnsNil 钉住 batchState 的两条边界：
+//  1. NewBatch() == nil ⇒ 逐组退回 LoadGroupAccounts（功能等价，只是跨组不再共享
+//     模板指针）——不是 panic、不是把 nil 会话传下去；
+//  2. 探针每个批次只问一次（在循环外）：把 newBatchState 移进 for 循环会让下面是 2 而非 1。
+func TestBatchStateFallsBackWhenNewBatchReturnsNil(t *testing.T) {
+	tp := tpl(61, domain.FormatOpenAIChat, []string{"m"})
+	a1, a2 := acc(1, tp, 4), acc(2, tp, 4)
+	ldr := &nilBatchLoader{t1Loader: newT1Loader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})}
+	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	require.NoError(t, s.reload(context.Background()))
+	ldr.reset()
+
+	s.InvalidateGroups([]int64{20, 10})
+
+	require.Equal(t, 1, ldr.newBatches(), "探针每批次只问一次 NewBatch（移进 for 循环会变成每组一次）")
+	require.Equal(t, []int64{10, 20}, ldr.groupCallsCopy(),
+		"拿到 nil 批次必须退回逐组 LoadGroupAccounts（按排序去重后的 id 顺序），不是跳过装载")
+	sv := s.publisher.pending
+	require.NotNil(t, sv, "退回路径仍必须 stage 一个冻结根")
+	require.Contains(t, sv.byID, a1.ID)
+	require.Contains(t, sv.byID, a2.ID)
+}
+
+// countingBatchLoader 是"**支持**批次"的 t1Loader：NewBatch 返回一个把单组载入委托回
+// 夹具的会话，并记下被问了几次。它让"整批只建一次批次状态"变成可断言的数字——
+// 把 newBatchState 挪进 for 循环会让计数等于组数。
+type countingBatchLoader struct {
+	*t1Loader
+	mu            sync.Mutex
+	newBatchCalls int
+}
+
+func (l *countingBatchLoader) NewBatch() loadport.GroupAccountBatch {
+	l.mu.Lock()
+	l.newBatchCalls++
+	l.mu.Unlock()
+	return countingBatch{loader: l.t1Loader}
+}
+
+func (l *countingBatchLoader) newBatches() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.newBatchCalls
+}
+
+// countingBatch 只做委托：作用域归 scheduler 侧的 batchState 所有（生产实现的表在
+// repository 的会话里），测试夹具不需要也不该自持一张表——否则测的就不是这条链路了。
+type countingBatch struct{ loader *t1Loader }
+
+func (b countingBatch) LoadGroup(ctx context.Context, groupID int64) ([]*domain.Account, error) {
+	return b.loader.LoadGroupAccounts(ctx, groupID)
 }
 
 func (l *t1Loader) reset() {
