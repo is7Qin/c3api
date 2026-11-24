@@ -623,7 +623,7 @@ var productionLedger = ledger{
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
 		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
-		{"internal/scheduler", "internal/sdkbridge", "scheduler 直接持 sdkbridge 客户端做探测；P5 收拢到执行面", phaseP5},
+		{"internal/scheduler", "internal/sdkbridge", "scheduler 仅依赖 sdkbridge 的 RotatePolicy 与 ThreadHandle 值类型；客户端探测已下沉为本包 ClientResources/RetireThread 接口；待 P5 将非契约 SDK 类型从 scheduler 移出后再消除此边", phaseP5},
 		{"internal/scheduler", "pkg/egress", "类型与执行实现暂同包；P5 把 Client/Spec/Flavour/ResourceKey 迁到中立包后，本边转为硬规则（禁止 import 实现包）", phaseP5},
 	},
 	keep: []legacyRow{
