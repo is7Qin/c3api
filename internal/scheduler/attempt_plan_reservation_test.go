@@ -51,8 +51,8 @@ func TestSchedulerNewAttemptPlanReservesExactCompiledRoute(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fp, sel.CandidateFingerprint)
 	require.Equal(t, uint8(1), plan.attemptedCnt)
-	sel.Release()
-	sel.Release()
+	sel.Handle.Release()
+	sel.Handle.Release()
 }
 
 func TestSchedulerReserveAttemptUsesDynamicCandidateGates(t *testing.T) {
@@ -88,7 +88,7 @@ func TestSchedulerReserveAttemptUsesDynamicCandidateGates(t *testing.T) {
 	require.Equal(t, int64(4), attempt.AccountID)
 	require.Equal(t, int64(4), sel.AccountID)
 	require.Equal(t, uint8(1), attempt.Ordinal)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 func TestSchedulerReserveAttemptUsesClusterBorrowSnapshotOnce(t *testing.T) {
@@ -109,7 +109,7 @@ func TestSchedulerReserveAttemptUsesClusterBorrowSnapshotOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 func TestSchedulerNewAttemptPlanRejectsMissingExactRoute(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSchedulerNewAttemptPlanPlanNotReady(t *testing.T) {
 	sel, _, rerr := s.ReserveAttempt(&plan)
 	require.NoError(t, rerr)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 	_, err = s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "missing"))
 	require.ErrorIs(t, err, ErrFormatUnavailable)
 }
@@ -187,7 +187,7 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 		require.FailNow(t, "ReserveAttempt blocked")
 	}
 	require.NotNil(t, sel)
-	defer sel.Release()
+	defer sel.Handle.Release()
 	accSnap, ok := s.View().Account(1)
 	require.True(t, ok)
 	st := accSnap.statePtr()
@@ -248,7 +248,7 @@ func TestRuntimeLastUsedAtProjection(t *testing.T) {
 	require.NotNil(t, stateBefore)
 	sel, _, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.Handle.Release()
 	require.Same(t, stateBefore, accSnap.statePtr(),
 		"写使用时刻不得替换 accState：替换就是值拷贝 + &next 逃逸（1 alloc/写）")
 

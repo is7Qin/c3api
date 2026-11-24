@@ -50,7 +50,7 @@ func TestSelectEgressAlwaysResolved(t *testing.T) {
 		s := proxySched(t, pool, acc(1, tplA, 4))
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
-		defer sel.Release()
+		defer sel.Handle.Release()
 		require.NotNil(t, sel.Egress, "Egress 恒非 nil（热路径不写 nil 判断）")
 		require.Same(t, pool.Direct(), sel.Egress, "未绑定必须复用直连单例（同指针）")
 		require.Equal(t, egress.Spec{}, sel.Egress.Spec, "直连 = 零值 Spec")
@@ -63,7 +63,7 @@ func TestSelectEgressAlwaysResolved(t *testing.T) {
 		s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
-		defer sel.Release()
+		defer sel.Handle.Release()
 		require.NotNil(t, sel.Egress)
 		require.NotSame(t, pool.Direct(), sel.Egress)
 		require.Equal(t, egress.New("socks5", "10.1.2.3", 1080, "u", "p").Key(), sel.Egress.Spec.Key(),
@@ -125,7 +125,7 @@ func TestProxyRoutesToUsableProxy(t *testing.T) {
 	s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.Handle.Release()
 	require.Equal(t, int64(1), sel.AccountID)
 	require.True(t, s.view.Load().static.byID[1].static.Load().routable)
 }
@@ -168,7 +168,7 @@ func TestProxyPlanKeySensitivity(t *testing.T) {
 	require.NoError(t, s.InvalidateAllSync()) // 同内容重载 ⇒ 键判等
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // TestReloadSkipsSnapshotWhenEgressUnwired 钉住装配违例（spec §4.7「装配缺失」）：
@@ -246,7 +246,7 @@ func TestEgressHotPathIsFieldRead(t *testing.T) {
 		require.NoError(t, err)
 		require.Same(t, pool.For(specOfDomain(px)), sel.Egress)
 		require.NotNil(t, sel.Egress.HTTP())
-		sel.Release()
+		sel.Handle.Release()
 	}
 	require.Equal(t, sizeBefore, pool.Size(), "选号不得建新 client（热路径零池操作）")
 }

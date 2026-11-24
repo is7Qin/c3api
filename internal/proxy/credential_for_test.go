@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // 本文件替代被删除的凭据分发恒等层，锁住 credentialFor 的全部行为。
@@ -34,7 +34,7 @@ func TestCredentialForReturnsUpstreamKey(t *testing.T) {
 	keys := []string{"sk-upstream", ""}
 	for _, typ := range static {
 		for _, key := range keys {
-			got, err := (&Proxy{}).credentialFor(&scheduler.Selection{CredentialType: typ, UpstreamKey: key})
+			got, err := (&Proxy{}).credentialFor(&api.Selection{CredentialType: typ, UpstreamKey: key})
 			require.NoError(t, err, "type=%q key=%q", typ, key)
 			require.Equal(t, key, got, "静态通道必须原样返回 Selection.UpstreamKey（type=%q）", typ)
 		}
@@ -46,7 +46,7 @@ func TestCredentialForReturnsUpstreamKey(t *testing.T) {
 // ChannelOf 分支就被拦下），这是纵深防御契约。
 func TestCredentialForRejectsNonStatic(t *testing.T) {
 	for _, typ := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT, credential.TypeBPS} {
-		got, err := (&Proxy{}).credentialFor(&scheduler.Selection{CredentialType: typ, UpstreamKey: "sk-must-not-leak"})
+		got, err := (&Proxy{}).credentialFor(&api.Selection{CredentialType: typ, UpstreamKey: "sk-must-not-leak"})
 		require.Error(t, err, "type=%q 不得在静态通道取到凭据", typ)
 		require.Empty(t, got, "type=%q 失败时不得吐凭据值", typ)
 		require.ErrorIs(t, err, credential.ErrUnsupported, "type=%q", typ)
@@ -54,7 +54,7 @@ func TestCredentialForRejectsNonStatic(t *testing.T) {
 	}
 	// 逐字节锚点：旧 Registry 兜底 provider 走的是同一条 `%w: %q` 形状——下游
 	// errors.Is 与日志文本都不因删除分发层而变。
-	_, err := (&Proxy{}).credentialFor(&scheduler.Selection{CredentialType: credential.TypeCodexOAuth})
+	_, err := (&Proxy{}).credentialFor(&api.Selection{CredentialType: credential.TypeCodexOAuth})
 	require.EqualError(t, err, `credential: unsupported credential type: "codex-oauth"`)
 }
 
@@ -66,7 +66,7 @@ func TestCredentialForRejectsNonStatic(t *testing.T) {
 // 门拒掉（TestProxyCredentialUnknownTypeRejectsNoUpstreamCall 证明上游零请求）。
 func TestCredentialForRejectsUnknownType(t *testing.T) {
 	for _, typ := range []credential.Type{"", "bogus"} {
-		got, err := (&Proxy{}).credentialFor(&scheduler.Selection{CredentialType: typ, UpstreamKey: "sk-x"})
+		got, err := (&Proxy{}).credentialFor(&api.Selection{CredentialType: typ, UpstreamKey: "sk-x"})
 		require.Error(t, err, "type=%q 必须被拒", typ)
 		require.Empty(t, got)
 		require.False(t, errors.Is(err, credential.ErrUnsupported),
@@ -74,6 +74,6 @@ func TestCredentialForRejectsUnknownType(t *testing.T) {
 		require.Contains(t, err.Error(), "unsupported credential type")
 	}
 	// 逐字节锚点：不带 `credential: ` 前缀、不被 sentinel 包裹——与上面那条不同形。
-	_, err := (&Proxy{}).credentialFor(&scheduler.Selection{CredentialType: "bogus"})
+	_, err := (&Proxy{}).credentialFor(&api.Selection{CredentialType: "bogus"})
 	require.EqualError(t, err, `unsupported credential type "bogus"`)
 }

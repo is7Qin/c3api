@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -25,7 +25,7 @@ type imageStreamGenerator func(ctx context.Context, cred *domain.AccountCredenti
 // errStreamWriteFailed 兜底错误：WriteFailed 已置但无保存的 I/O 错时的失败出口用。
 var errStreamWriteFailed = errors.New("image stream write failed")
 
-func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, params *domain.ImageGenParams, gen imageStreamGenerator) (int, []byte, bool, error) {
+func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, cred *domain.AccountCredential, params *domain.ImageGenParams, gen imageStreamGenerator) (int, []byte, bool, error) {
 	// 首事件前保留 HTTP 错误语义；首事件后只能写 SSE error 帧，计费使用已收集的图片和令牌。
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
@@ -181,7 +181,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	return http.StatusOK, nil, true, nil
 }
 
-func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+func imagesStreamOutcome(reqID string, sel *api.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
 	return syntheticOutcome(CallerImagesCodex, reqID, sel, reqModel, op, timing, usage, result, status, commit, businessSent, terminal, malformed)
 }
 

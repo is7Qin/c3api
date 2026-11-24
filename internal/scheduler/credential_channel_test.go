@@ -138,5 +138,5 @@ func TestBPSWithoutProfileIsUnroutable(t *testing.T) {
 	sel, err := s2.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }

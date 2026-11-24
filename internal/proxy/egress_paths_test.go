@@ -321,7 +321,7 @@ func TestEgressPathsSelectionCarriesBinding(t *testing.T) {
 	bound := newEgressPathProxy(t, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, px.URL, true)
 	sel, err := bound.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	require.NotNil(t, sel.Egress, "出口恒非 nil")
 	require.NotEqual(t, (egress.Spec{}), sel.Egress.Spec, "绑定账号的出口带规格")
 	require.NotNil(t, sel.ProxyID, "绑定行 id 与出口同源携带（失败日志要用）")
@@ -331,7 +331,7 @@ func TestEgressPathsSelectionCarriesBinding(t *testing.T) {
 	direct := newEgressPathProxy(t, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, "", false)
 	sel2, err := direct.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel2.Release()
+	defer sel2.HandleOrDetached().Release()
 	require.Equal(t, (egress.Spec{}), sel2.Egress.Spec, "未绑定 ⇒ 零值规格（直连）")
 	require.Nil(t, sel2.ProxyID, "未绑定 ⇒ 无 proxy_id")
 }

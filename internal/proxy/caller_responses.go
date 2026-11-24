@@ -13,10 +13,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
@@ -26,7 +26,7 @@ type responsesCaller struct{ p *Proxy }
 
 // responsesCaller 负责 Responses 原始字节转发、response.completed 用量提取和图像调用计数。
 
-func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	// 按凭证类型分流：codex 凭证走适配层；BPS 也必须有独立适配层，
 	// 绝不能落入下方的静态 key 原始透传路径。
@@ -40,7 +40,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return 0, nil, true, nil
 		}
 		var err error
-		prepared, err = p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: sel.Credential(), Format: sel.Format, Egress: sel.Egress, Transport: sel.CodexResponsesTransport})
+		prepared, err = p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: sel.HandleOrDetached().Credential(), Format: sel.Format, Egress: sel.Egress, Transport: sel.CodexResponsesTransport})
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, nil, false, ctx.Err()
@@ -203,13 +203,13 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := gjson.GetBytes(body, "model").String()
 	if err := validateNonStreamBody(body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	upBody, setErr := setModel(body, sel.Model)
 	if setErr != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	var data []byte
@@ -277,7 +277,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	return 200, nil, true, nil
 }
 
-func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection, reqModel string, start time.Time, ttft *int64, it, ot, tt, cr, cc, img int64) AttemptOutcome {
+func responsesBaseOutcome(reqID string, groupID int64, sel *api.Selection, reqModel string, start time.Time, ttft *int64, it, ot, tt, cr, cc, img int64) AttemptOutcome {
 	routeID, _ := domain.RouteClassID(groupID, domain.FormatOpenAIResponses, reqModel, domain.OpResponses)
 	qualityID, _ := domain.QualityClassID(domain.CallerResponses, domain.FormatOpenAIResponses, sel.Model, domain.OpResponses)
 	fp := sel.CandidateFingerprint

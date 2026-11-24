@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -140,7 +141,7 @@ func (s *DispatchObserverStats) Stats() any {
 	return dispatchObserverStats{Rejected: s.p.observationRejected.Load()}
 }
 
-func (p *Proxy) pipelineObserver(sel *scheduler.Selection, attempt scheduler.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {
+func (p *Proxy) pipelineObserver(sel *api.Selection, attempt scheduler.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {
 	if sel == nil || attempt.Validate() != nil {
 		return nil, false
 	}
@@ -440,7 +441,7 @@ func clockMinute() int64 { return time.Now().UTC().Truncate(time.Minute).Unix() 
 // canonical attempt identity (threaded settle value —): a dispatch
 // without a valid recorded attempt gets no observation and no flow binding —
 // nothing is ever recorded under a fabricated identity.
-func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, attempt scheduler.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {
+func (p *Proxy) beginDispatch(ctx context.Context, sel *api.Selection, attempt scheduler.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {
 	if sel == nil {
 		return ctx, nil
 	}

@@ -16,16 +16,16 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // upstreamPath 图片端点路径：generations 与 edits 各有一键（同一格式两个端点，
 // 不能共用），未配置回落 imagesCaller 自带默认。
-func (c *imagesCaller) upstreamPath(sel *scheduler.Selection) string {
+func (c *imagesCaller) upstreamPath(sel *api.Selection) string {
 	if c.op == domain.OpImagesEdits {
 		return targetPath(sel, pathKeyImagesEdits, c.path)
 	}
@@ -47,7 +47,7 @@ type imagesCaller struct {
 
 func (c *imagesCaller) operationTag() domain.OperationTag { return c.op }
 
-func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	contentType := r.Header.Get("Content-Type")
 	multipart := isMultipartForm(contentType)
@@ -201,7 +201,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	return 200, nil, true, nil
 }
 
-func imagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+func imagesOutcome(reqID string, sel *api.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
 	return syntheticOutcome(CallerImages, reqID, sel, reqModel, op, timing, usage, result, status, commit, businessSent, terminal, malformed)
 }
 

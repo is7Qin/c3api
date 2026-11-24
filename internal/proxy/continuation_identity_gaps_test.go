@@ -129,5 +129,5 @@ func TestContinuationBindingAsLifecycleTokenFailsClosed(t *testing.T) {
 	pinned, _, ferr2 := p.contPin(&plan2, sel2, attempt2, b2)
 	require.Nil(t, ferr2, "单侧换 C 在初值相等时碰巧匹配，这是反向必须两侧同换的实证")
 	require.NotNil(t, pinned)
-	pinned.Release()
+	pinned.Handle.Release()
 }

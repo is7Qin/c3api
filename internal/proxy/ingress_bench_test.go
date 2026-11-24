@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // benchBody 构造典型非流 chat 请求体（pad 填充 messages 内容以模拟大请求）。
@@ -43,11 +43,11 @@ func BenchmarkDuplicateTopLevelKey(b *testing.B) {
 // BenchmarkTargetPath 路径覆盖查找的成本（custom 模板命中一次 map 读；未配置回落
 // 默认端点）。热路径每次上游调用一次。
 func BenchmarkTargetPath(b *testing.B) {
-	custom := &scheduler.Selection{
+	custom := &api.Selection{
 		CredentialType: credential.TypeCustom,
 		UpstreamPaths:  map[string]string{pathKeyChat: "v1/chat/completions"},
 	}
-	plain := &scheduler.Selection{CredentialType: credential.TypeAPIKey}
+	plain := &api.Selection{CredentialType: credential.TypeAPIKey}
 	b.Run("custom-hit", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {

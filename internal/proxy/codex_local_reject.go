@@ -19,8 +19,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -55,7 +55,7 @@ func isCodexInvalidBody(err error) bool {
 // 记录。写法同 caller.go 的 "streaming is required" 本地终止——不 Classify、不
 // MarkResult、不 emitCodexOutcome（dispatch 观测由循环的 abandon 收口）。SDK 在
 // 出网前拒绝，“未发送”是确定事实 ⇒ commit_state = not_sent（不是 NULL/未知）。
-func (p *Proxy) finishCodexInvalidBody(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, format domain.RequestFormat) {
+func (p *Proxy) finishCodexInvalidBody(ctx context.Context, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, format domain.RequestFormat) {
 	convLocalRejects.Add(1)
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start)), CommitNotSent)
 	em := codexInvalidBodyMsg
@@ -96,7 +96,7 @@ func writeCodexInvalidBodyFrameMessage(ctx context.Context, client *websocket.Co
 
 // rejectCodexWSInvalidBody 拨号/首帧落点的本地拒绝：写错误帧并正常关闭客户端，
 // 记录 400。
-func (p *Proxy) rejectCodexWSInvalidBody(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn) {
+func (p *Proxy) rejectCodexWSInvalidBody(r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, client *websocket.Conn) {
 	p.finishCodexInvalidBody(r.Context(), reqID, groupID, start, sel, reqModel, sel.Format)
 	_ = writeCodexInvalidBodyFrame(context.Background(), client)
 	_ = client.Close(websocket.StatusNormalClosure, "")

@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -157,7 +158,7 @@ func TestEgressProxyDialFailureIsNetworkAndAnnotated(t *testing.T) {
 // 与 M3 之前逐字节一致（不因引入出口概念而多出任何后缀）。
 func TestEgressNoteDirectIsNoop(t *testing.T) {
 	require.Empty(t, egressNote(nil), "nil Selection ⇒ 无注解")
-	sel := &scheduler.Selection{}
+	sel := &api.Selection{}
 	require.Empty(t, egressNote(sel), "未绑定（ProxyID nil）⇒ 无注解")
 	require.Equal(t, "boom", withEgressNote("boom", sel), "直连：原文原样返回")
 	require.Empty(t, withEgressNote("", sel), "直连：原文为空仍为空")
@@ -168,7 +169,7 @@ func TestEgressNoteDirectIsNoop(t *testing.T) {
 func TestEgressNoteIsRedactedAndBounded(t *testing.T) {
 	pxID := int64(42)
 	spec := egress.New("socks5", "10.0.0.9", 1080, "secretuser", "secretpass")
-	sel := &scheduler.Selection{ProxyID: &pxID, Egress: &egress.Client{Spec: spec}}
+	sel := &api.Selection{ProxyID: &pxID, Egress: &egress.Client{Spec: spec}}
 
 	note := egressNote(sel)
 	require.Equal(t, "proxy_id=42 socks5://10.0.0.9:1080", note)

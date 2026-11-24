@@ -13,10 +13,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -39,7 +39,7 @@ var errCodexResponsesNotIntegrated = &formatError{status: http.StatusNotImplemen
 // 不进 openapi/web，是实验仪器（A/B harness 的 effective 判据）。
 const headerUpstreamTransport = "x-c3api-upstream-transport"
 
-func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time, usage usageTuple, ttft *int64) AttemptOutcome {
+func codexDispatchBase(sel *api.Selection, reqModel, reqID string, start time.Time, usage usageTuple, ttft *int64) AttemptOutcome {
 	fp := "fp1"
 	if sel != nil && sel.CandidateFingerprint != "" {
 		fp = sel.CandidateFingerprint
@@ -76,7 +76,7 @@ func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start t
 	}
 }
 
-func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, health *AttemptHealthEvent) {
+func emitCodexOutcome(ctx context.Context, p *Proxy, sel *api.Selection, o AttemptOutcome, health *AttemptHealthEvent) {
 	if sel == nil {
 		return
 	}
@@ -105,7 +105,7 @@ func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o
 //     FailAccount 快照摘除——failover 不重试同账号）；code 0 → 连接级
 //     MarkResult(RuleKindOf(0)) + 转移其它账号（与 images 路径同语义）
 //   - RefreshError/网络 → code 0 → failover 可重试
-func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool) (int, []byte, bool, error) {
+func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, body []byte, stream bool) (int, []byte, bool, error) {
 	// 生效传输头（spec §6）：每个响应都带"网关选了什么腿"。写在这里是**唯一**
 	// 写点——它同时覆盖下面两条早退（p.codex == nil 的 501、sel.Ext == nil 的
 	// errCodexExtMissing）与流式/非流式两个入口；每次 attempt 重设，WriteHeader
@@ -124,7 +124,7 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 		o.Terminal = true
 		o.BusinessFrameSent = false
 		emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: errCodexResponsesNotIntegrated.msg})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
 		return 0, nil, true, nil
@@ -139,7 +139,7 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	// 结构 oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 	// 达不了；注册表未注册 codex 类型，见 codex_responses_ws.go 注释）。
 	// Codex 端点归 SDK 官方默认，网关不再派生 BaseURL。
-	cred := sel.Credential()
+	cred := sel.HandleOrDetached().Credential()
 	if stream {
 		return p.streamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 	}
@@ -155,12 +155,12 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 //   - 会话路径（sel.Conversation，选号时已保证 p.conversations != nil）：会话簿
 //     按 (缓存域, API key, 对话标识) 合成身份；本副本命中零 Redis。
 //   - 槽位路径：`sel.IdentityFor(first)`，不带也不捕获 turn-state（Sink=nil）。
-func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, sdkbridge.CallRequest, error) {
+func (p *Proxy) codexRequestPrep(ctx context.Context, sel *api.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, sdkbridge.CallRequest, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
 		return sdkbridge.Prepared{}, sdkbridge.CallRequest{}, err
 	}
-	call := sdkbridge.CallRequest{Thread: sel.Thread(), Frame: payload}
+	call := sdkbridge.CallRequest{Thread: sel.HandleOrDetached().Thread(), Frame: payload}
 	if req, ok := p.bookRequest(ctx, sel, prep); ok {
 		call.Book = p.conversations.Call(req, payload)
 	}
@@ -174,7 +174,7 @@ func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, 
 // 这里刻意只给原料（缓存域、API key 行号、对话标识、安装号、owner）：会话键的派生
 // 算法与 payload 的形状判定都在 sdkbridge 内，宿主既不知道键长什么样，也无法伪造一个
 // 看起来合法的请求。对话标识只在这里物化，且只进 ConversationKey（SHA-256）。
-func (p *Proxy) bookRequest(ctx context.Context, sel *scheduler.Selection, prep sdkbridge.Prepared) (sdkbridge.BookRequest, bool) {
+func (p *Proxy) bookRequest(ctx context.Context, sel *api.Selection, prep sdkbridge.Prepared) (sdkbridge.BookRequest, bool) {
 	if !sel.Conversation || p.conversations == nil {
 		return sdkbridge.BookRequest{}, false
 	}
@@ -193,7 +193,7 @@ func (p *Proxy) bookRequest(ctx context.Context, sel *scheduler.Selection, prep 
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
 // 合成体原样透传、日志口径 openai-responses）。直连路径逐字节不变。
-func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
+func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
 	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w}, sel.CodexResponsesTransport)
 }
 
@@ -206,7 +206,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // ——本层不读也不回写。
 // 日志 Format 由 out.LogFormat() 自报。
 // transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
-func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
+func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
@@ -257,7 +257,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 		// 推进（§3.3）：SDK 的聚合臂在返回前已 Close（连接同步归还进 idle 表），
 		// 所以此刻推进/退休看得见那条连接。仅"成功取到 usage"才推进。
-		sel.StepIdentity()
+		sel.HandleOrDetached().StepIdentity()
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
@@ -277,7 +277,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 
 // streamCodexResponses 直连 codex resp 流式（薄封装 core：注入直连 plan——上游
 // 原始 SSE 字节 verbatim 透传；日志口径 openai-responses）。
-func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
+func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
 	return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, codexDirectStreamPlan(), sel.CodexResponsesTransport)
 }
 
@@ -301,7 +301,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 // 断开/超时/已提交错误收尾走统一出口判定 classifyStreamExit（§3.7）：客户端取消
 // → 不 MarkResult（200 ErrAbort——上游已消费请求，token 取断前已收 usage）；
 // 未提交读取失败 → pipeline；已提交 → 客户端协议 SSE error + recordStreamAbort。
-func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
+func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
@@ -415,7 +415,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	// → Step（退休此刻才看得见那条连接）→ finish。提前 Close / 取消 / 读取失败
 	// **不推进不退休**；failover 重试因此不可能"先推进再失败"。
 	if err == nil && usageTaken {
-		sel.StepIdentity()
+		sel.HandleOrDetached().StepIdentity()
 	}
 	if ttft != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)

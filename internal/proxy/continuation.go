@@ -42,6 +42,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -202,17 +203,17 @@ func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocol
 // session-local projection — the loop threads the settled Attempt
 // values (entry attempt in, next attempt per advance) and never value-returns
 // CurrentAttempt on the hot path.
-func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, attempt scheduler.Attempt, b *continuation.Binding) (*scheduler.Selection, scheduler.Attempt, *formatError) {
+func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *api.Selection, attempt scheduler.Attempt, b *continuation.Binding) (*api.Selection, scheduler.Attempt, *formatError) {
 	for {
 		if attempt.AccountID == b.AccountID {
 			if attempt.CandidateFingerprint == hex.EncodeToString(b.Fingerprint[:]) &&
 				attempt.IdentityRevision == b.IdentityRevision {
 				return sel, attempt, nil
 			}
-			sel.Release()
+			sel.HandleOrDetached().Release()
 			return nil, scheduler.Attempt{}, errContStale
 		}
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		plan.AbandonLastAttempt()
 		next, nextAttempt, err := p.selectNextWithPlan(plan)
 		if err != nil {

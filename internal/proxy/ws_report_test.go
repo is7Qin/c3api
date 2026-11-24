@@ -10,14 +10,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-func selForWSReport() *scheduler.Selection {
-	return &scheduler.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp-ws-test-1234"}
+func selForWSReport() *api.Selection {
+	return &api.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp-ws-test-1234"}
 }
 
 func TestWSOutcome_successReportsResponseStartedWithUsageAndTTFT(t *testing.T) {
@@ -95,16 +95,16 @@ func TestWSOutcome_notSentNetworkIsRetryable(t *testing.T) {
 	require.False(t, out.Terminal)
 	require.True(t, CanRetry(CallerResponsesWS, out))
 	require.True(t, CanRetry(CallerCodexWS, func() AttemptOutcome {
-		b := wsDispatchedBase(&scheduler.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp-ws-test-1234", CredentialType: "codex-oauth"}, "gpt-4o", time.Now())
+		b := wsDispatchedBase(&api.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp-ws-test-1234", CredentialType: "codex-oauth"}, "gpt-4o", time.Now())
 		return wsOutcomeForNotSentNetwork(b, usageTuple{})
 	}()))
 }
 
 func TestWSOutcome_codexCategoryFromSelection(t *testing.T) {
-	sel := &scheduler.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp", CredentialType: "codex-oauth"}
+	sel := &api.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp", CredentialType: "codex-oauth"}
 	base := wsDispatchedBase(sel, "gpt-4o", time.Now())
 	require.Equal(t, CallerCodexWS, base.CallerCategory)
-	sel2 := &scheduler.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp", CredentialType: "api_key"}
+	sel2 := &api.Selection{AccountID: 7, TemplateID: 3, Model: "gpt-4o", CandidateFingerprint: "fp", CredentialType: "api_key"}
 	base2 := wsDispatchedBase(sel2, "gpt-4o", time.Now())
 	require.Equal(t, CallerResponsesWS, base2.CallerCategory)
 }

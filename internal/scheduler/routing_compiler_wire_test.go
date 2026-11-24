@@ -215,7 +215,7 @@ func TestRoutingCompilerWireStaticRootForcesPublish(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err, "fresh compiled candidate must reserve after static-only reload")
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // TestRoutingCompilerWireInitialPairKeepsStaticOnlyRootImmutable pins the
@@ -465,7 +465,7 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err, "reserve gates skip 2 and 3 within the same request")
 	require.Equal(t, int64(1), sel.AccountID, "only the ungated account serves")
-	sel.Release()
+	sel.Handle.Release()
 }
 
 func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {

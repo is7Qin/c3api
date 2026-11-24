@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -28,7 +29,7 @@ func (p *Proxy) normalizedAttempts() int {
 // Attempt is threaded by value alongside it, so no path value-returns
 // CurrentAttempt on the hot path — identity is projected once at settle/arm
 // and read downstream.
-func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
+func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
 		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
 	}
@@ -36,7 +37,7 @@ func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model
 	return p.selectWithPlanForRoute(route, groupID, format, model, identity)
 }
 
-func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
+func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
 		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
 	}
@@ -58,13 +59,13 @@ func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, 
 // route/quality/model identity, so the lease is released and the selection
 // fails closed as format-unavailable — never dispatched under a fabricated
 // identity.
-func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Selection, scheduler.Attempt, error) {
+func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*api.Selection, scheduler.Attempt, error) {
 	sel, attempt, err := p.sched.ReserveAttempt(plan)
 	if err != nil {
 		return nil, scheduler.Attempt{}, err
 	}
 	if attempt.Validate() != nil {
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return nil, scheduler.Attempt{}, scheduler.ErrFormatUnavailable
 	}
 	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：供给准入门放行候选时
@@ -133,6 +134,6 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 // ReserveAttempt). There is no plan-less fall-through — a nil plan has no
 // selection lane and fails closed. The settled Attempt threads alongside the
 // selection (session-local projection).
-func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*scheduler.Selection, scheduler.Attempt, error) {
+func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*api.Selection, scheduler.Attempt, error) {
 	return p.reservePlanAttempt(plan)
 }

@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-func chatDispatchedBase(sel *scheduler.Selection, reqID string, reqModel string, start time.Time) AttemptOutcome {
+func chatDispatchedBase(sel *api.Selection, reqID string, reqModel string, start time.Time) AttemptOutcome {
 	fp := string(sel.CandidateFingerprint)
 	if fp == "" {
 		fp = "fp-placeholder"
@@ -74,7 +74,7 @@ func chatOutcomeForAbort(base AttemptOutcome, sent bool, u usageTuple, ttft *int
 // error_message / 健康事件）全部来自 f——出口不再自拼类别（旧实现把「上游流内
 // 声明失败」和「客户端断开」都写成 abort）；commit 是交付事实（计费资格），由
 // 调用方按 Output 的写出事实给出。
-func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, f streamFailure, commit CommitState) error {
+func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *api.Selection, reqID string, groupID int64, reqModel string, start time.Time, f streamFailure, commit CommitState) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}

@@ -62,12 +62,12 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 
 		sel := reserveOnce(t, s, route, true)
 		require.True(t, sel.Conversation)
-		require.Nil(t, sel.session, "会话路径不认领槽位")
-		require.Nil(t, sel.pool)
+		require.Nil(t, handleOf(t, sel).session, "会话路径不认领槽位")
+		require.Nil(t, handleOf(t, sel).pool)
 		require.Equal(t, "private:1", sel.CacheDomain, "未配置缓存域 = 私有域")
 		require.Equal(t, "inst-1", sel.InstallationID)
 		requirePoolIdle(t, pool)
-		sel.Release()
+		sel.Handle.Release()
 		requirePoolIdle(t, pool)
 		for i, sl := range pool.slots {
 			require.Equal(t, threads[i], sessionThreadKey(sl), "槽位 %d 不得推进", i)
@@ -81,12 +81,12 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 
 		sel := reserveOnce(t, s, route, false)
 		require.False(t, sel.Conversation)
-		require.NotNil(t, sel.session)
-		require.Same(t, pool, sel.pool)
-		require.True(t, sel.session.busy.Load())
+		require.NotNil(t, handleOf(t, sel).session)
+		require.Same(t, pool, handleOf(t, sel).pool)
+		require.True(t, handleOf(t, sel).session.busy.Load())
 		require.Equal(t, "private:1", sel.CacheDomain, "槽位路径同样携带账号事实")
 		require.Equal(t, "inst-1", sel.InstallationID)
-		sel.Release()
+		sel.Handle.Release()
 		requirePoolIdle(t, pool)
 	})
 
@@ -99,7 +99,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		sel := reserveOnce(t, s, route, true)
 		require.Equal(t, "team-a", sel.CacheDomain)
 		require.Equal(t, "inst-2", sel.InstallationID)
-		sel.Release()
+		sel.Handle.Release()
 	})
 
 	t.Run("non codex carries no facts", func(t *testing.T) {
@@ -108,10 +108,10 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 
 		sel := reserveOnce(t, s, route, true)
 		require.True(t, sel.Conversation)
-		require.Nil(t, sel.session)
+		require.Nil(t, handleOf(t, sel).session)
 		require.Empty(t, sel.CacheDomain, "仅 Codex 凭据填缓存域")
 		require.Empty(t, sel.InstallationID)
-		sel.Release()
+		sel.Handle.Release()
 	})
 
 	t.Run("no pool when max concurrency zero", func(t *testing.T) {
@@ -122,11 +122,11 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		for _, conv := range []bool{false, true} {
 			sel := reserveOnce(t, s, route, conv)
 			require.Equal(t, conv, sel.Conversation)
-			require.Nil(t, sel.session, "无池 → 零身份")
-			require.Nil(t, sel.pool)
+			require.Nil(t, handleOf(t, sel).session, "无池 → 零身份")
+			require.Nil(t, handleOf(t, sel).pool)
 			require.Equal(t, "private:4", sel.CacheDomain)
 			require.Equal(t, "inst-4", sel.InstallationID)
-			sel.Release()
+			sel.Handle.Release()
 		}
 	})
 }
@@ -149,7 +149,7 @@ func TestReserveConversationNoNewAllocs(t *testing.T) {
 					t.Fatal(err)
 				}
 				sel = got
-				got.Release()
+				got.Handle.Release()
 			})
 			require.NotNil(t, sel)
 			require.Equal(t, "inst-1", sel.InstallationID)

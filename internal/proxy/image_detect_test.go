@@ -17,10 +17,10 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
@@ -132,8 +132,8 @@ func TestRespImageCount(t *testing.T) {
 // --- unit：开关矩阵（spec §6） ---
 
 func TestRespImageDetectOn(t *testing.T) {
-	sel := func(typ credential.Type, strip bool) *scheduler.Selection {
-		return &scheduler.Selection{CredentialType: typ, StripImageTools: strip}
+	sel := func(typ credential.Type, strip bool) *api.Selection {
+		return &api.Selection{CredentialType: typ, StripImageTools: strip}
 	}
 	// api_key 永不检测（strip 开/关均关）
 	require.False(t, respImageDetectOn(sel(credential.TypeAPIKey, false)))

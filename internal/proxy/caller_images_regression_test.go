@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -41,7 +42,7 @@ func TestRegression_NoDuplicateMarkResultAndReleaseOnHandledFalse(t *testing.T) 
 	require.Equal(t, int64(1), riAfter.Concurrency, "handled=false must not release; pipeline owns single release")
 	// MarkResult for 5xx should not have been called by caller; rule not enqueued yet (caller would have enqueued)
 	// Flush to check no cooldown via caller
-	sel.Release()
+	sel.HandleOrDetached().Release()
 	riFinal, _ := p.sched.Runtime(sel.AccountID)
 	require.Equal(t, int64(0), riFinal.Concurrency, "pipeline release exactly once")
 }
@@ -52,7 +53,7 @@ func TestRegression_CodexFatalRetriesWithoutFabricatedStatus(t *testing.T) {
 
 	// 换号判据是 AccountFatal（账号已摘除），不是伪造出来的状态码：
 	// status 保持上游真值（0 = 上游没给过），矩阵照样允许换号。
-	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
+	sel := &api.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	oFatal := codexImagesOutcome("req-fatal", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(0), CommitNotSent, false, false, false)
 	require.False(t, oFatal.Terminal, "零交付的账号级终止不得终态")
 	oFatal.AccountFatal = true
@@ -86,7 +87,7 @@ func TestRegression_CodexFatalRetriesWithoutFabricatedStatus(t *testing.T) {
 	// AuthPermanentlyRevokedError 自身不带 HTTP 状态码（判死依据是码），所以这里
 	// 的真值就是 0——换号判据是 AccountFatal，不需要一个编出来的状态码。
 	require.Equal(t, 0, code, "不伪造 502：判死类型没有状态码就是 0")
-	sel2.Release()
+	sel2.HandleOrDetached().Release()
 }
 
 // TestRegression_ImagesSetModelFailureNotSilentlyForwarded 钉住 S6 修复：JSON
@@ -109,10 +110,10 @@ func TestRegression_ImagesSetModelFailureNotSilentlyForwarded(t *testing.T) {
 	require.False(t, handled, "pre-response rewrite failure must be handled=false for failover")
 	require.Equal(t, 0, code)
 	require.False(t, hit.Load(), "unmapped body must not be forwarded upstream")
-	sel.Release()
+	sel.HandleOrDetached().Release()
 }
 
-func newImagesRegressionProxy(t *testing.T, baseURL string) (*Proxy, *scheduler.Selection) {
+func newImagesRegressionProxy(t *testing.T, baseURL string) (*Proxy, *api.Selection) {
 	t.Helper()
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: baseURL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages}, Models: []string{"gpt-image-2"}}
 	accs := map[int64][]*domain.Account{10: {{ID: 99, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}}}

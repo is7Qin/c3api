@@ -10,13 +10,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 type panicProxyAttempt struct{}
 
-func (p *panicProxyAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+func (p *panicProxyAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	panic("simulated upstream panic")
 }
 
@@ -37,5 +38,5 @@ func TestProxyRealPanicReleasesLease(t *testing.T) {
 	})
 	ri, _ = px.sched.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "panic must release lease via failoverLoopWithPlan guard")
-	require.NotPanics(t, func() { sel.Release() })
+	require.NotPanics(t, func() { sel.HandleOrDetached().Release() })
 }

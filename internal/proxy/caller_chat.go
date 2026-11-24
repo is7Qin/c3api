@@ -12,8 +12,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -23,7 +23,7 @@ import (
 // （finish/buildLog/recordStreamAbort/MarkResult）。
 type chatCaller struct{ p *Proxy }
 
-func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 
 	if stream {
@@ -127,13 +127,13 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		// 本地拒绝（handled=true，无记录）：请求体形状非法记本地 400，不记日志；
 		// 已占并发槽必须释放。
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	upBody, setErr := setModel(body, sel.Model)
 	if setErr != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, r.Header)

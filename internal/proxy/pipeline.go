@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -159,7 +160,7 @@ type attemptState struct {
 //     **code==0 必须带 callErr**：typed retry matrix 的网络判据就是
 //     `code==0 && callErr != nil`（retryOutcomeForAttempt），缺它 = 不迁移。
 type upstreamAttempt interface {
-	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, hdr http.Header, handled bool, callErr error)
+	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, hdr http.Header, handled bool, callErr error)
 }
 
 // pipelineSink 循环收尾写出（HTTP 信封 vs WS 错误事件帧）。
@@ -217,7 +218,7 @@ func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr htt
 // 无预检语义）。
 // 记录（recordRejected/buildLog/finish/recordLog/MarkResult）参数逐字段与三份
 // 原内联管线一致（行为契约：状态码/错误帧/Retry-After/固定文案逐字节不变）。
-func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan scheduler.AttemptPlan, attempt scheduler.Attempt, st attemptState, upstream upstreamAttempt, sink pipelineSink, precheck bool) {
+func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *api.Selection, plan scheduler.AttemptPlan, attempt scheduler.Attempt, st attemptState, upstream upstreamAttempt, sink pipelineSink, precheck bool) {
 	lastSel := sel
 	var (
 		lastCode   int
@@ -247,10 +248,10 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		if rc := recover(); rc != nil {
 			panicked = true
 			if sel != nil {
-				sel.Release()
+				sel.HandleOrDetached().Release()
 			}
 			if lastSel != nil && lastSel != sel {
-				lastSel.Release()
+				lastSel.HandleOrDetached().Release()
 			}
 			panic(rc)
 		}
@@ -321,11 +322,11 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// do not migrate. The typed retry matrix consumes the canonical attempt
 		// identity; without a plan there is no failover lane at all.
 		if !p.shouldRetryWithPlan(r.Context(), code, callErr, attempt, st.hardContinuation) {
-			sel.Release()
+			sel.HandleOrDetached().Release()
 			break
 		}
 		// release exactly once before retry
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		if dispatched >= maxAttempts {
 			break
 		}
@@ -338,7 +339,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		dispatched++
 	}
 	if !attempted {
-		lastSel.Release()
+		lastSel.HandleOrDetached().Release()
 	}
 	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastOrdinal, lastCode, lastErr, lastErrMsg, lastHdr, lastBody, st, sink)
 }
@@ -346,11 +347,11 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 // failoverPrecheckPrice 缺价预检阶段（failoverLoopWithPlan 提取）：命中即
 // recordRejected + sel.Release + sink.writePrecheckRejected，返回 true（调用方直接
 // return）；未命中返回 false。记录/释放/写出时机与现状逐字一致。
-func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, st attemptState, sink pipelineSink) bool {
+func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *api.Selection, st attemptState, sink pipelineSink) bool {
 	priceModel := sel.PriceModel(reqModel)
 	if err := p.precheckPrice(format, priceModel); err != nil {
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mapped, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		sink.writePrecheckRejected(w, st)
 		return true
 	}
@@ -367,7 +368,7 @@ func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, fo
 // （S3 的 (request_id, attempt_ordinal) 去重锚）。**只有本函数里的三处产出点与
 // writeFailoverExhausted 填值**，其余（recordRejected / record / codex 本地拒绝 /
 // caller 侧 handled=true 终态）一律 NULL——它们没有 attempt 语义。
-func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, attempt scheduler.Attempt, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
+func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *api.Selection, attempt scheduler.Attempt, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
 	// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
 	// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
 	// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
@@ -521,7 +522,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 //
 // lastOrdinal 是最后一次实际尝试的序号（0 = 循环一次 dispatch 都没发——
 // 该情况下耗尽行的 attempt_ordinal 保持 NULL）。
-func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastOrdinal uint8, lastCode int, lastErr error, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
+func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *api.Selection, lastOrdinal uint8, lastCode int, lastErr error, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
 	et := domain.Err5xx
 	// 无标签 switch：429 必须排在 4xx 之前（429 也是 4xx 区间），
 	// 顺序错会把限流记成普通 4xx。

@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 type bpsTestStatusError int
@@ -62,13 +62,13 @@ func TestBPSUpstreamBodyFlowsToPipeline(t *testing.T) {
 	p := &Proxy{}
 	w := httptest.NewRecorder()
 	code, body, handled, handledErr := p.bpsHTTPError(context.Background(), w, "req", 1, time.Now(),
-		&scheduler.Selection{AccountID: 1}, "gpt-5.1", cause)
+		&api.Selection{AccountID: 1}, "gpt-5.1", cause)
 	require.False(t, handled)
 	require.Equal(t, http.StatusBadRequest, code)
 	require.JSONEq(t, raw, string(body), "HTTP 面把上游 body 交给 pipeline")
 	require.ErrorIs(t, handledErr, cause)
 
-	code, msg, _, handled, _ := p.bpsWSError("req", &scheduler.Selection{AccountID: 1}, "gpt-5.1", cause)
+	code, msg, _, handled, _ := p.bpsWSError("req", &api.Selection{AccountID: 1}, "gpt-5.1", cause)
 	require.False(t, handled)
 	require.Equal(t, http.StatusBadRequest, code)
 	require.Equal(t, "model is not available for this account", string(msg), "WS 面优先用上游 error.message")
@@ -76,7 +76,7 @@ func TestBPSUpstreamBodyFlowsToPipeline(t *testing.T) {
 
 func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 	p := &Proxy{cfg: Config{UsageCapture: false}}
-	sel := &scheduler.Selection{
+	sel := &api.Selection{
 		AccountID:      7,
 		CredentialType: credential.TypeBPS,
 		Model:          "gpt-4o",
@@ -98,8 +98,8 @@ func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 // 判据是 Selection 上的**构造期政策位**（预留装配点按两条逐 Type 能力位算好），
 // 数据面只读这一位；位本身的取值由 scheduler 的 TestSkipContinuationFor* 守。
 func TestBPSContinuationPolicy(t *testing.T) {
-	require.True(t, bpsSkipsContinuation(&scheduler.Selection{SkipContinuation: true}))
-	require.False(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeAPIKey}),
+	require.True(t, bpsSkipsContinuation(&api.Selection{SkipContinuation: true}))
+	require.False(t, bpsSkipsContinuation(&api.Selection{CredentialType: credential.TypeAPIKey}),
 		"静态 key 通道要吃绑定账本 ⇒ 绝不跳过解析（即便凭据类型被夹具设成 api_key）")
 	require.False(t, bpsSkipsContinuation(nil))
 

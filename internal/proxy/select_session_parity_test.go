@@ -55,7 +55,7 @@ func TestSelectSessionParity_threadedFailoverSequence(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, attempt, cur, "threaded settle value coincides with the session derivation")
 	got = append(got, rec(attempt))
-	sel.Release()
+	sel.HandleOrDetached().Release()
 
 	for range 3 {
 		nextSel, nextAttempt, err := p.selectNextWithPlan(&plan)
@@ -68,7 +68,7 @@ func TestSelectSessionParity_threadedFailoverSequence(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, nextAttempt, cur, "threaded settle value coincides with the session derivation")
 		got = append(got, rec(nextAttempt))
-		nextSel.Release()
+		nextSel.Handle.Release()
 	}
 	require.Equal(t, []string{
 		"1|primary|1|req-px1:1",
@@ -87,10 +87,10 @@ func TestSelectSessionParity_hardContinuationPin(t *testing.T) {
 	probeSel, probePlan, _, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-probe", UserID: 1})
 	require.NoError(t, err)
-	probeSel.Release()
+	probeSel.Handle.Release()
 	probeSel2, bound, err := p.selectNextWithPlan(&probePlan)
 	require.NoError(t, err)
-	probeSel2.Release()
+	probeSel2.Handle.Release()
 	require.Equal(t, int64(2), bound.AccountID)
 	b := &continuation.Binding{AccountID: 2, Fingerprint: parityFP(t, bound.CandidateFingerprint), IdentityRevision: bound.IdentityRevision}
 
@@ -107,7 +107,7 @@ func TestSelectSessionParity_hardContinuationPin(t *testing.T) {
 	cur, ok := plan.CurrentAttempt()
 	require.True(t, ok)
 	require.Equal(t, pinnedAttempt, cur)
-	pinned.Release()
+	pinned.Handle.Release()
 
 	// Stale binding (revision drift on the bound account) fails closed.
 	sel2, plan2, attempt2, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
@@ -126,7 +126,7 @@ func TestSelectSessionParity_retryMatrixOnThreadedAttempts(t *testing.T) {
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-rm", UserID: 1})
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	_ = plan
 
 	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), attempt, false))
@@ -150,7 +150,7 @@ func TestSelectSessionParity_unwiredContinuationFailsClosed(t *testing.T) {
 	sel, _, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-unwired", UserID: 1})
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	_, ferr := p.contResolve(context.Background(), 1, 10, contProtocolREST, "resp-123", attempt)
 	require.NotNil(t, ferr)
 }

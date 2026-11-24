@@ -8,20 +8,20 @@ import (
 	"context"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-func wsCallerCategory(sel *scheduler.Selection) CallerCategory {
+func wsCallerCategory(sel *api.Selection) CallerCategory {
 	if credential.ChannelOf(sel.CredentialType) == credential.ChannelCodex {
 		return CallerCodexWS
 	}
 	return CallerResponsesWS
 }
 
-func wsDispatchedBase(sel *scheduler.Selection, reqModel string, start time.Time) AttemptOutcome {
+func wsDispatchedBase(sel *api.Selection, reqModel string, start time.Time) AttemptOutcome {
 	lat := max(time.Since(start).Milliseconds(), 0)
 	mapped := sel.Model
 	if mapped == "" {
@@ -200,7 +200,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 	return o
 }
 
-func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, rd *round, groupID int64, reqModel string, sent, writeFailed bool, cause error) error {
+func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *api.Selection, rd *round, groupID int64, reqModel string, sent, writeFailed bool, cause error) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}

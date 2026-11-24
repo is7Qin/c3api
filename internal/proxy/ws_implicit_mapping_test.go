@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -461,7 +462,7 @@ type relayWSEnv2 struct {
 	out    chan relayOutcome
 }
 
-func relayWSWithSel(t *testing.T, p *Proxy, sel *scheduler.Selection, ft *fakeTransport, hook func([]byte), first string) *relayWSEnv2 {
+func relayWSWithSel(t *testing.T, p *Proxy, sel *api.Selection, ft *fakeTransport, hook func([]byte), first string) *relayWSEnv2 {
 	t.Helper()
 	reqID := newReqID()
 	start := time.Now()

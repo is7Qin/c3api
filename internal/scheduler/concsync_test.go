@@ -169,7 +169,7 @@ func TestConcShareDynamicNInflightInheritance(t *testing.T) {
 	sel, err := concSelect(s)
 	require.NoError(t, err, "超份额借位：effective=3−3+4=4 < 9")
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // A3 扫描语义四态（spec §1.1 判定嵌入扫描循环——借位拒绝=换号，不是拒流）：
@@ -192,7 +192,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err := concSelect(s1)
 	require.NoError(t, err, "借位放行：effective=2−2+3=3 < 4")
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 
 	// 态 2 视图满换号：账号 1 超份额且视图满（eff=5≥4）被跳过 → 选到账号 2
 	// （fast-path 份额内，与扫描起点无关）。
@@ -204,7 +204,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err = concSelect(s2)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID, "视图满候选被跳过换下一候选")
-	sel.Release()
+	sel.Handle.Release()
 
 	// 态 3 全员视图满 → ErrAttemptsExhausted：账号 1 本地达真上限、账号 2 超份额且
 	// 视图满（eff=4−2+3=5 ≥ 4）——借用拒绝是换号，换无可换即拒绝。
@@ -234,7 +234,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err = concSelect(s4)
 	require.NoError(t, err, "陈旧视图 fail-open：账号 1 全额本地可选（3 ≤ 4）")
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // A3 补充——concAllows 判定边界：公式两侧、无视图/条目缺失/陈旧 fail-open。
@@ -391,7 +391,7 @@ func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	}
 	_, err = concSelect(s)
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "真上限兜底：7 > 6 拒绝")
-	sel.Release()
+	sel.Handle.Release()
 	releaseByID(s, 1)
 	releaseByID(s, 1)
 	require.Equal(t, int64(3), concCur(s, 1), "回到持 3 笔基态")
@@ -433,7 +433,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 	sel, err := concSelect(s)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 	require.Zero(t, concCur(s, 1), "Release 净零")
 	require.Zero(t, mr.CommandCount()-base, "Select/Release 路径零 Redis 命令")
 
@@ -456,7 +456,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 						break
 					}
 				}
-				sel.Release()
+				sel.Handle.Release()
 				inflight.Add(-1)
 			}
 		})

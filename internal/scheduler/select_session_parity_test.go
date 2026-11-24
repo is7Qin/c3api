@@ -52,7 +52,7 @@ func driveSession(t *testing.T, s *Scheduler, id AttemptPlanIdentity, route Rout
 			prev = *a.PreviousAttemptID
 		}
 		out = append(out, fmt.Sprintf("%d|%s|%d|%s|%s", a.AccountID, string(a.Lane), a.Ordinal, a.AttemptID, prev))
-		sel.Release()
+		sel.Handle.Release()
 	}
 	return out
 }
@@ -100,7 +100,7 @@ func TestSelectSessionParity_responsesExploreDegraded(t *testing.T) {
 			prev = *a.PreviousAttemptID
 		}
 		got = append(got, fmt.Sprintf("%d|%s|%d|%s|%s", a.AccountID, string(a.Lane), a.Ordinal, a.AttemptID, prev))
-		sel.Release()
+		sel.Handle.Release()
 	}
 	t.Logf("GOLDEN responsesExploreDegraded=%q", got)
 	require.Equal(t, []string{
@@ -134,7 +134,7 @@ func TestSelectSessionParity_anthropicRejectSkip(t *testing.T) {
 	require.Equal(t, uint8(1), a.Ordinal, "rejects consume no attempt")
 	require.Equal(t, "req-a1:1", a.AttemptID)
 	require.Nil(t, a.PreviousAttemptID)
-	sel.Release()
+	sel.Handle.Release()
 	sel2, a2, err := s.ReserveAttempt(&plan)
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	require.Nil(t, sel2)
@@ -153,7 +153,7 @@ func TestSelectSessionParity_searchOpaque(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, a.RequestedModel, a.MappedModel, "opaque dispatch skips mapping")
 	require.Equal(t, "req-s1:1", a.AttemptID)
-	sel.Release()
+	sel.Handle.Release()
 	t.Logf("GOLDEN searchOpaque=%d|%s|1|req-s1:1|- model=%s", a.AccountID, string(a.Lane), a.MappedModel)
 }
 
@@ -166,10 +166,10 @@ func TestSelectSessionParity_wsFirstFrameRetry(t *testing.T) {
 	require.NoError(t, err)
 	sel1, a1, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel1.Release()
+	sel1.Handle.Release()
 	sel2, a2, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel2.Release()
+	sel2.Handle.Release()
 	require.Equal(t, uint8(1), a1.Ordinal)
 	require.Equal(t, uint8(2), a2.Ordinal)
 	require.Equal(t, a1.AttemptID, *a2.PreviousAttemptID)
@@ -197,11 +197,11 @@ func TestSelectSessionParity_cacheAffinity(t *testing.T) {
 	sel, a, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), a.AccountID, "affinity phase 0 serves the preferred domain first")
-	sel.Release()
+	sel.Handle.Release()
 	sel2, a2, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Contains(t, []int64{1, 2}, a2.AccountID)
-	sel2.Release()
+	sel2.Handle.Release()
 	t.Logf("GOLDEN cacheAffinity=%d|%s|1 then %d|%s|2", a.AccountID, string(a.Lane), a2.AccountID, string(a2.Lane))
 }
 
@@ -214,19 +214,19 @@ func TestSelectSessionParity_hardContinuation(t *testing.T) {
 	require.NoError(t, err)
 	sel1, a1, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel1.Release()
+	sel1.Handle.Release()
 	require.Equal(t, int64(1), a1.AccountID)
 	// Skip unbound candidate 1 (release + refund, never dispatched).
 	plan.AbandonLastAttempt()
 	sel2, a2, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel2.Release()
+	sel2.Handle.Release()
 	require.Equal(t, int64(2), a2.AccountID, "scan stays advanced past the abandoned candidate")
 	require.Equal(t, uint8(1), a2.Ordinal, "abandoned ordinal is recycled")
 	require.Equal(t, "req-hc:1", a2.AttemptID)
 	sel3, a3, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel3.Release()
+	sel3.Handle.Release()
 	require.Equal(t, int64(3), a3.AccountID)
 	require.Equal(t, uint8(2), a3.Ordinal)
 	require.Equal(t, a2.AttemptID, *a3.PreviousAttemptID)
@@ -266,7 +266,7 @@ func TestSelectSessionParity_generationFence(t *testing.T) {
 	sel, a, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), a.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 	// Strict after execution started.
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	sel2, _, err := s.ReserveAttempt(&plan)
@@ -286,7 +286,7 @@ func TestSelectSessionParity_defaultBucket(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), a.AccountID)
 	require.Equal(t, "no-such-model", a.RequestedModel, "default bucket projects the concrete model")
-	sel.Release()
+	sel.Handle.Release()
 	t.Logf("GOLDEN defaultBucket=1|%s|1 model=no-such-model", string(a.Lane))
 }
 
@@ -312,7 +312,7 @@ func TestSelectSessionParity_maxAttempts(t *testing.T) {
 			require.ErrorIs(t, rerr, ErrAttemptsExhausted)
 			break
 		}
-		sel.Release()
+		sel.Handle.Release()
 		n++
 	}
 	require.Equal(t, 2, n)
@@ -327,7 +327,7 @@ func TestSelectSessionParity_maxAttempts(t *testing.T) {
 		if rerr != nil {
 			break
 		}
-		sel.Release()
+		sel.Handle.Release()
 		n++
 	}
 	require.Equal(t, MaxAttemptPlanAccounts, n)
@@ -350,7 +350,7 @@ func TestSelectSessionParity_mappingOnOff(t *testing.T) {
 	require.Equal(t, "requested-model", aOn.RequestedModel)
 	require.Equal(t, "upstream-model", aOn.MappedModel)
 	require.Equal(t, qualityClassHexForWithOp(domain.FormatOpenAIChat, "upstream-model", domain.OpChatCompletions), aOn.QualityClassID)
-	selOn.Release()
+	selOn.Handle.Release()
 	// OFF.
 	poff, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-map-off", ApplyModelMapping: false}, RouteRefFor(10, string(domain.FormatOpenAIChat), "requested-model"))
 	require.NoError(t, err)
@@ -359,7 +359,7 @@ func TestSelectSessionParity_mappingOnOff(t *testing.T) {
 	require.Equal(t, "requested-model", aOff.RequestedModel)
 	require.Equal(t, "requested-model", aOff.MappedModel)
 	require.Equal(t, qualityClassHexForWithOp(domain.FormatOpenAIChat, "requested-model", domain.OpChatCompletions), aOff.QualityClassID)
-	selOff.Release()
+	selOff.Handle.Release()
 	t.Logf("GOLDEN mappingOnOff=upstream-model vs requested-model")
 }
 
@@ -378,13 +378,13 @@ func TestSelectSessionParity_imagesOpTags(t *testing.T) {
 	selG, aG, err := s.ReserveAttempt(&pg)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), aG.AccountID)
-	selG.Release()
+	selG.Handle.Release()
 	pe, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-img-e"}, er)
 	require.NoError(t, err)
 	selE, aE, err := s.ReserveAttempt(&pe)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), aE.AccountID)
-	selE.Release()
+	selE.Handle.Release()
 	// The interned route classes must distinguish the two ops (intern check
 	// via the published decisions, not the normalized query keys).
 	rdG, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIImages), "gpt-image-1")
@@ -402,14 +402,14 @@ func TestSelectSessionParity_linkageAndBorrow(t *testing.T) {
 	require.NoError(t, err)
 	sel1, a1, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel1.Release()
+	sel1.Handle.Release()
 	require.Equal(t, "req-l1:1", a1.AttemptID)
 	require.Nil(t, a1.PreviousAttemptID)
 	require.NotEmpty(t, a1.RouteClassID)
 	require.Equal(t, plan.Identity().RouteClassID, a1.RouteClassID, "RouteClassID borrowed from the interned decision")
 	sel2, a2, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
-	sel2.Release()
+	sel2.Handle.Release()
 	require.Equal(t, "req-l1:2", a2.AttemptID)
 	require.NotNil(t, a2.PreviousAttemptID)
 	require.Equal(t, a1.AttemptID, *a2.PreviousAttemptID)

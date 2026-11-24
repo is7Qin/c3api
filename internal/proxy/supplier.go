@@ -5,7 +5,7 @@
 package proxy
 
 // 供应商收益热路径（spec 2026-10-09 §4）：收益额纯整数计算（earnOf），收尾按
-// **选中账号时捕获**的财务上下文（scheduler.Selection 携带的 domain.SupplierFinance）
+// **选中账号时捕获**的财务上下文（api.Selection 携带的 domain.SupplierFinance）
 // 盖章 `usage_logs` 三收益列（stampSupplier）——不在此回查归属视图。
 //
 // 视图/快照（SupplierView/SupplierSnapshot）与供给准入的**实现归属**在
@@ -14,8 +14,8 @@ package proxy
 // 关闭态（enabled=false）快照未装配，收尾字段保持出生定态 credited=true。
 
 import (
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/supplier"
 )
 
@@ -47,7 +47,7 @@ func earnOf(cost int64, shareBp int) int64 {
 // 回查 owner（视图换代/删除后收尾不再 Load/查 owner；转属/删除在途不改归属）。
 // 未携带 Ready 财务（关闭态未装配 / 未归属 / sel 为 nil）→ uid 空、earn 0、
 // credited true（新行不入收益索引）。
-func (p *Proxy) stampSupplier(sel *scheduler.Selection, l *domain.UsageLog) {
+func (p *Proxy) stampSupplier(sel *api.Selection, l *domain.UsageLog) {
 	if l == nil {
 		return
 	}

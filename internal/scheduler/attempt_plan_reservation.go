@@ -274,35 +274,40 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	// 凭据通道在**装配点算一次**（一次 map 查表）：Selection 的续接政策位与
 	// claimCodexSession 的分支共用同一个值，热路径不重复查表。
 	credCh := credential.ChannelOf(curAv.tpl.CredentialType)
-	selected := &Selection{
-		AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
-		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
-		CredentialType: curAv.tpl.CredentialType, Model: mapped,
-		StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
-		// 传输是**模板原值**（不做归一）：消费方只调 Key()/Name()，Selection 保存
-		// 原值才能让"配置写了什么"在响应头/日志里可辨认。
-		CodexResponsesTransport: curAv.tpl.CodexResponsesTransport,
-		CandidateFingerprint:    candidate.Fingerprint,
-		// 租借同时冻结账号身份代际 K：本次请求的凭据投影（Selection.Credential）与
+	// 唯一的生产装配点：契约字段 + 私有句柄一次装配。Handle 指向包装自身——
+	// 与嵌入的 Selection 同属一个堆对象（&selected.Selection 内指针），所以
+	// 「契约在外、私有状态在背」不额外分配（272→288 档，见 size gate）。
+	selected := &selection{
+		Selection: Selection{
+			AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
+			Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
+			CredentialType: curAv.tpl.CredentialType, Model: mapped,
+			StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
+			// 传输是**模板原值**（不做归一）：消费方只调 Key()/Name()，Selection 保存
+			// 原值才能让"配置写了什么"在响应头/日志里可辨认。
+			CodexResponsesTransport: curAv.tpl.CodexResponsesTransport,
+			CandidateFingerprint:    candidate.Fingerprint,
+			ModelMappingMode:        mappingMode,
+			// 出口 client：快照期已解析好的指针（恒非 nil）——热路径一次字段读，
+			// 没有"代理是否可用"的判断（那是装载/编译期的事实，不是每次选号的活）。
+			Egress: curAv.egress,
+			// 绑定行 id：与 Egress **同一次字段读**（同一来源 acc.ProxyID），只给
+			// 失败面的 err_logs.message 用（`proxy_id=<id>`，spec §5.1）。不进决策：
+			// 可用性位在 Routable，出口在 Egress。nil = 直连（失败日志不写 proxy_id）。
+			ProxyID: curAv.acc.ProxyID,
+			// 会话路径的账号级事实：快照构建期已定型（同 egress），这里只拷字段。
+			CacheDomain:    curAv.cacheDomain,
+			InstallationID: curAv.installationID,
+			Conversation:   plan.identity.Conversation,
+			// 续接派发政策位（构造期定型，构造期一次赋值）：判据**不是通道**，而是两条
+			// 逐 Type 能力位的合取（见 skipContinuationFor 的注释）——"没有原生续接，
+			// 也不吃绑定账本"才跳过解析，此时 previous_response_id 原样留给 SDK 丢弃
+			// （c3api 不做 body 工作）。
+			SkipContinuation: skipContinuationFor(curAv.tpl.CredentialType),
+		},
+		// 租借同时冻结账号身份代际 K：本次请求的凭据投影（Handle.Credential）与
 		// 由此产生的一切凭据事件都以它作来源版本（§3.3b-2），不再回读"当前"。
-		lease:            &leaseToken{acc: cur, identityRevision: curAv.acc.IdentityRevision},
-		ModelMappingMode: mappingMode,
-		// 出口 client：快照期已解析好的指针（恒非 nil）——热路径一次字段读，
-		// 没有"代理是否可用"的判断（那是装载/编译期的事实，不是每次选号的活）。
-		Egress: curAv.egress,
-		// 绑定行 id：与 Egress **同一次字段读**（同一来源 acc.ProxyID），只给
-		// 失败面的 err_logs.message 用（`proxy_id=<id>`，spec §5.1）。不进决策：
-		// 可用性位在 Routable，出口在 Egress。nil = 直连（失败日志不写 proxy_id）。
-		ProxyID: curAv.acc.ProxyID,
-		// 会话路径的账号级事实：快照构建期已定型（同 egress），这里只拷字段。
-		CacheDomain:    curAv.cacheDomain,
-		InstallationID: curAv.installationID,
-		Conversation:   plan.identity.Conversation,
-		// 续接派发政策位（构造期定型，构造期一次赋值）：判据**不是通道**，而是两条
-		// 逐 Type 能力位的合取（见 skipContinuationFor 的注释）——"没有原生续接，
-		// 也不吃绑定账本"才跳过解析，此时 previous_response_id 原样留给 SDK 丢弃
-		// （c3api 不做 body 工作）。
-		SkipContinuation: skipContinuationFor(curAv.tpl.CredentialType),
+		lease: &leaseToken{acc: cur, identityRevision: curAv.acc.IdentityRevision},
 	}
 	// 认领会话（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏会话）。仅 codex 凭据认领（claimCodexSession
@@ -314,5 +319,6 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	// 财务上下文随选中固定（供给准入门放行时同一次视图读取捕获；§4.2/§4.6）：
 	// 收尾只按本值落账，不再 Load/查 owner。
 	selected.SupplierFinance = admittedFinance
-	return selected, attempt, nil
+	selected.Handle = selected
+	return &selected.Selection, attempt, nil
 }

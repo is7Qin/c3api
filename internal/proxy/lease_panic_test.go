@@ -124,7 +124,7 @@ func TestLeasePanicGuardReleasesExactOnce(t *testing.T) {
 	ri, _ = sched.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "panic guard must release exact token once")
 
-	sel.Release()
+	sel.HandleOrDetached().Release()
 	ri, _ = sched.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "second release no-op")
 	require.GreaterOrEqual(t, ri.Concurrency, int64(0))

@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 func TestConvertedAndImagesOutcomes_reportsExpectedMetadata(t *testing.T) {
@@ -39,7 +39,7 @@ func TestConvertedAndImagesOutcomes_reportsExpectedMetadata(t *testing.T) {
 // id」构造器（images/codex-images/images-stream/converted）现经单一 buildOutcome
 // 生产，除 CallerCategory 外逐字段一致，且派发元数据取自 canonical 常量。
 func TestBuildOutcome_CallerVariantsShareCanonicalFields(t *testing.T) {
-	sel := &scheduler.Selection{AccountID: 7, TemplateID: 8, Model: "upstream", CandidateFingerprint: "fp"}
+	sel := &api.Selection{AccountID: 7, TemplateID: 8, Model: "upstream", CandidateFingerprint: "fp"}
 	op := OperationTag(domain.OpImagesGenerations)
 	usage := AttemptUsage{InputTokens: 1}
 	cases := []struct {
@@ -73,7 +73,7 @@ func TestBuildOutcome_CallerVariantsShareCanonicalFields(t *testing.T) {
 	// 候选指纹缺失 → 四类合成 id 构造器统一回退「fp-<reqID>」（syntheticFingerprint
 	// 的回退分支）；另建独立 sel（CandidateFingerprint == ""），不复用上方共享候选。
 	t.Run("empty_candidate_fingerprint_falls_back", func(t *testing.T) {
-		emptyFP := &scheduler.Selection{AccountID: 7, TemplateID: 8, Model: "upstream"}
+		emptyFP := &api.Selection{AccountID: 7, TemplateID: 8, Model: "upstream"}
 		fallbacks := []struct {
 			name string
 			got  AttemptOutcome
@@ -90,7 +90,7 @@ func TestBuildOutcome_CallerVariantsShareCanonicalFields(t *testing.T) {
 }
 
 func TestImagesOutcomes_generationsVsEditsIdentity(t *testing.T) {
-	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
+	sel := &api.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	oGen := imagesOutcome("req-1", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 	require.Equal(t, OperationTag(domain.OpImagesGenerations), oGen.OperationTag)
 	require.Equal(t, CallerImages, oGen.CallerCategory)
@@ -100,7 +100,7 @@ func TestImagesOutcomes_generationsVsEditsIdentity(t *testing.T) {
 }
 
 func TestImagesOutcomes_reverseConversionMalformedIsObserved(t *testing.T) {
-	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
+	sel := &api.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	timing := AttemptTiming{LatencyMS: 1}
 	usage := AttemptUsage{InputTokens: 1}
 	o := convertedOutcome("req-3", sel, "m", OperationTag(domain.OpChatCompletions), timing, usage, ResultFailed, 500, CommitUpstreamResponded, false, true, true)
@@ -149,7 +149,7 @@ func TestImagesOutcomes_exactlyOneObservation(t *testing.T) {
 }
 
 func TestImagesOutcomes_streamAbortCountsAndUsage(t *testing.T) {
-	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
+	sel := &api.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	timing := AttemptTiming{LatencyMS: 5, TTFTMS: func() *int64 { v := int64(2); return &v }()}
 	usage := AttemptUsage{InputTokens: 10, OutputTokens: 20, CallCount: 2}
 	o := imagesStreamOutcome("req-5", sel, "m", OperationTag(domain.OpImagesGenerations), timing, usage, ResultFailed, 500, CommitUpstreamResponded, false, true, false)

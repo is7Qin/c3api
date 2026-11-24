@@ -33,5 +33,5 @@ func TestSelect_TemplateBaseURLWithPathStillRoutes(t *testing.T) {
 	sel, err := sched.Select(1, domain.FormatOpenAIChat, "space-bunny-free")
 	require.NoError(t, err, "带路径的模板 base_url 不应让健康账号变成不可路由")
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }

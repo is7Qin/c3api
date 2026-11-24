@@ -21,6 +21,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
@@ -238,9 +239,9 @@ func (p *Proxy) SetInstancesProvider(inst InstancesProvider) {
 // finish 收尾：释放并发槽 + 额度扣减（后扣模型，usage 已知）+ 计费计算 +
 // 记录用量（凡持有并发槽的路径必调）。无额度 key 无内存计数器 → 扣减
 // no-op（恒 0）。落库路由统一走 routeLog（分表原则：不计费不入 usage_logs）。
-func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
+func (p *Proxy) finish(sel *api.Selection, l *domain.UsageLog) {
 	if sel != nil {
-		sel.Release()
+		sel.HandleOrDetached().Release()
 	}
 	p.recordAttemptLog(sel, l)
 }
@@ -250,7 +251,7 @@ func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
 // 拆出来的唯一理由：账号级终止的失败行要落，但请求还要换号继续——槽必须由
 // 故障转移循环在重试前统一释放（finish 会在这里就 Release，导致循环的
 // "release exactly once before retry" 变成双释放）。
-func (p *Proxy) recordAttemptLog(sel *scheduler.Selection, l *domain.UsageLog) {
+func (p *Proxy) recordAttemptLog(sel *api.Selection, l *domain.UsageLog) {
 	if l != nil {
 		p.applyBilling(l)
 		if p.cfg.BillingCapture {
@@ -407,7 +408,7 @@ func mappedFor(req, used string) string {
 // 且不触达 Selection 身份方法；其余格式直接取 Selection.LogMappedModel
 // （单查找派生，implicit 留空）。failoverLoop 共享骨架
 // （chat+search 终态）按 format 分流。
-func usageIdentity(format domain.RequestFormat, sel *scheduler.Selection, reqModel string) string {
+func usageIdentity(format domain.RequestFormat, sel *api.Selection, reqModel string) string {
 	if format == domain.FormatOpenAISearch {
 		return mappedFor(reqModel, sel.Model)
 	}
@@ -723,7 +724,7 @@ type usageTuple struct {
 //
 // commit 是本次尝试的交付事实（§5.2：计费资格由它决定，不再由 error_type
 // 决定）：写过业务帧的失败照常计费（sent_ambiguous），一帧未写出的失败不计费。
-func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, commit CommitState, err error) {
+func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, u usageTuple, commit CommitState, err error) {
 	p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)), commit)
 	// 中止行必须留因（§3.2）：abort 落可读结论，**不**落库内部文案（用户实证：
@@ -878,7 +879,7 @@ func causeMessage(err error) *string {
 // 出口 client 从 sel 上取（`sel.Egress.HTTP()`，快照期已解析好、恒非 nil）——
 // 本 helper 是四个非流式面（chat/responses/anthropic/converted）共用的一条出栈，
 // 所以出口只在这一个地方交给 aiclient。
-func (p *Proxy) rawJSON(ctx context.Context, sel *scheduler.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
+func (p *Proxy) rawJSON(ctx context.Context, sel *api.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in, sel.Egress.HTTP())
@@ -1084,7 +1085,7 @@ func setStreamAndModel(body []byte, stream bool, model string) ([]byte, error) {
 // 因此第二条在正常分流下**不可达**，纯防御契约；第一条形式上可达，但正常流量更早
 // 被候选指纹门拒掉（TestProxyCredentialUnknownTypeRejectsNoUpstreamCall 证明上游零
 // 请求）。两者都是纵深防御，不是常见路径。
-func (p *Proxy) credentialFor(sel *scheduler.Selection) (string, error) {
+func (p *Proxy) credentialFor(sel *api.Selection) (string, error) {
 	if !sel.CredentialType.Valid() {
 		return "", fmt.Errorf("unsupported credential type %q", sel.CredentialType)
 	}

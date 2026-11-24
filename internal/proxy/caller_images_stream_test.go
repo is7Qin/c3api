@@ -18,10 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -120,8 +120,8 @@ func newImageStreamTestProxy(t *testing.T, hooks *BillingHooks) (*Proxy, *captur
 	return p, store
 }
 
-func streamImageSel() *scheduler.Selection {
-	return &scheduler.Selection{
+func streamImageSel() *api.Selection {
+	return &api.Selection{
 		AccountID: 1, TemplateID: 1, Format: domain.FormatOpenAIImages,
 		Model: "gpt-image-2", CredentialType: credential.TypeCodexPAT,
 	}

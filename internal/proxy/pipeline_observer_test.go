@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -19,7 +20,7 @@ import (
 
 type handledPipelineAttempt struct{}
 
-func (handledPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+func (handledPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *api.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
 	return http.StatusOK, nil, nil, true, nil
 }
 
@@ -28,7 +29,7 @@ type rejectedPipelineAttempt struct {
 	body []byte
 }
 
-func (a rejectedPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+func (a rejectedPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *api.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
 	return a.code, a.body, nil, false, nil
 }
 
@@ -112,7 +113,7 @@ func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	// the session and attempt thread by value — zero values here prove
 	// a handled terminal performs no shared cleanup without any identity.
-	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &scheduler.Selection{}, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &api.Selection{}, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
 }
 
 // TestPipelineObserverIllegalOutcomeIsLoggedNotDropped 非法 outcome 的丢弃必须可

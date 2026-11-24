@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/api"
 )
 
 // TestWSFirstFrameForSel 首帧模型改写在调用方按当次 sel 预处理（relayWS 原样写出）：
@@ -17,12 +17,12 @@ import (
 func TestWSFirstFrameForSel(t *testing.T) {
 	first := []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)
 
-	got := wsFirstFrameForSel(first, &scheduler.Selection{Model: "gpt-5.6"}, "gpt-4o")
+	got := wsFirstFrameForSel(first, &api.Selection{Model: "gpt-5.6"}, "gpt-4o")
 	require.Equal(t, `{"type":"response.create","model":"gpt-5.6","input":"hi"}`, string(got))
 	require.Equal(t, `{"type":"response.create","model":"gpt-4o","input":"hi"}`, string(first), "不改写入参")
 
-	same := wsFirstFrameForSel(first, &scheduler.Selection{Model: "gpt-4o"}, "gpt-4o")
+	same := wsFirstFrameForSel(first, &api.Selection{Model: "gpt-4o"}, "gpt-4o")
 	require.Same(t, &first[0], &same[0], "同名不改写：原切片")
-	none := wsFirstFrameForSel(first, &scheduler.Selection{}, "gpt-4o")
+	none := wsFirstFrameForSel(first, &api.Selection{}, "gpt-4o")
 	require.Same(t, &first[0], &none[0], "未映射不改写：原切片")
 }

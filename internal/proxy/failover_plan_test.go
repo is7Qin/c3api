@@ -59,7 +59,7 @@ func TestSelectWithPlan_FirstSelectionUsesPlanWhenIdentityAvailable(t *testing.T
 	require.NotEmpty(t, dec.RouteClassID)
 	require.Equal(t, dec.RouteClassID, plan.Identity().RouteClassID)
 	require.LessOrEqual(t, int(planIdentityCandidateCount(plan)), 8)
-	sel.Release()
+	sel.HandleOrDetached().Release()
 }
 
 func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
@@ -85,7 +85,7 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 	dec2, ok := p.sched.View().DecisionView().Route(10, string(domain.FormatOpenAIResponses), "gpt-4o")
 	require.True(t, ok)
 	require.Equal(t, dec2.RouteClassID, plan2.Identity().RouteClassID)
-	sel2.Release()
+	sel2.HandleOrDetached().Release()
 }
 
 func retryBase(commit CommitState, result AttemptResult, status AttemptStatus, terminal bool) AttemptOutcome {
@@ -251,7 +251,7 @@ func TestSelectWithPlan_StampsNormalizedMaxAttempts(t *testing.T) {
 	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-stamp", plan.Identity().RequestID, "compiled route must yield a plan")
 	require.Equal(t, uint8(5), plan.Identity().MaxAttempts)
-	sel.Release()
+	sel.HandleOrDetached().Release()
 }
 
 func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
@@ -272,7 +272,7 @@ func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
 	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-overflow", plan.Identity().RequestID)
 	require.Equal(t, int64(3), sel.AccountID)
-	sel.Release()
+	sel.HandleOrDetached().Release()
 }
 
 func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {

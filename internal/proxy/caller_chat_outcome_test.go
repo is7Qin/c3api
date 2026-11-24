@@ -20,7 +20,7 @@ func TestChatDispatchedBaseIncludesRequiredDispatchMetadata(t *testing.T) {
 	p := newTestProxy(t, up.URL, 42)
 	s, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer s.Release()
+	defer s.Handle.Release()
 	base := chatDispatchedBase(s, "req-1", "gpt-4o", time.Now())
 	o := chatOutcomeForSuccess(base, nil, usageTuple{it: 1})
 	require.NoError(t, o.Validate())
@@ -38,7 +38,7 @@ func TestChatOutcomeSuccessIsTerminalResponseStarted(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	base := chatDispatchedBase(sel, "req-1", "gpt-4o", time.Now())
 	ttft := int64(12)
 	o := chatOutcomeForSuccess(base, &ttft, usageTuple{it: 5, ot: 7, tt: 12, cr: 1, cc: 2})
@@ -58,7 +58,7 @@ func TestChatOutcomeClientCancelHasExactlyOneCommitState(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	base := chatDispatchedBase(sel, "req-1", "gpt-4o", time.Now())
 	o1 := chatOutcomeForAbort(base, false, usageTuple{}, nil, true)
 	require.NoError(t, o1.Validate())
@@ -76,7 +76,7 @@ func TestChatOutcomeNetworkPreservesCommitStates(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	base := chatDispatchedBase(sel, "req-1", "gpt-4o", time.Now())
 	oNotSent := chatOutcomeForAbort(base, false, usageTuple{}, nil, false)
 	require.NoError(t, oNotSent.Validate())
@@ -161,7 +161,7 @@ func TestChatAttemptObserverExactlyOnceUnderRace(t *testing.T) {
 	observer := NewAttemptObserver(nil,
 		func(AttemptOutcome, AttemptHealthEvent) { healths.Add(1) },
 		func(AttemptOutcome) {},
-		func() { releases.Add(1); sel.Release() },
+		func() { releases.Add(1); sel.HandleOrDetached().Release() },
 	)
 	// concurrent completes should only count once
 	done := make(chan struct{})

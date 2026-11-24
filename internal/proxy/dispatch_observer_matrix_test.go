@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
@@ -489,7 +490,7 @@ func TestAttemptObserverMatrix_panicDuringDispatchAbandonsPin(t *testing.T) {
 type panickingAttempt struct{}
 
 func (panickingAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time,
-	*scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+	*api.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
 	panic("dispatch panic")
 }
 
@@ -506,7 +507,7 @@ func TestAttemptObserverMatrix_attemptContextBeginsAtDispatch(t *testing.T) {
 
 	inflightDuringCall := make(chan int64, 1)
 	proceed := make(chan struct{})
-	att := &barrierAttempt{fn: func(ctx context.Context, s *scheduler.Selection) (int, []byte, http.Header, bool, error) {
+	att := &barrierAttempt{fn: func(ctx context.Context, s *api.Selection) (int, []byte, http.Header, bool, error) {
 		inflightDuringCall <- rec.GlobalInflight()
 		<-proceed
 		return http.StatusOK, nil, nil, true, nil
@@ -529,10 +530,10 @@ func TestAttemptObserverMatrix_attemptContextBeginsAtDispatch(t *testing.T) {
 }
 
 type barrierAttempt struct {
-	fn func(ctx context.Context, sel *scheduler.Selection) (int, []byte, http.Header, bool, error)
+	fn func(ctx context.Context, sel *api.Selection) (int, []byte, http.Header, bool, error)
 }
 
 func (b *barrierAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	return b.fn(ctx, sel)
 }

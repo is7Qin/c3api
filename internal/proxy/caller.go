@@ -19,6 +19,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
@@ -86,7 +87,7 @@ func newReqID() string {
 //     不冷却（否则连接级误分类把无辜账号冷却 + failover 空转）。
 type UpstreamCaller interface {
 	Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-		start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (code int, respBody []byte, handled bool, err error)
+		start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (code int, respBody []byte, handled bool, err error)
 }
 
 // extractTier 提取并归一化请求体 service_tier（resp-ws 专用，纯函数；HTTP 路径
@@ -160,14 +161,14 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 				defer func() {
 					if sel2GuardActive {
 						if r := recover(); r != nil {
-							sel2.Release()
+							sel2.HandleOrDetached().Release()
 							panic(r)
 						}
 					}
 				}()
 				cb, cerr := convertRequest(body, conv)
 				if cerr != nil {
-					sel2.Release()
+					sel2.HandleOrDetached().Release()
 					sel2GuardActive = false
 					// 未接线方向（能力表未 GA）与"请求体非法"分开报：前者是
 					// 配置/部署错，后者是客户端错，混在一起会让排障方向跑偏。
@@ -191,7 +192,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 				// nil 接口调用 panic 好（门禁 TestConvCallersComplete 钉住）。
 				convCaller, ok := p.convCallers[conv]
 				if !ok {
-					sel2.Release()
+					sel2.HandleOrDetached().Release()
 					sel2GuardActive = false
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": "protocol conversion caller is not wired"}})
 					return
@@ -341,7 +342,7 @@ func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.Respo
 // （零转换）；images 端点按调用器选上游子路径（generations/edits，路由子路径
 // 不同）。返回 (sel, plan, attempt, err) 与 selectWithPlan(*) 逐字一致（只提
 // 函数，零语义变化）。
-func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
+func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 	if format == domain.FormatOpenAIImages {
 		if ic, ok := route.caller.(*imagesCaller); ok {
@@ -357,7 +358,7 @@ func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, req
 // 已占并发槽，记录后写出；首个预留为 Codex 且未命中 → 不钉选原样返回）；命中再 contPin 推进计划到绑定账号（失败 fail-closed：
 // 记录后写出，绝不迁移到其他账号）。ok=false 表示已收尾写出，调用方直接 return。
 // 释放/记录时机与现状逐字一致（contPin 内部自行释放被跳过候选）。
-func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*scheduler.Selection, scheduler.Attempt, *continuation.Binding, bool) {
+func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *api.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*api.Selection, scheduler.Attempt, *continuation.Binding, bool) {
 	if contPrevID == "" {
 		return sel, attempt, nil, true
 	}
@@ -366,7 +367,7 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 	// Codex 且未命中 → 不钉选（见 resolveContinuationBinding）。
 	b, ferr := p.resolveContinuationBinding(r.Context(), userID, groupID, contProtocolREST, contPrevID, sel, plan, attempt)
 	if ferr != nil {
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
 		writeErr(w, ferr)
 		return sel, attempt, nil, false
@@ -401,7 +402,7 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 // 判据读的是计划上的**构造期政策位**（plan.ContinuationIncompatible），不是控制面
 // 谓词：结论在编译期按逐 Type 能力位算好、构造期一次拷进计划，数据面只读一位
 // （spec §9：政策构造期定型，数据面不回调控制面）。
-func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *api.Selection, plan api.AttemptPlan, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
 	if !plan.ContinuationIncompatible() {
 		return nil, nil
 	}
@@ -424,7 +425,7 @@ func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID 
 // 本地拒绝——chat 专属）。
 type chatAttempt struct{ p *Proxy }
 
-func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
 	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
 	// （Global Constraints 豁免 fallback 保留）

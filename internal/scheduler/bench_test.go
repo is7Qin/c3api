@@ -9,11 +9,9 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"runtime"
 	"slices"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/stretchr/testify/require"
 
@@ -97,7 +95,7 @@ func TestSelectMappingIdentities(t *testing.T) {
 			require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
 			require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 			require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
-			sel.Release()
+			sel.Handle.Release()
 		})
 	}
 }
@@ -125,7 +123,7 @@ func TestSelectMappingModeIsFreshForFallbackCandidate(t *testing.T) {
 		require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
 		require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 		require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
-		sel.Release()
+		sel.Handle.Release()
 	}
 }
 
@@ -141,30 +139,6 @@ func TestGroupModelsKeepsMappingAlias(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{mappingRequestModel, "listed-model"}, models)
 	require.NotContains(t, models, mappingTargetModel)
-}
-
-func TestSelectionSizeAMD64(t *testing.T) {
-	if runtime.GOARCH != "amd64" {
-		t.Skip("amd64 layout gate")
-	}
-	// +8：codex 会话池认领的 codexSession 指针（会话身份注入/推进面）。
-	// +8：会话所属池指针（凭据代际清 ts + 线程退休出口；spec S4 §3.2）。
-	// +32：SupplierFinance（选中账号时捕获的不可变财务上下文，spec 2026-10-09
-	// §4.2/§4.6；随尝试携带，收尾不再回查 owner）。
-	// +8：Egress 出口 client 指针（spec-proxy-pool §4.3：快照期解析好，出栈只读
-	// 指针——这笔 8 字节是"热路径零判断/零 map 读"的全部代价，有意登记）。
-	// +8：ProxyID 绑定行 id 指针（spec-proxy-pool §5.1/§5.2：网络级失败要在
-	// err_logs.message 写 `proxy_id=<id>`，而 `egress.Spec` 是按 Key 复用的连接
-	// 规格、按设计不带行 id ⇒ id 只能随 Selection 携带）。它与 Egress 同一次字段
-	// 读取得来，热路径**不读**它（只有失败面读）——有意登记，不是顺手加宽。
-	// +16：CodexResponsesTransport 的 string 头（spec-codex-outbound-transport
-	// §5：模板级开关随快照定型，Selection 携带**原值**，消费方只调 Key()/Name()）。
-	// 它是构造期参数、热路径只读一个已定型的字符串，不进任何判断分支。
-	// +40：会话路径三项（codex-conversation-integration §5.2）——Conversation 位
-	// （bool，随对齐占 8）+ CacheDomain/InstallationID 两个 string 头。都是快照
-	// 构建期定型的账号静态视图字段，预留时只做字段拷贝（零分配）；232→272 的尺寸级由
-	// 240B 变为 288B（每次预留多 48 堆字节），但分配**次数**不变（C3-15 断言次数）。
-	require.Equal(t, uintptr(272), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
@@ -187,7 +161,7 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 			usageModel = sel.LogMappedModel(mappingRequestModel)
 			priceModel = sel.PriceModel(mappingRequestModel)
 			responseModel = sel.ClientResponseModel(mappingRequestModel)
-			sel.Release()
+			sel.Handle.Release()
 		})
 		require.NoError(t, selectErr)
 		require.Equal(t, tc.wantUsage, usageModel)
@@ -229,7 +203,7 @@ func BenchmarkSelect5000Accounts(b *testing.B) {
 				}
 				benchmarkUsageModel = sel.LogMappedModel(mappingRequestModel)
 				benchmarkResponseModel = sel.ClientResponseModel(mappingRequestModel)
-				sel.Release()
+				sel.Handle.Release()
 			}
 		})
 	}

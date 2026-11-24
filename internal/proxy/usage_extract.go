@@ -10,8 +10,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // 用量提取：缓存读取/写入 token 的跨协议归一化（仿 sub2api 的
@@ -279,7 +279,7 @@ func anthropicUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
 // 响应无图片 item → 检测恒 0 计数（旁路无效但无害，保留统一逻辑）；
 // responses-special（官方上游 hosted 触发）才有计数对象。故本函数对 codex
 // 类型照常返回 true——计数由上游响应内容自然归零，不在判定层特判。
-func respImageDetectOn(sel *scheduler.Selection) bool {
+func respImageDetectOn(sel *api.Selection) bool {
 	if sel.StripImageTools {
 		return false
 	}

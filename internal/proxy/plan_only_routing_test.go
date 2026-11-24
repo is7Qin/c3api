@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
@@ -137,7 +138,7 @@ func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
 	require.NoError(t, err)
 	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-retry", plan.Identity().RequestID)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 
 	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), attempt, false),
 		"not-sent network failure is retryable")
@@ -165,7 +166,7 @@ func TestRetryOutcomeForAttempt_CarriesCanonicalIdentity(t *testing.T) {
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-ident", UserID: 1})
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 	// the threaded settle value and the session derivation coincide.
 	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
@@ -217,7 +218,7 @@ func TestDispatchIdentity_PlanBackedSuccessCarriesCanonicalAttemptIdentity(t *te
 type reject429Attempt struct{ calls *atomic.Int32 }
 
 func (a reject429Attempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	a.calls.Add(1)
 	return http.StatusTooManyRequests, []byte(`{"error":{"message":"slow down"}}`), nil, false, nil
 }

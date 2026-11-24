@@ -5,8 +5,8 @@
 package proxy
 
 import (
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // 自定义上游路径的键集合与默认尾段：**唯一实现已下沉到 internal/domain**
@@ -34,7 +34,7 @@ const (
 // 不查 DB、不加锁、不复制 map；配置 map 在快照内不可变，此处只读）。语义与
 // 判定全部在 domain.ResolveUpstreamPath（含 custom 原样透传/非 custom 回落默认
 // 的唯一实现），本函数只做 Selection → 参数的搬运。
-func targetPath(sel *scheduler.Selection, key, tail string) string {
+func targetPath(sel *api.Selection, key, tail string) string {
 	if sel == nil {
 		return domain.ResolveUpstreamPath("", nil, domain.UpstreamPathKey(key), tail)
 	}

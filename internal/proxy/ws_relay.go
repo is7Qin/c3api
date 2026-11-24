@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/tidwall/sjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -52,7 +53,7 @@ type wsRelayTransport interface {
 // frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
 // usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
 // 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
-func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
+func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
 	// first == nil：首个客户端帧**已由调用方转发**（codex 分支的"首帧判死预读"
 	// 需要先转发再预读——上游只有收到 create 才会回第一帧；见 wsAttempt）。
 	if first != nil {
@@ -405,7 +406,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 连接收尾：Selection 租约是**连接级**的（§6.4）——release 只在收尾调一次，
 	// 每轮结算（settle）永不 Release。放在分类/落盘之前，保持既有观测顺序
 	// 「记录可见 ⇒ 并发槽已归还」（finish 旧实现同为先 Release 后落盘）。
-	sel.Release()
+	sel.HandleOrDetached().Release()
 
 	// 分类与关闭传播（纯函数可单测）：
 	// ① 上游正常关闭（1000/1001）→ 成功，已见业务帧；② 客户端断开 → abort，已见业务帧不计冷却；
@@ -557,7 +558,7 @@ func isResponsesTerminalType(name []byte) bool {
 // 不同 → sjson 改写 model（改写失败/帧非合法 JSON → 原样返回，上游或 SDK 自行
 // 校验）。由 wsAttempt 在拨号前调用（每次尝试一次，故障转移换号按当次 sel 重算），
 // 结果原样交给 relayWS 写出；Codex 分支还把同一份字节交给拨号（WithFirstFrame）。
-func wsFirstFrameForSel(first []byte, sel *scheduler.Selection, reqModel string) []byte {
+func wsFirstFrameForSel(first []byte, sel *api.Selection, reqModel string) []byte {
 	if sel.Model != "" && sel.Model != reqModel {
 		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
 			return nf
@@ -597,7 +598,7 @@ func relayWSFirstFrame(up wsRelayTransport, r *http.Request, firstTyp websocket.
 // 轮归属（§6.2「两表同 ID」）：本收尾写的是**当前轮**（rd）——ID/created_at/
 // LatencyMS 全部由 rd 提供（buildRoundLog），不得另取 reqID/time.Now()。若本轮
 // 已是 Completed*（完成帧 = 吸收态，且已当场结算），这里不再写行。
-func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, rd *round, sel *scheduler.Selection, groupID int64, reqModel string, start time.Time) {
+func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, rd *round, sel *api.Selection, groupID int64, reqModel string, start time.Time) {
 	// 硬续接 fail-closed（WS create 面）：绑定权威不可用/冲突——缓冲帧
 	// 弃置（未绑定 id 永不达客户端），错误帧可达后收尾；已消耗用量保留
 	// 计费；网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 =
@@ -655,7 +656,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 		l.ErrorMessage = f.message()
 		rd.settle(p, sel, l)
 	}
-	sel.Release() // CAS 幂等：收尾已释放过则为 no-op
+	sel.HandleOrDetached().Release() // CAS 幂等：收尾已释放过则为 no-op
 	up.CloseNow()
 	wg.Wait()
 }
@@ -667,7 +668,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 // 轮归属（§6.4）：每轮已在自己的终态帧处结算；本函数只在**最后一轮仍 Open**
 // （RoundAborted）时写一条失败行（§6.3），且该行的 request_id/created_at 由 rd
 // 提供。release 只在连接收尾调一次。
-func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *scheduler.Selection, rd *round, groupID int64, reqModel string, start time.Time, writeFailed bool, end relayEnd, endErr error) {
+func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *api.Selection, rd *round, groupID int64, reqModel string, start time.Time, writeFailed bool, end relayEnd, endErr error) {
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	switch end {
 	case relayEndUpstreamClosed:
@@ -700,7 +701,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 		_ = client.Close(code, "")
 		up.CloseNow() // 上游已失联，免握手等待
 	}
-	sel.Release() // CAS 幂等（relayWS 收尾已释放；调用方 leaseGuard 重复调亦为 no-op）
+	sel.HandleOrDetached().Release() // CAS 幂等（relayWS 收尾已释放；调用方 leaseGuard 重复调亦为 no-op）
 }
 
 // wsErrorFrame 网关终态错误帧（与 wsWriteError 的帧形一致）。contFail 收尾

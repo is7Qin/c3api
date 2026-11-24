@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/repository"
@@ -283,7 +284,7 @@ func TestFoldProducer_panicClosesChainAsIncomplete(t *testing.T) {
 type doubleCompleteAttempt struct{}
 
 func (doubleCompleteAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	d := dispatchFromContext(ctx)
 	outcome := mergeDispatchBase(ctx, AttemptOutcome{
 		Result: ResultSuccess, HTTPStatus: 200, Commit: CommitResponseStarted,
@@ -326,10 +327,10 @@ func TestFoldProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 type noObservationAttempt struct{ t *testing.T }
 
 func (a noObservationAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	a.t.Helper()
 	require.Nil(a.t, dispatchFromContext(ctx), "a plan-less dispatch must not create an owner observation")
-	sel.Release()
+	sel.HandleOrDetached().Release()
 	return 0, nil, nil, true, nil
 }
 

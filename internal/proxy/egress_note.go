@@ -7,8 +7,8 @@ package proxy
 import (
 	"strconv"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // egressNote 出口失败注解（spec-proxy-pool §5.1/§5.2）：本次尝试绑定了出口代理
@@ -21,7 +21,7 @@ import (
 // **为什么直连恒空**：`sel.ProxyID == nil` = 未绑定 ⇒ 零代理部署的 err_logs.message
 // 与 M3 之前**逐字节**一致（零回归的一部分）。id 与 Egress 在同一个 Selection
 // 字面量里同源取得，所以它指的就是本次尝试真正用的那条绑定。
-func egressNote(sel *scheduler.Selection) string {
+func egressNote(sel *api.Selection) string {
 	if sel == nil || sel.ProxyID == nil || sel.Egress == nil {
 		return ""
 	}
@@ -31,7 +31,7 @@ func egressNote(sel *scheduler.Selection) string {
 // withEgressNote 把出口标识拼到网络失败文本尾部（`<原文> (proxy_id=7 socks5://h:p)`）。
 // 原文为空时只留标识；直连 ⇒ 原样返回。**先给尾注预留预算、再截原文**（message 列有界，
 // 详见下面实现处的理由）。
-func withEgressNote(msg string, sel *scheduler.Selection) string {
+func withEgressNote(msg string, sel *api.Selection) string {
 	note := egressNote(sel)
 	if note == "" {
 		return domain.TruncateErrMsg(msg)

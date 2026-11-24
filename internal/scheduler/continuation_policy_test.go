@@ -201,7 +201,7 @@ func TestSelectionSkipContinuationPinnedAtReservation(t *testing.T) {
 			s := newTestScheduler(t, tc.accs)
 			sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 			require.NoError(t, err)
-			defer sel.Release()
+			defer sel.Handle.Release()
 			require.Equal(t, tc.want, sel.SkipContinuation,
 				"Selection.SkipContinuation 必须在预留装配点按逐 Type 能力位定型")
 		})

@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
@@ -199,7 +200,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	if contPrevID != "" {
 		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, &plan, attempt)
 		if ferr != nil {
-			sel.Release()
+			sel.HandleOrDetached().Release()
 			wsWriteError(client, ferr.msg)
 			p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
 			return
@@ -244,7 +245,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 会让代理/网络失败不迁移；循环本身不为 code==0 代发 Warn，gate Minor 2b 不变）。
 type wsAttempt struct{ p *Proxy }
 
-func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	// 当前 hdr 恒 nil，未回收上游 Header，仅 fallback 生效；后续扩展透传后替换为真实透传
 	// 循环的 dispatch ctx 携带唯一 owner 观测：relay/reportWSOutcome 经
 	// r.Context() 取用（handled=true 终态由 caller 侧完成观测）。
@@ -324,7 +325,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			p.rejectBPSWS(st.client, r, reqID, groupID, start, sel, reqModel)
 			return 0, nil, nil, true, nil
 		}
-		cred := sel.Credential()
+		cred := sel.HandleOrDetached().Credential()
 		prepared, err := p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponsesWS, Egress: sel.Egress, Transport: sel.CodexResponsesTransport})
 		if err != nil {
 			if isBPSLocalReject(err) {
@@ -423,7 +424,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	return code, []byte(msg), nil, false, nil
 }
 
-func (p *Proxy) bpsWSError(reqID string, sel *scheduler.Selection, reqModel string, err error) (int, []byte, http.Header, bool, error) {
+func (p *Proxy) bpsWSError(reqID string, sel *api.Selection, reqModel string, err error) (int, []byte, http.Header, bool, error) {
 	code, safe := bpsErrorResponse(err)
 	// codex WS 面同样优先用上游 error.message；没有正文才退回固定句。
 	msg := safe.Error()
@@ -572,7 +573,7 @@ func wsWriteError(client *websocket.Conn, msg string) {
 //     Dial 已按同一份首帧字节整形过，当前 SDK 下本分支只作防御。
 //   - 其余 → 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；观测
 //     归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
-func (p *Proxy) codexFirstFrameFailed(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, fwErr error) (int, []byte, http.Header, bool, error) {
+func (p *Proxy) codexFirstFrameFailed(r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, client *websocket.Conn, fwErr error) (int, []byte, http.Header, bool, error) {
 	if isCodexInvalidBody(fwErr) {
 		p.rejectCodexWSInvalidBody(r, reqID, groupID, start, sel, reqModel, client)
 		return 0, nil, nil, true, nil

@@ -31,6 +31,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -76,7 +77,7 @@ type roundBillingEnv struct {
 	usage *captureLogStore
 	errs  *captureLogStore
 	quota *captureQuotaWriter
-	sel   *scheduler.Selection
+	sel   *api.Selection
 	out   chan roundRelayOutcome
 }
 
@@ -462,7 +463,7 @@ func TestRoundG15ReleaseOnceOnAllFourPaths(t *testing.T) {
 			require.True(t, ok)
 			require.Zero(t, ri.Concurrency, "并发槽必须释放")
 			// 生效次数 = 1：Release 已 CAS 幂等，重复释放不得二次递减计数。
-			env.sel.Release()
+			env.sel.HandleOrDetached().Release()
 			ri, ok = env.p.sched.Runtime(1)
 			require.True(t, ok)
 			require.Zero(t, ri.Concurrency, "release 生效次数必须恰为 1（重复调用为 no-op）")

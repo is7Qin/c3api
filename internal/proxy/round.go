@@ -31,8 +31,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -149,7 +149,7 @@ func (r *round) roll(now time.Time) {
 // （带/不带 usage）；本轮已是 Completed* 的第二帧 → InvalidDuplicate（投递一次
 // Warn，不写行）；已 InvalidDuplicate → 静默吞掉（不再刷 Warn）。
 // 返回 true 表示本次观测**刚刚完成**本轮（调用方据此触发结算）。
-func (r *round) observeCompleted(p *Proxy, f []byte, sel *scheduler.Selection) bool {
+func (r *round) observeCompleted(p *Proxy, f []byte, sel *api.Selection) bool {
 	if r.completed() {
 		if r.state != RoundInvalidDuplicate {
 			p.log.Warn("responses round duplicate completed frame",
@@ -166,7 +166,7 @@ func (r *round) observeCompleted(p *Proxy, f []byte, sel *scheduler.Selection) b
 		r.state = RoundCompletedWithUsage
 		// codex 会话轮次推进（成功取到 usage 时 Step 一次；非 codex
 		// Selection 无会话 → no-op）。多轮语义：每轮各 Step 一次。
-		sel.StepIdentity()
+		sel.HandleOrDetached().StepIdentity()
 		// 响应检测旁路（spec §6）：completed 帧恒在流末，最终计数覆盖前值。
 		if respImageDetectOn(sel) {
 			r.usage.calls = respImageCountCompleted(f)
@@ -188,7 +188,7 @@ func (r *round) observeCompleted(p *Proxy, f []byte, sel *scheduler.Selection) b
 // Record 只入内存队列，DeductQuota 紧随其后做内存准入扣减——不新增时序语义。
 // **永不 Release**：Selection 租约是连接级的，release 只在连接收尾的 defer 调
 // 一次（§6.4；release 本身已是 CAS 幂等，故不新增 guard）。
-func (r *round) settle(p *Proxy, sel *scheduler.Selection, l *domain.UsageLog) {
+func (r *round) settle(p *Proxy, sel *api.Selection, l *domain.UsageLog) {
 	if r.billingSettled {
 		return
 	}
@@ -230,7 +230,7 @@ func (p *Proxy) buildRoundLog(r *round, groupID, accountID int64, reqModel, mapp
 //
 // 轮边界成本（§9 非功能约束）：一次 buildRoundLog（栈上组装 + 一次 ctx 查表）+
 // 一次 routeLog 入队 + 一次内存扣减。无逐帧开销——本函数只在终态帧上跑。
-func (p *Proxy) settleRound(ctx context.Context, r *round, sel *scheduler.Selection, reqModel string, groupID int64) {
+func (p *Proxy) settleRound(ctx context.Context, r *round, sel *api.Selection, reqModel string, groupID int64) {
 	l := withCommit(
 		logWithCtx(ctx, p.buildRoundLog(r, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, 200, domain.ErrNone, r.usage)),
 		CommitResponseStarted,

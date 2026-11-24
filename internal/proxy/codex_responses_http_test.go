@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -940,7 +941,7 @@ func (w *frameFailWriter) Write(b []byte) (int, error) {
 func (w *frameFailWriter) Flush() { w.flushes++ }
 
 // selectCodexAccount 直接调用前置：按 codex 类型选号（占并发槽）。
-func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Selection {
+func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *api.Selection {
 	t.Helper()
 	sel, err := p.sched.Select(10, domain.FormatOpenAIResponses, "gpt-4o")
 	require.NoError(t, err)

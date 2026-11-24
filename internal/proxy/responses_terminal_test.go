@@ -804,7 +804,7 @@ func TestCodexConvertedLaneTerminalComesFromPlan(t *testing.T) {
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, nil, store)
 	sel := selectCodexAccount(t, p, 10)
-	cred := sel.Credential()
+	cred := sel.HandleOrDetached().Credential()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	plan := codexStreamPlan{
 		// 任意帧原样写出（业务帧 ⇒ Output 已提交）。
@@ -832,7 +832,7 @@ func TestCodexConvertedLaneTerminalComesFromPlan(t *testing.T) {
 
 // TestCodexResponsesTruncationDoesNotAdvanceIdentity R2 评审 must-fix：截断
 // （干净 EOF 无终态）**不得推进身份/退休线程**——哨兵判定必须早于
-// `if err == nil && usageTaken { sel.StepIdentity() }`。
+// `if err == nil && usageTaken { sel.HandleOrDetached().StepIdentity() }`。
 //
 // 为什么用「截断的 completed 帧」：哨兵若晚于 StepIdentity，只有 `usageTaken`
 // 为真的截断才会走进推进分支（纯 delta 截断的 usageTaken=false，顺序不可观测）。

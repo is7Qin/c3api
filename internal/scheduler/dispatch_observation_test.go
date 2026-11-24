@@ -42,14 +42,14 @@ func TestDispatchObservation_requiresCompleteMetadata(t *testing.T) {
 	require.True(t, a2.OperationTag != "")
 
 	// second attempt must carry previous identity
-	sel.Release()
+	sel.Handle.Release()
 	sel2, a3, err := s.ReserveAttempt(&plan2)
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), a3.Ordinal)
 	require.NotNil(t, a3.PreviousAttemptID)
 	require.Equal(t, a2.AttemptID, *a3.PreviousAttemptID)
 	require.NoError(t, a3.Validate())
-	sel2.Release()
+	sel2.Handle.Release()
 
 	// validation must reject missing required dispatch fields
 	bad := a2
@@ -113,10 +113,10 @@ func TestDispatchObservation_preservesLeaseWithoutRereadingState(t *testing.T) {
 	// attempt still validates with original generation/fingerprint, not mutated view
 	require.NoError(t, a.Validate())
 	requireEqualDispatchFingerprint(t, a.CandidateFingerprint)
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ := s.Runtime(a.AccountID)
 	require.Equal(t, int64(0), ri.Concurrency)
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ = s.Runtime(a.AccountID)
 	require.Equal(t, int64(0), ri.Concurrency)
 }

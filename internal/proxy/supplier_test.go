@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/supplier"
 )
 
@@ -118,7 +118,7 @@ func TestStampSupplierQuadrants(t *testing.T) {
 
 	// 有归属（uid=100，bp=7000）正收益：earn=floor(100000*7000/10000)=70000。
 	p := &Proxy{}
-	sel := &scheduler.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 7000, Rev: 1}}
+	sel := &api.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 7000, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
 	p.stampSupplier(sel, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
@@ -133,14 +133,14 @@ func TestStampSupplierQuadrants(t *testing.T) {
 	require.True(t, l.SupplierCredited)
 
 	// 无归属（平台自有号）：Ready=false ⇒ uid 0、earn 0、credited true。
-	ownless := &scheduler.Selection{AccountID: 8}
+	ownless := &api.Selection{AccountID: 8}
 	l = &domain.UsageLog{AccountID: 8, Cost: 100000}
 	p.stampSupplier(ownless, l)
 	require.Equal(t, int64(0), l.SupplierUserID)
 	require.True(t, l.SupplierCredited)
 
 	// bp=0 显式：有归属但零收益。
-	zeroBp := &scheduler.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 0, Rev: 1}}
+	zeroBp := &api.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 0, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
 	p.stampSupplier(zeroBp, l)
 	require.Equal(t, int64(100), l.SupplierUserID)

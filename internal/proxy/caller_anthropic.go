@@ -12,9 +12,9 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -23,7 +23,7 @@ type anthropicCaller struct{ p *Proxy }
 
 // anthropicCaller 负责 Messages 的原始 SSE 中继，缓存用量在 message_start、输出用量在 message_delta 分别提取。
 
-func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	if stream {
 		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 AnthMessageRaw 直透
@@ -140,13 +140,13 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := gjson.GetBytes(body, "model").String()
 	if err := validateNonStreamBody(body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	upBody, setErr := setModel(body, sel.Model)
 	if setErr != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	// 非流式长任务上限：anthropic SDK 在客户端本地拒绝 expectedTime > 10min 或
@@ -184,7 +184,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	return 200, nil, true, nil
 }
 
-func anthropicBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection, reqModel string, start time.Time, ttft *int64, it, ot, cr, cc int64) AttemptOutcome {
+func anthropicBaseOutcome(reqID string, groupID int64, sel *api.Selection, reqModel string, start time.Time, ttft *int64, it, ot, cr, cc int64) AttemptOutcome {
 	routeID, _ := domain.RouteClassID(groupID, domain.FormatAnthropic, reqModel, domain.OpAnthropicMessages)
 	qualityID, _ := domain.QualityClassID(domain.CallerAnthropic, domain.FormatAnthropic, sel.Model, domain.OpAnthropicMessages)
 	fp := sel.CandidateFingerprint

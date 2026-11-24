@@ -34,18 +34,20 @@ func TestSelectionCredentialCarriesSourceRevision(t *testing.T) {
 
 	sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.NoError(t, err)
-	defer sel.Release()
+	defer sel.Handle.Release()
 
-	cred := sel.Credential()
+	cred := sel.Handle.Credential()
 	require.Equal(t, int64(7), cred.IdentityRevision, "凭据投影携带来源 K")
 	require.Equal(t, int64(1), cred.AccountID)
 	require.Equal(t, "at-1", cred.OAuthToken)
 	require.Equal(t, "rt-1", cred.OAuthRefreshToken)
 	require.Equal(t, "upstream-acct", cred.CodexAccountID)
 	require.Equal(t, "inst", cred.InstallationID)
-	require.Equal(t, cred.IdentityRevision, sel.IdentityRevision())
+	require.Equal(t, cred.IdentityRevision, sel.Handle.(*selection).identityRevision())
 
 	// 未取得租借的 Selection（非选号调用面）没有来源版本 ⇒ 0（"来源未知"）。
-	require.Zero(t, (&Selection{}).IdentityRevision())
-	require.Zero(t, (&Selection{}).Credential().IdentityRevision)
+	// 零值契约字段 + 零值包装（无租约）= 分离 selection：K 与凭据都为零值。
+	require.Zero(t, (&Selection{}).Handle)
+	require.Zero(t, (&selection{}).identityRevision())
+	require.Zero(t, (&selection{}).Credential().IdentityRevision)
 }

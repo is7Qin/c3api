@@ -21,6 +21,7 @@ import (
 	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -317,7 +318,7 @@ func TestAttemptLogsCoverageBoundaries(t *testing.T) {
 // 自己写完了响应，循环不参与收尾）。
 type handledFailureAttempt struct{ code int }
 
-func (a handledFailureAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+func (a handledFailureAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *api.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
 	return a.code, nil, nil, true, nil
 }
 
@@ -328,7 +329,7 @@ type fatalPipelineAttempt struct {
 	err  error
 }
 
-func (a fatalPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+func (a fatalPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *api.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
 	return a.code, nil, nil, false, a.err
 }
 
@@ -604,7 +605,7 @@ func BenchmarkFailoverLoopHandledDispatch(b *testing.B) {
 				}
 				p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, "req-bench", 10,
 					time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
-				sel.Release()
+				sel.HandleOrDetached().Release()
 			}
 			if sink, ok := tc.sink.(*captureAttemptSink); ok {
 				if n := len(sink.snapshot()); n != 0 {

@@ -49,16 +49,16 @@ func TestLeaseExactReleaseIdempotent(t *testing.T) {
 	ri, _ := s.Runtime(1)
 	require.Equal(t, int64(1), ri.Concurrency)
 
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "first release decrements")
 
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "second release no-op")
 	require.GreaterOrEqual(t, ri.Concurrency, int64(0), "never negative")
 
-	sel.Release()
+	sel.Handle.Release()
 	require.Equal(t, int64(0), ri.Concurrency, "third release still no-op")
 }
 
@@ -70,7 +70,7 @@ func TestLeaseSameIDReaddExactObject(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	oldLeaseAcc := sel.LeaseAccountForTest()
+	oldLeaseAcc := sel.Handle.(*selection).leaseAccountForTest()
 
 	m.mu.Lock()
 	m.byGroup[10] = []*domain.Account{}
@@ -93,7 +93,7 @@ func TestLeaseSameIDReaddExactObject(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(0), ri.Concurrency, "readded account starts 0")
 
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "old lease release must not affect readded object")
 
@@ -105,7 +105,7 @@ func TestLeaseSameIDReaddExactObject(t *testing.T) {
 	require.NoError(t, err)
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(1), ri.Concurrency)
-	sel2.Release()
+	sel2.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency)
 }
@@ -124,12 +124,12 @@ func TestLeaseDeletedInFlight(t *testing.T) {
 	s.InvalidateGroup(10)
 	s.compileOnce() // paired publish applies the removal
 
-	require.NotPanics(t, func() { sel.Release() })
+	require.NotPanics(t, func() { sel.Handle.Release() })
 	v := s.View()
 	_, ok := v.ByID()[1]
 	require.False(t, ok)
 
-	require.NotPanics(t, func() { sel.Release() })
+	require.NotPanics(t, func() { sel.Handle.Release() })
 }
 
 func TestLeaseReloadRaceBarrier(t *testing.T) {
@@ -148,7 +148,7 @@ func TestLeaseReloadRaceBarrier(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		sel.Release()
+		sel.Handle.Release()
 		ri, _ := s.Runtime(1)
 		require.GreaterOrEqual(t, ri.Concurrency, int64(0))
 	}
@@ -187,14 +187,14 @@ func TestLeasePanicEarlyPath(t *testing.T) {
 	func() {
 		defer func() {
 			_ = recover()
-			sel.Release()
+			sel.Handle.Release()
 		}()
 		panic("simulated panic")
 	}()
 
 	ri, _ := s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency)
-	sel.Release()
+	sel.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency)
 }

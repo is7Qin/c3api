@@ -266,9 +266,19 @@ var allowRules = []allowRule{
 	// 存储层：允许 ent 与 domain/credential。
 	{from: "internal/repository", to: []string{"internal/domain", "internal/credential", "internal/ent"}},
 
+	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
+	// 只依赖值类型层与上游 SDK 桥的**值类型**（domain/credential/sdkbridge.ThreadHandle）；
+	// F2 的 import 图半边：**绝不许** import internal/scheduler（会构成契约环）。
+	// pkg/ 与 leafRule 同口径显式登记：唯一实际用到的是 pkg/egress.Client 指针
+	// （类型随账号快照携带，api 不调实现——把实现挡在数据面/控制面之外）。
+	{from: "internal/api", to: []string{
+		"internal/domain", "internal/credential", "internal/sdkbridge", "pkg/",
+	}},
+
 	// 调度：只依赖值类型层 + worker；执行面细节按 P5 收口（见账本）。
+	// P3b 起多一条 internal/api：控制面把 Selection 别名为契约类型、并实现 SelectionHandle。
 	{from: "internal/scheduler", to: []string{
-		"internal/domain", "internal/credential", "internal/worker",
+		"internal/domain", "internal/credential", "internal/worker", "internal/api",
 		"internal/latch", "internal/rule", "pkg/logx",
 	}, deny: []string{"pkg/egress"}},
 
@@ -359,7 +369,7 @@ const (
 	//
 	// 诚实边界：它挡不住有意同时改矩阵与指纹。它只保证这类改动在 diff 里两处同时
 	// 可见、必须写理由（见文件头 ③），不保证它不会发生。
-	allowMatrixFingerprint = "abe5fa655398ba69e95fc287aa0ac57307b0c981d0c11f3600eaf97ca5c541e1"
+	allowMatrixFingerprint = "976b113dcaef31904f28216ea9e807a508da11e3d0090195c067c8f940ea04d5"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy

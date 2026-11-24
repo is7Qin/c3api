@@ -13,6 +13,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -25,7 +26,7 @@ import (
 // 同款）。
 var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex search unavailable (adapter not wired)"}
 
-func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time) AttemptOutcome {
+func searchDispatchBase(sel *api.Selection, reqModel, reqID string, start time.Time) AttemptOutcome {
 	fp := "fp1"
 	if sel != nil && sel.CandidateFingerprint != "" {
 		fp = sel.CandidateFingerprint
@@ -52,7 +53,7 @@ func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start 
 	})
 }
 
-func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+func emitSearchOutcome(ctx context.Context, p *Proxy, sel *api.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
 	if sel == nil {
 		return
 	}
@@ -154,7 +155,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 // 器）。差异段（循环不代发）：Warn 文案 "upstream search connection failure"
 type searchAttempt struct{ p *Proxy }
 
-func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	var (
 		code     int
 		respBody []byte
@@ -188,7 +189,7 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 //     writeErr，handled=true）
 //   - 配置损坏（codex 账号缺 account_ext 快照）→ 连接级错误转移（handled=false
 //     ——失败文本落盘，耗尽 502；不上报失效）
-func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
+func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
 		o := mergeDispatchBase(ctx, searchDispatchBase(sel, reqModel, reqID, start))
@@ -199,7 +200,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		o.BusinessFrameSent = false
 		o.Usage = AttemptUsage{CallCount: 0}
 		emitSearchOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexSearchNotIntegrated.msg)
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
 		writeErr(w, errCodexSearchNotIntegrated)
 		return 0, nil, true, nil
@@ -211,7 +212,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	// 凭据线：快照派生直供适配层。Codex 端点固定 SDK 官方
 	// https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装。
-	cred := sel.Credential()
+	cred := sel.HandleOrDetached().Credential()
 	// 非流式超时：TCP 黑洞读停滞 → 超时触发 → 连接级错误转移
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
@@ -250,7 +251,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 //
 // 客户端头如实透传（x-codex-turn-metadata 不在 relayDeny ⇒ 客户端带就发；
 // 仍不转发的那条只剩上面的 SDK 路径）
-func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
+func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	cred, err := p.credentialFor(sel)
 	if err != nil {
 		return 0, nil, false, err

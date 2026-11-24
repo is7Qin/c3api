@@ -19,10 +19,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -37,7 +37,7 @@ type codexImagesCaller struct {
 	p *Proxy
 }
 
-func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	contentType := r.Header.Get("Content-Type")
 	if p.codex == nil {
@@ -45,7 +45,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		if isMultipartForm(contentType) {
 			reqModel = imagesMultipartModel(body, contentType)
 		}
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexImagesNotIntegrated.msg)
 		writeErr(w, errCodexImagesNotIntegrated)
 		return 0, nil, true, nil
@@ -56,7 +56,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		if isMultipartForm(contentType) {
 			reqModel = imagesMultipartModel(body, contentType)
 		}
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusBadRequest, domain.ErrBilling, 0, usageTuple{}, start, err.Error())
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": err.Error()}})
 		return 0, nil, true, nil
@@ -68,7 +68,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	if params.Model == "" {
 		params.Model = reqModel
 	}
-	cred2 := sel.Credential()
+	cred2 := sel.HandleOrDetached().Credential()
 	if stream {
 		// 出口在**这一跳**绑定进 seam：`imageStreamGenerator` 是流式状态机的测试
 		// 替身面（五路共用），不该被塞进一个对替身毫无意义的出口参数；真实能力
@@ -119,7 +119,7 @@ func codexImagesOpTag(r *http.Request) OperationTag {
 	return OperationTag(domain.OpImagesGenerations)
 }
 
-func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+func codexImagesOutcome(reqID string, sel *api.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
 	return syntheticOutcome(CallerImagesCodex, reqID, sel, reqModel, op, timing, usage, result, status, commit, businessSent, terminal, malformed)
 }
 

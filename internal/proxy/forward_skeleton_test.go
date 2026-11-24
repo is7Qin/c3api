@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // 等价性专项：骨架局部校验路径——流式/非流式 body 非 JSON、
@@ -253,15 +253,15 @@ func TestCallerLocalReject400NoRecordNoLeak(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		format domain.RequestFormat
-		call   func(p *Proxy, sel *scheduler.Selection, body []byte) (int, []byte, bool, error)
+		call   func(p *Proxy, sel *api.Selection, body []byte) (int, []byte, bool, error)
 	}{
-		{"chat", domain.FormatOpenAIChat, func(p *Proxy, sel *scheduler.Selection, body []byte) (int, []byte, bool, error) {
+		{"chat", domain.FormatOpenAIChat, func(p *Proxy, sel *api.Selection, body []byte) (int, []byte, bool, error) {
 			return (&chatCaller{p: p}).Call(context.Background(), httptest.NewRecorder(), nil, "rid", 10, time.Now(), sel, "sk", body, false)
 		}},
-		{"responses", domain.FormatOpenAIResponses, func(p *Proxy, sel *scheduler.Selection, body []byte) (int, []byte, bool, error) {
+		{"responses", domain.FormatOpenAIResponses, func(p *Proxy, sel *api.Selection, body []byte) (int, []byte, bool, error) {
 			return (&responsesCaller{p: p}).Call(context.Background(), httptest.NewRecorder(), nil, "rid", 10, time.Now(), sel, "sk", body, false)
 		}},
-		{"anthropic", domain.FormatAnthropic, func(p *Proxy, sel *scheduler.Selection, body []byte) (int, []byte, bool, error) {
+		{"anthropic", domain.FormatAnthropic, func(p *Proxy, sel *api.Selection, body []byte) (int, []byte, bool, error) {
 			return (&anthropicCaller{p: p}).Call(context.Background(), httptest.NewRecorder(), nil, "rid", 10, time.Now(), sel, "sk", body, false)
 		}},
 	} {

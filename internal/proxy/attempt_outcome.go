@@ -4,7 +4,7 @@ package proxy
 import (
 	"fmt"
 
-	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/api"
 )
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
@@ -561,7 +561,7 @@ func buildOutcome(caller CallerCategory, op OperationTag, p outcomeParams) Attem
 // syntheticFingerprint buildOutcome 调用方的 fingerprint 装箱助手：候选取值
 // 优先，缺失回退「fp-<reqID>」（复现 images/codex-images/converted 构造器原有的
 // reqID 派生回退；chat/search 各自的占位回退仍由各自构造器提供）。
-func syntheticFingerprint(sel *scheduler.Selection, reqID string) CandidateFingerprint {
+func syntheticFingerprint(sel *api.Selection, reqID string) CandidateFingerprint {
 	fp := sel.CandidateFingerprint
 	if fp == "" {
 		fp = "fp-" + reqID
@@ -573,7 +573,7 @@ func syntheticFingerprint(sel *scheduler.Selection, reqID string) CandidateFinge
 // caller 共用的 AttemptOutcome：四者字段装箱逐字相同、仅 CallerCategory 不同
 // （原 imagesStreamOutcome 与 codexImagesOutcome 逐字重复，imagesOutcome 与
 // convertedOutcome 仅差类别）。收敛为单一来源，指纹统一走 syntheticFingerprint。
-func syntheticOutcome(caller CallerCategory, reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+func syntheticOutcome(caller CallerCategory, reqID string, sel *api.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
 	return buildOutcome(caller, op, outcomeParams{
 		reqID:          AttemptID(reqID),
 		routeClassID:   RouteClassID("rc-" + reqID),

@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // TestCustomUpstreamPathReachesUpstream custom 模板配置的路径必须真正决定上游
@@ -126,20 +126,20 @@ func TestDefaultTailsAreProtocolFree(t *testing.T) {
 //     写 x 就是 x：/v1 的补全属于内置端点，与自定义路径无关）
 func TestTargetPath(t *testing.T) {
 	require.Equal(t, "/v1/"+defaultPathChat, targetPath(nil, pathKeyChat, defaultPathChat))
-	require.Equal(t, "/v1/"+defaultPathChat, targetPath(&scheduler.Selection{}, pathKeyChat, defaultPathChat), "nil map 回落默认端点")
+	require.Equal(t, "/v1/"+defaultPathChat, targetPath(&api.Selection{}, pathKeyChat, defaultPathChat), "nil map 回落默认端点")
 	require.Equal(t, "/v1/"+defaultPathChat,
-		targetPath(&scheduler.Selection{UpstreamPaths: map[string]string{pathKeyChat: ""}}, pathKeyChat, defaultPathChat), "空值等同未配置")
+		targetPath(&api.Selection{UpstreamPaths: map[string]string{pathKeyChat: ""}}, pathKeyChat, defaultPathChat), "空值等同未配置")
 
-	custom := &scheduler.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	custom := &api.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
 	require.Equal(t, "v1/x", targetPath(custom, pathKeyChat, defaultPathChat), "custom 路径原样透传")
 
-	customNoV1 := &scheduler.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "acme/chat"}}
+	customNoV1 := &api.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "acme/chat"}}
 	require.Equal(t, "acme/chat", targetPath(customNoV1, pathKeyChat, defaultPathChat),
 		"不以 v1/ 开头的自定义路径同样原样透传：补 /v1 只属于内置端点")
 	require.NotEqual(t, "/v1/acme/chat", targetPath(customNoV1, pathKeyChat, defaultPathChat))
 
 	// 非 custom 类型即使快照里残留配置也必须回落默认（防类型切换后打到旧端点）
-	apiKey := &scheduler.Selection{CredentialType: credential.TypeAPIKey, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	apiKey := &api.Selection{CredentialType: credential.TypeAPIKey, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
 	require.Equal(t, "/v1/"+defaultPathChat, targetPath(apiKey, pathKeyChat, defaultPathChat), "非 custom 忽略路径")
 }
 

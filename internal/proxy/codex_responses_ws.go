@@ -13,9 +13,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -74,14 +74,14 @@ var errCodexExtMissing = errors.New("codex account missing account_ext snapshot 
 // 刚换上的新凭据 Auth。
 //
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
-func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []byte) (*sdkbridge.Stream, sdkbridge.Prepared, error) {
+func (p *Proxy) dialCodexWS(r *http.Request, sel *api.Selection, frame []byte) (*sdkbridge.Stream, sdkbridge.Prepared, error) {
 	if p.codex == nil {
 		return nil, sdkbridge.Prepared{}, errCodexWSNotIntegrated
 	}
 	if sel.Ext == nil {
 		return nil, sdkbridge.Prepared{}, errCodexExtMissing
 	}
-	cred := sel.Credential()
+	cred := sel.HandleOrDetached().Credential()
 	// 只取条目句柄，不经 codexRequestPrep（§5.3）：WS 的身份与首帧绑定，下面按
 	// frame 组装。
 	prep, err := p.codex.Prepare(&cred)
@@ -94,7 +94,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 	// 首帧逐字节相同（调用方传同一份字节）。
 	// 身份与首帧一次给全（CallRequest）：会话路径由会话簿按三元组合成，槽位路径取
 	// 线程句柄；两侧的 Turn.First 与握手 routing-hint 都由**同一份 frame** 判定。
-	call := sdkbridge.CallRequest{Thread: sel.Thread(), Frame: frame}
+	call := sdkbridge.CallRequest{Thread: sel.HandleOrDetached().Thread(), Frame: frame}
 	if req, ok := p.bookRequest(r.Context(), sel, prep); ok {
 		call.Book = p.conversations.Call(req, frame)
 	}
@@ -125,7 +125,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 //     网关避免双份刷新
 //   - 信封 429 → Kind429 转移；信封 5xx / 裸 RefreshError / 网络（code 0）
 //     → RuleKindOf(code) 转移（正常 failover）
-func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string, callErr error) {
+func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string, callErr error) {
 	// SDK 本地拒绝（§5.4）：首帧不能整形，Dial 未拨号即返回；经 translateDialError
 	// 包装后仍按 errors.Is 识别。客户端错误——错误帧 + 400 记录，不分类不转移。
 	if isCodexInvalidBody(dialErr) {
@@ -133,7 +133,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		return true, 0, "", nil
 	}
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
 		wsWriteError(client, errCodexWSNotIntegrated.Error())
 		return true, 0, "", nil
@@ -196,7 +196,7 @@ func sniffCodexWSDeath(f []byte) error {
 	return sdkbridge.ClassifyFatal(f)
 }
 
-// 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组
+// 伪装身份注入源：api.Selection.IdentityFor 一次给全四元组
 // （installation_id / session_id / thread_id / window_id，全部取自槽状态）——
 // proxy 不再回账号 ext 拼装，杜绝 installation 双源。
 

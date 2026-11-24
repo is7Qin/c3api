@@ -20,7 +20,7 @@ func TestSelect_executesCompiledPlanWhenRoutePublished(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // Once a route is compiled, reservation failure is the plan's verdict: the
@@ -52,7 +52,7 @@ func TestSelect_unknownModelUsesCompiledDefaultBucket(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // After the bootstrap compile the published plan serves Select with no
@@ -63,7 +63,7 @@ func TestSelect_compiledPlanServesAfterBootstrapCompile(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // NewAttemptPlan resolves an exact-route miss to the compiled default bucket.
@@ -85,7 +85,7 @@ func TestNewAttemptPlan_defaultBucketFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	require.Equal(t, defDec.RouteClassID, attempt.RouteClassID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 func TestReserveAttempt_projectsConcreteModelThroughDefaultBucket(t *testing.T) {
@@ -110,7 +110,7 @@ func TestReserveAttempt_projectsConcreteModelThroughDefaultBucket(t *testing.T) 
 	require.Equal(t, qualityClassHexForWithOp(domain.FormatOpenAIChat, "upstream-model", domain.OpChatCompletions), attempt.QualityClassID)
 	require.Equal(t, "upstream-model", sel.Model)
 	require.Equal(t, domain.ModelMappingModeExplicit, sel.ModelMappingMode)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // A static replacement (credential/revision change) fences the plan's captured
@@ -139,7 +139,7 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt.AccountID, "stale leaf must be fenced out")
 	require.Equal(t, int64(2), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // A decision-generation mismatch is tolerated only before a plan has ever
@@ -165,7 +165,7 @@ func TestReserveAttempt_firstReserveSucceedsAfterDecisionRepublish(t *testing.T)
 	require.NotNil(t, sel)
 	require.Equal(t, int64(1), attempt.AccountID)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // Once a reservation has succeeded the plan is execution-started: a later
@@ -182,7 +182,7 @@ func TestReserveAttempt_rejectsPostReleaseReserveAfterDecisionRepublish(t *testi
 	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 	require.True(t, plan.reservationStarted, "successful reservation marks execution start")
 
 	// When: a decision-only republish lands after execution started.
@@ -211,7 +211,7 @@ func TestReserveAttempt_rejectsPostAbandonReserveAfterDecisionRepublish(t *testi
 	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 	plan.AbandonLastAttempt()
 	require.True(t, plan.reservationStarted, "abandon must not clear execution start")
 
@@ -248,5 +248,5 @@ func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }

@@ -12,8 +12,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
@@ -73,7 +73,7 @@ func isBPSLocalReject(err error) bool {
 //
 // 判据是 Selection 上的**构造期政策位**（预留装配点按凭据通道算一次），本函数只做
 // 字段读：数据面不再为这个结论查能力表/通道表（spec §9：政策构造期定型）。
-func bpsSkipsContinuation(sel *scheduler.Selection) bool {
+func bpsSkipsContinuation(sel *api.Selection) bool {
 	return sel != nil && sel.SkipContinuation
 }
 
@@ -88,7 +88,7 @@ func writeBPSInvalidBodyFrame(ctx context.Context, client *websocket.Conn, err e
 	return writeCodexInvalidBodyFrameMessage(ctx, client, sdkbridge.BPSLocalRejectMessage(err))
 }
 
-func (p *Proxy) bpsHTTPError(ctx context.Context, w http.ResponseWriter, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, err error) (int, []byte, bool, error) {
+func (p *Proxy) bpsHTTPError(ctx context.Context, w http.ResponseWriter, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, err error) (int, []byte, bool, error) {
 	if isBPSLocalReject(err) {
 		p.finishBPSLocalReject(ctx, reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponses)
 		writeErr(w, bpsInvalidBody(err))
@@ -100,26 +100,26 @@ func (p *Proxy) bpsHTTPError(ctx context.Context, w http.ResponseWriter, reqID s
 	return code, upstreamBody(err), false, markGatewayBudget(ctx, safe)
 }
 
-func (p *Proxy) finishBPSLocalReject(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, format domain.RequestFormat) {
+func (p *Proxy) finishBPSLocalReject(ctx context.Context, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, format domain.RequestFormat) {
 	p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start)), CommitNotSent))
 }
 
-func (p *Proxy) rejectBPSHTTP(w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, format domain.RequestFormat) {
+func (p *Proxy) rejectBPSHTTP(w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, format domain.RequestFormat) {
 	if sel == nil {
 		writeErr(w, errBPSResponsesNotIntegrated)
 		return
 	}
-	sel.Release()
+	sel.HandleOrDetached().Release()
 	p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, errBPSResponsesNotIntegrated.status, domain.ErrBilling, 0, usageTuple{}, start, errBPSResponsesNotIntegrated.msg)
 	writeErr(w, errBPSResponsesNotIntegrated)
 }
 
 // rejectBPSWS is the corresponding post-upgrade seam. WebSocket requests carry
 // the local error in a standard Responses error frame rather than an HTTP 503.
-func (p *Proxy) rejectBPSWS(client *websocket.Conn, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string) {
+func (p *Proxy) rejectBPSWS(client *websocket.Conn, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string) {
 	if sel != nil {
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, errBPSResponsesNotIntegrated.status, domain.ErrBilling, 0, usageTuple{}, start, errBPSResponsesNotIntegrated.msg)
-		sel.Release()
+		sel.HandleOrDetached().Release()
 	}
 	wsWriteError(client, errBPSResponsesNotIntegrated.msg)
 }

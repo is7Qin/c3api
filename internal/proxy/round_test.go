@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // TestRoundRequestIDAndCreatedAt 派生 id 与轮起点（§6.2）：k==1 → base（零变化）；
@@ -40,7 +40,7 @@ func TestRoundRequestIDAndCreatedAt(t *testing.T) {
 // 吸收态（第二次 completed 只进 InvalidDuplicate，不返回「刚完成」）。
 func TestRoundFSMTransitions(t *testing.T) {
 	p := &Proxy{} // observeCompleted 只在有 logger 时才打 Warn
-	sel := &scheduler.Selection{}
+	sel := &api.Selection{}
 	rd := newRound("req-fsm", time.Now())
 	completed := roundWireCompleted("rsp_1", 3, 4)
 
@@ -64,7 +64,7 @@ func TestRoundFSMTransitions(t *testing.T) {
 // 完成（tokens=0，不伪造），且返回「刚完成」以触发结算。
 func TestRoundObserveCompletedWithoutUsageIsCompletion(t *testing.T) {
 	p := &Proxy{}
-	sel := &scheduler.Selection{}
+	sel := &api.Selection{}
 	rd := newRound("req-nu", time.Now())
 	require.True(t, rd.observeCompleted(p, roundWireCompletedNoUsage("rsp_1"), sel))
 	require.Equal(t, RoundCompletedWithoutUsage, rd.state)
@@ -108,7 +108,7 @@ func TestRoundG16dSettleTwiceIsIdempotent(t *testing.T) {
 	p, usageRows, errRows, qw, quotaKey := roundBillingProxy(t, "")
 	sel, err := p.sched.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 	require.NoError(t, err)
-	t.Cleanup(sel.Release)
+	t.Cleanup(sel.HandleOrDetached().Release)
 
 	rm := &reqMeta{meta: quotaKey}
 	ctx := context.WithValue(context.Background(), ctxKeyReqMeta{}, rm)

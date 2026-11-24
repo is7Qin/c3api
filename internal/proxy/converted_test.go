@@ -717,7 +717,7 @@ func TestConvertedChatBusyFallback(t *testing.T) {
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
@@ -759,7 +759,7 @@ func TestConvertedTargetAlsoBusy429(t *testing.T) {
 	sel, err := p.sched.Select(10, domain.FormatOpenAIResponses, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID)
-	defer sel.Release()
+	defer sel.HandleOrDetached().Release()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))

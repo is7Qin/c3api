@@ -102,7 +102,7 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 	first, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), attempt.AccountID)
-	first.Release()
+	first.Handle.Release()
 
 	acc3, ok := s.View().Account(3)
 	require.True(t, ok)
@@ -111,7 +111,7 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 	require.NoError(t, err)
 	require.Contains(t, []int64{1, 2}, attempt.AccountID)
 	require.NotEqual(t, int64(3), attempt.AccountID)
-	second.Release()
+	second.Handle.Release()
 }
 
 func TestAttemptPlan_noAffinityPreservesCompiledOrder(t *testing.T) {

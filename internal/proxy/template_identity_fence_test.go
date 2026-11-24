@@ -39,7 +39,7 @@ func TestContinuationTemplateIdentityChangeFailsClosed(t *testing.T) {
 	selB, _, attB, err := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-tpl-before", UserID: 1})
 	require.NoError(t, err)
-	selB.Release()
+	selB.Handle.Release()
 
 	// 模板侧身份写入：换上一个**新的**模板对象（旧快照的不可变性依赖它）并翻转
 	// strip_image_tools；账号行、K、C 都不动。
@@ -52,7 +52,7 @@ func TestContinuationTemplateIdentityChangeFailsClosed(t *testing.T) {
 	selA, _, attA, err := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-tpl-after", UserID: 1})
 	require.NoError(t, err)
-	selA.Release()
+	selA.Handle.Release()
 	require.NotEqual(t, attB.CandidateFingerprint, attA.CandidateFingerprint,
 		"前提：模板侧改动确实改变了候选身份指纹")
 	require.Equal(t, attB.IdentityRevision, attA.IdentityRevision,

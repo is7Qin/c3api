@@ -77,7 +77,7 @@ func TestFailAccountRemovesFromSelection(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 
 	s.FailAccount(1)
 

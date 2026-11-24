@@ -76,7 +76,7 @@ func TestSelectPicksUpCodexTransportAfterTemplateSwitch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportDefault, sel.CodexResponsesTransport,
 		"未配置 ⇒ Selection 携带零值（默认面 http）")
-	sel.Release()
+	sel.Handle.Release()
 
 	m.mu.Lock()
 	nextTpl := *tplx
@@ -93,7 +93,7 @@ func TestSelectPicksUpCodexTransportAfterTemplateSwitch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportWS, sel2.CodexResponsesTransport,
 		"模板改成 ws 后，选中必须看到 ws（复用旧叶会让开关永远不生效）")
-	sel2.Release()
+	sel2.Handle.Release()
 
 	// 判别力的第二重证据（不是判据本身）：键里没有该维度时复用分支留下同一片
 	// 叶子，上面那条断言就会读到旧 tpl。两者必须同时成立。
@@ -112,7 +112,7 @@ func TestSelectionCarriesRawCodexTransport(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportHTTP, sel.CodexResponsesTransport,
 		"显式 http 原样进入 Selection（不归一成零值）")
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // newSchedWithLog 与 newSched 相同，但注入日志器（审计 WARN 的观测面）。

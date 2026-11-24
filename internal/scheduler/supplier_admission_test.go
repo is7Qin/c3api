@@ -53,13 +53,13 @@ func TestReserveAttemptCapturesSupplierFinancePerCandidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt1.AccountID)
 	require.Equal(t, domain.SupplierFinance{Ready: true, UID: 100, Bp: 7000, Rev: 3}, sel1.SupplierFinance)
-	sel1.Release()
+	sel1.Handle.Release()
 
 	sel2, attempt2, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt2.AccountID, "A→B failover 终态尝试")
 	require.Equal(t, domain.SupplierFinance{Ready: true, UID: 200, Bp: 3000, Rev: 9}, sel2.SupplierFinance, "终态尝试用其 fin")
-	sel2.Release()
+	sel2.Handle.Release()
 
 	require.Equal(t, []int64{1, 2}, adm.seen, "准入须按候选账号分别查询")
 }
@@ -87,7 +87,7 @@ func TestReserveAttemptRejectsNotReadyCandidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt.AccountID, "被拒候选不入选，落到下一候选")
 	require.Equal(t, int64(200), sel.SupplierFinance.UID)
-	sel.Release()
+	sel.Handle.Release()
 
 	// 全部候选被拒 ⇒ 无可用。
 	plan2, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-adm2", MaxAttempts: 2}, route)

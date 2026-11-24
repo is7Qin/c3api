@@ -82,7 +82,7 @@ func TestSessionRetireReportsOldThreadKey(t *testing.T) {
 	require.NotNil(t, session)
 	oldKey := sessionThreadKey(session)
 
-	sel := &Selection{session: session, pool: pool}
+	sel := &selection{session: session, pool: pool}
 	retiredAt := 0
 	for i := 1; i <= 96; i++ {
 		sel.StepIdentity()
@@ -437,10 +437,10 @@ func TestReleaseFreesSessionBeforeConcurrencyDecrement(t *testing.T) {
 					continue // 门禁满（预期 ErrNoAvailable）
 				}
 				atomic.AddInt64(&successes, 1)
-				if sel.session == nil || !inPool[sel.session] {
+				if h := sel.Handle.(*selection); h.session == nil || !inPool[h.session] {
 					atomic.AddInt64(&ephemeral, 1)
 				}
-				sel.Release()
+				sel.Handle.Release()
 			}
 		})
 	}
@@ -542,7 +542,7 @@ func TestReloadPublishesPoolWithView(t *testing.T) {
 // 句柄是值类型（两个机器字），Key 直接返回预计算字符串——热路径不做拼接、不分配。
 func TestClaimAndThreadZeroAlloc(t *testing.T) {
 	pool := newTestPool(1, testPolicy())
-	sel := &Selection{pool: pool}
+	sel := &selection{pool: pool}
 	var key string
 	allocs := testing.AllocsPerRun(1000, func() {
 		session := pool.claim()

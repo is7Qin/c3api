@@ -97,7 +97,7 @@ func TestCompiledPlanSurvivesOAuthTokenRotation(t *testing.T) {
 	require.NotNil(t, sel.Ext)
 	require.Equal(t, "at-new", derefString(sel.Ext.CodexOAuthToken), "Selection must assemble the fresh token from the current leaf")
 	require.Equal(t, "rt-new", derefString(sel.Ext.CodexOAuthRefreshToken))
-	sel.Release()
+	sel.Handle.Release()
 
 	// 运维面同样不受影响：候选仍投影完整元数据，而非 identity-only 幽灵行。
 	proj := s.CurrentRoutingPlan()
@@ -128,7 +128,7 @@ func TestCompiledPlanInvalidatedByUpstreamKeyChange(t *testing.T) {
 	sel, _, err := s.ReserveAttempt(&fresh)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 // TestCompiledPlanInvalidatedByDecisionInputChange 改决策输入（enabled）⇒

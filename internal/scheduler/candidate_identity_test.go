@@ -36,7 +36,7 @@ func TestCandidateFingerprintProducerMatchesSelectionAndFailureEvent(t *testing.
 
 	ev := s.failureEvent(sel.AccountID, rule.Kind5xx, "boom")
 	require.Equal(t, want, ev.CandidateFingerprint)
-	sel.Release()
+	sel.Handle.Release()
 }
 
 func TestRulePersistRejectsStaleOrMismatchedFailureIdentity(t *testing.T) {

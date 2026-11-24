@@ -13,11 +13,11 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -47,7 +47,7 @@ func isChatSource(dir domain.ProtocolConvert) bool {
 	return dir == domain.ProtocolConvertMessToChat || dir == domain.ProtocolConvertRespToChat
 }
 
-func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
+func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	client, target := clientAndTargetOf(c.dir)
 	opTag := convertedOpTag(c.dir)
@@ -65,7 +65,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 方向静默丢帧），比 400 难排查得多。
 		if !streamSupported(c.dir) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "streaming is not supported for this protocol conversion"}})
-			sel.Release()
+			sel.HandleOrDetached().Release()
 			return http.StatusBadRequest, nil, true, nil
 		}
 		reqModel := gjson.GetBytes(body, "model").String()
@@ -255,13 +255,13 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	// 不存在「路由看首个、上游执行末个」的分叉；原生格式则在校验里直接拒掉重复键。
 	if err := validateNonStreamBody(body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	upBody, setErr := setModel(body, sel.Model)
 	if setErr != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
 	// 转换到 anthropic 的非流请求同样受 anthropic SDK 的非流上限约束（旧实现走
@@ -280,7 +280,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	default:
 		// 未接线的目标协议：显式拒绕（不得带空 path 去拼 URL）。
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": "protocol conversion target is not wired"}})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		return http.StatusInternalServerError, nil, true, nil
 	}
 	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
@@ -336,7 +336,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 // protoconv 反向映射回客户端协议 + 客户端模型回填；日志 Format 由 output 自报 =
 // clientAndTargetOf 的 client 侧——与转换路径其余分支一致；计费不读 format）。
 // outcome 取 codex 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
-func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool, dir domain.ProtocolConvert) (int, []byte, bool, error) {
+func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, body []byte, stream bool, dir domain.ProtocolConvert) (int, []byte, bool, error) {
 	client, _ := clientAndTargetOf(dir)
 	// 客户端请求模型（日志/回填口径）：转换后请求体经 ConvertRequest 保持 model。
 	reqModel := gjson.GetBytes(body, "model").String()
@@ -349,7 +349,7 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		o.Terminal = true
 		o.BusinessFrameSent = false
 		emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: errCodexResponsesNotIntegrated.msg})
-		sel.Release()
+		sel.HandleOrDetached().Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
 		return 0, nil, true, nil
@@ -359,7 +359,7 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		// 转移（失败文本落盘，耗尽 502 语义）；不上报失效（与直连同语义）。
 		return 0, nil, false, errCodexExtMissing
 	}
-	cred := sel.Credential()
+	cred := sel.HandleOrDetached().Credential()
 	cm := sel.ClientResponseModel(reqModel)
 	// 出站传输钉死 http：转换车道上游跑的是**转换后的 payload**，本轮 WS 臂只
 	// 验证原生 responses 请求（sdkbridge 组合用例），未覆盖转换产物；钉 http
@@ -391,6 +391,6 @@ func clientAndTargetOf(dir domain.ProtocolConvert) (domain.RequestFormat, domain
 	return dir.Client(), dir.Target()
 }
 
-func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+func convertedOutcome(reqID string, sel *api.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
 	return syntheticOutcome(CallerConverted, reqID, sel, reqModel, op, timing, usage, result, status, commit, businessSent, terminal, malformed)
 }
