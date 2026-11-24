@@ -736,10 +736,10 @@ func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int
 
 func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
+	case errors.Is(err, api.ErrNoAvailable), errors.Is(err, api.ErrAttemptsExhausted):
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, errTooMany)
-	case errors.Is(err, scheduler.ErrPlanNotReady):
+	case errors.Is(err, api.ErrPlanNotReady):
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, &formatError{status: http.StatusServiceUnavailable, msg: selectErrorMessage(err)})
 	default:
@@ -752,11 +752,11 @@ func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
 // 503（编译滞后，可重试），耗尽可能 distinct 于组不存在）。
 func selectErrorMessage(err error) string {
 	switch {
-	case errors.Is(err, scheduler.ErrPlanNotReady):
+	case errors.Is(err, api.ErrPlanNotReady):
 		return "routing plan not ready"
-	case errors.Is(err, scheduler.ErrFormatUnavailable):
+	case errors.Is(err, api.ErrFormatUnavailable):
 		return "no account supports this request format"
-	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
+	case errors.Is(err, api.ErrNoAvailable), errors.Is(err, api.ErrAttemptsExhausted):
 		return "no available account"
 	default:
 		return "group not found"
@@ -772,11 +772,11 @@ const statusClientClosedRequest = 499
 
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, scheduler.ErrPlanNotReady):
+	case errors.Is(err, api.ErrPlanNotReady):
 		return http.StatusServiceUnavailable
-	case errors.Is(err, scheduler.ErrFormatUnavailable), errors.Is(err, scheduler.ErrGroupNotFound):
+	case errors.Is(err, api.ErrFormatUnavailable), errors.Is(err, api.ErrGroupNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, scheduler.ErrAttemptsExhausted), errors.Is(err, scheduler.ErrNoAvailable):
+	case errors.Is(err, api.ErrAttemptsExhausted), errors.Is(err, api.ErrNoAvailable):
 		return http.StatusTooManyRequests
 	default:
 		return http.StatusTooManyRequests

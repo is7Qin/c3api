@@ -28,18 +28,10 @@ import (
 )
 
 var (
-	ErrGroupNotFound     = errors.New("scheduler: group not found")
-	ErrFormatUnavailable = errors.New("scheduler: no account for request format")
-	// ErrPlanNotReady is the compile-lag sentinel: the group exists in the
-	// static view but no compiled decision has published yet (static staged
-	// ahead of the compile lane, e.g. cold start before the first paired
-	// publish). Distinct from ErrFormatUnavailable (genuinely unsupported
-	// format/model — no static bucket, never routable): not-ready retries
-	// after ~1s (503 + Retry-After), unroutable does not (404).
-	ErrPlanNotReady = errors.New("scheduler: routing plan not ready")
-	ErrNoAvailable  = errors.New("scheduler: no available account")
 	// 三个身份围栏哨兵不在本块：canonical 定义在 internal/identityfence，本包只留
 	// 别名（见 candidate_identity.go 的迁移期兼容层与移除条件）。
+	// 五条运行期选号哨兵同样不在本块：canonical 定义在 internal/api/errors.go，
+	// 本包只留别名（见 errors_compat.go）。
 	// ErrEgressNotWired 是**装配违例**（不是运行期故障）：账号绑定了出口代理，
 	// 但 Config.Egress 从未注入。装载期直接报错并保留旧快照——绝不静默退化成
 	// 直连（那会让"配了代理"的账号从别人的 IP 出栈，且没人知道）。启动期由 main

@@ -31,7 +31,7 @@ func (p *Proxy) normalizedAttempts() int {
 // and read downstream.
 func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
-		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, api.ErrGroupNotFound
 	}
 	route := scheduler.RouteRefFor(groupID, string(format), model)
 	return p.selectWithPlanForRoute(route, groupID, format, model, identity)
@@ -39,7 +39,7 @@ func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model
 
 func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
-		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, api.ErrGroupNotFound
 	}
 	identity.MaxAttempts = uint8(p.normalizedAttempts())
 	plan, err := p.sched.NewAttemptPlan(identity, route)
@@ -66,7 +66,7 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*api.Selection,
 	}
 	if attempt.Validate() != nil {
 		sel.HandleOrDetached().Release()
-		return nil, scheduler.Attempt{}, scheduler.ErrFormatUnavailable
+		return nil, scheduler.Attempt{}, api.ErrFormatUnavailable
 	}
 	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：供给准入门放行候选时
 	// **同一次视图读取**捕获归属/分成/代数，已由 ReserveAttempt 写入

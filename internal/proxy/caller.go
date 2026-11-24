@@ -152,7 +152,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 
 	sel, plan, attempt, err := p.selectFormatPlan(format, groupID, reqID, reqModel, rm, route)
 	// converted route uses target identity when fallback
-	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
+	if err != nil && (errors.Is(err, api.ErrFormatUnavailable) || errors.Is(err, api.ErrNoAvailable) || errors.Is(err, api.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
 			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
