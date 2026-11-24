@@ -89,8 +89,8 @@ var predicateBudgetSites = map[string]map[string]int{
 		"account_repo.go":   1,
 		"batch.go":          6,
 		"codex_write.go":    7,
-		"ext_codex_repo.go": 6,
-		"mapping.go":        3,
+		"ext_codex_repo.go": 4,
+		"mapping.go":        6,
 		"template_repo.go":  4,
 	},
 	"internal/service": {
@@ -120,9 +120,13 @@ var predicateBudgetSites = map[string]map[string]int{
 // 求和（assertPredicateBudgetRegistry 断言）。它存在的唯一目的是把「加一处调用」变成
 // 一次必须显式改大的编辑，并在评审里显形。
 //
-// 只许改小。今天的数字就是全部现状：54 处。
+// U39 把身份投影的分支来源从「ext 行的类型」改成「模板类型」，新增 1 处模板 BPS 位判定
+// （`projectExtIdentity`）。同一提交把 `ext_codex_repo.go` 写面原本内联的两处 ext 类型判定
+// 收敛进 `assertExtCredentialType`（净 0），因此 repository 只净增 1。此后仍只许改小。
+//
+// 只许改小。今天的数字就是全部现状：55 处。
 var predicateBudgetCeiling = map[string]int{
-	"internal/repository": 27,
+	"internal/repository": 28,
 	"internal/service":    16,
 	"internal/domain":     8,
 	"internal/sdkbridge":  2,
@@ -134,7 +138,7 @@ var predicateBudgetCeiling = map[string]int{
 // 删一处调用至少要改两处：任何单边修改都在 diff 里显形，而不是静默漂移。
 //
 // 只许改小。
-const predicateBudgetTotal = 54
+const predicateBudgetTotal = 55
 
 // predicateSite 是一处谓词选择器：文件名（目录由调用方的 map 键携带）、行号、谓词名。
 type predicateSite struct {

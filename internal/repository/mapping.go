@@ -131,39 +131,25 @@ func assertExtCredentialType(want, got credential.Type) error {
 	return fmt.Errorf("%w: template=%s ext=%s", ErrCredentialTypeMismatch, want, got)
 }
 
-// accountExtBranchType 选身份投影分支（v4 修正 2 的唯一取值规则）：
-//   - 模板是 Responses provider（codex / bps 通道）⇒ 模板类型；
-//   - 否则（api_key / custom / responses-special 静态通道）⇒ ext 行自身类型
-//     （遗留行保持今天的行为）。
-//
-// 它**只决定分支**：ext.CredentialType 永远保持行原值，任何路径都不覆盖——通道
-// （谁鉴权）由模板决定，但同通道内的列布局（codex-oauth 取 token 组 / codex-pat
-// 取 PATKey）由 ext 行自己的类型决定（domain.CredentialFromExt）。
-func accountExtBranchType(tplType, extType credential.Type) credential.Type {
-	if tplType.IsResponsesProvider() {
-		return tplType
-	}
-	return extType
-}
-
 // projectExtIdentity 是单行 ext 身份投影的唯一入口（快照合并、单读、额度面、
 // 账号侧 ext 边共用）：模板为 Responses provider 时先断言 BPS 位一致，再按
-// accountExtBranchType 选分支。tplType == nil 表示调用点没有模板上下文，分支退回
-// ext 行自身类型（与旧行为逐字节等价）。
+// **模板类型**选分支；否则（无模板上下文 / 静态通道模板）分支退回 ext 行自身
+// 类型（遗留行保持今天的行为）。
+//
+// 模板 BPS 位只判定这一次：分支选择与断言共用同一个 `IsResponsesProvider()`，
+// 不抽 `accountExtBranchType` 之类的二次判定（S3b 谓词预算只许变短）。
 func projectExtIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope, tplType *credential.Type) error {
-	if tplType == nil {
+	if tplType == nil || !tplType.IsResponsesProvider() {
 		return projectAccountIdentity(ext, env, ext.CredentialType)
 	}
-	if tplType.IsResponsesProvider() {
-		if err := assertExtCredentialType(*tplType, ext.CredentialType); err != nil {
-			return fmt.Errorf("account_id=%d: %w", ext.AccountID, err)
-		}
+	if err := assertExtCredentialType(*tplType, ext.CredentialType); err != nil {
+		return fmt.Errorf("account_id=%d: %w", ext.AccountID, err)
 	}
-	return projectAccountIdentity(ext, env, accountExtBranchType(*tplType, ext.CredentialType))
+	return projectAccountIdentity(ext, env, *tplType)
 }
 
-// toDomainAccountExt ent ext 行 → domain 对象。branchType 只选身份投影分支
-// （见 accountExtBranchType），不写回 ext.CredentialType。
+// toDomainAccountExt ent ext 行 → domain 对象。branchType 只选身份投影分支，
+// 不写回 ext.CredentialType。
 func toDomainAccountExt(e *ent.AccountExt, branchType credential.Type) (*domain.AccountExt, error) {
 	ext := accountExtColumns(e)
 	if err := projectAccountIdentity(ext, e.CodexIdentity, branchType); err != nil {

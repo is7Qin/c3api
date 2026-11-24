@@ -18,19 +18,57 @@ import (
 // 数据库里两列的 BPS 位永远一致（spec J7.5：不许用 DB 夹具证明这条）。合成结构体
 // 可以把"模板类型与 ext 行类型相反"直接摆出来。
 
-// TestAccountExtBranchTypeUsesTemplateForResponsesProviders 钉住 v4 修正 2 的唯一
-// 取值规则：Responses provider 模板 ⇒ 模板类型；静态通道模板 ⇒ ext 行自身类型。
-func TestAccountExtBranchTypeUsesTemplateForResponsesProviders(t *testing.T) {
-	// Responses provider：模板赢（同通道内也一样——分支来源只有一个）。
-	require.Equal(t, credential.TypeBPS, accountExtBranchType(credential.TypeBPS, credential.TypeCodexPAT))
-	require.Equal(t, credential.TypeCodexOAuth, accountExtBranchType(credential.TypeCodexOAuth, credential.TypeBPS))
-	require.Equal(t, credential.TypeCodexPAT, accountExtBranchType(credential.TypeCodexPAT, credential.TypeCodexOAuth))
-
-	// 静态通道：遗留行保持今天的行为——分支按行自己的类型。
-	for _, tpl := range []credential.Type{credential.TypeAPIKey, credential.TypeCustom, credential.TypeResponsesSpecial} {
-		require.Equal(t, credential.TypeCodexPAT, accountExtBranchType(tpl, credential.TypeCodexPAT), "静态模板 %s", tpl)
-		require.Equal(t, credential.TypeBPS, accountExtBranchType(tpl, credential.TypeBPS), "静态模板 %s", tpl)
+// TestProjectExtIdentitySelectsBranchFromTemplate 钉住 v4 修正 2 的唯一取值规则：
+// Responses provider 模板 ⇒ 模板类型选分支；静态通道模板 ⇒ ext 行自身类型。
+// 断言落在**投影产物形状**上（BPSProfile / CodexIdentity 二选一），不调中间
+// helper——分支选择已内联进 projectExtIdentity（S3b 谓词预算只许变短）。
+func TestProjectExtIdentitySelectsBranchFromTemplate(t *testing.T) {
+	at, rt, upstream, pat := "at", "rt", "acct", "pat"
+	env := &domain.IdentityEnvelope{
+		"installation_id": json.RawMessage(`"inst-branch"`),
+		"bps":             json.RawMessage(`{"profile_id":"p-branch"}`),
 	}
+	bpsExt := func() *domain.AccountExt {
+		return &domain.AccountExt{
+			AccountID: 21, CredentialType: credential.TypeBPS,
+			CodexOAuthToken: &at, CodexOAuthRefreshToken: &rt, CodexAccountID: &upstream,
+		}
+	}
+	codexExt := func() *domain.AccountExt {
+		return &domain.AccountExt{AccountID: 22, CredentialType: credential.TypeCodexPAT, CodexPATKey: &pat}
+	}
+
+	t.Run("BPS 模板 ⇒ BPS 分支", func(t *testing.T) {
+		ext := bpsExt()
+		tpl := credential.TypeBPS
+		require.NoError(t, projectExtIdentity(ext, env, &tpl))
+		require.NotNil(t, ext.BPSProfile, "模板是 BPS：必须投影 profile")
+		require.Nil(t, ext.CodexIdentity, "模板是 BPS：不得产出 codex 身份")
+	})
+
+	t.Run("codex 模板 ⇒ codex 分支", func(t *testing.T) {
+		ext := codexExt()
+		tpl := credential.TypeCodexPAT
+		require.NoError(t, projectExtIdentity(ext, env, &tpl))
+		require.NotNil(t, ext.CodexIdentity, "模板是 codex：必须投影 installation")
+		require.Nil(t, ext.BPSProfile, "模板是 codex：不得产出 BPS profile")
+	})
+
+	t.Run("静态通道 + BPS 行 ⇒ 走 BPS 分支（行类型）", func(t *testing.T) {
+		ext := bpsExt()
+		tpl := credential.TypeAPIKey
+		require.NoError(t, projectExtIdentity(ext, env, &tpl))
+		require.NotNil(t, ext.BPSProfile, "静态模板：分支按行自己的类型（BPS）")
+		require.Nil(t, ext.CodexIdentity)
+	})
+
+	t.Run("静态通道 + codex 行 ⇒ 走 codex 分支（行类型）", func(t *testing.T) {
+		ext := codexExt()
+		tpl := credential.TypeCustom
+		require.NoError(t, projectExtIdentity(ext, env, &tpl))
+		require.NotNil(t, ext.CodexIdentity, "静态模板：分支按行自己的类型（codex）")
+		require.Nil(t, ext.BPSProfile)
+	})
 }
 
 // TestProjectExtIdentityKeepsRowTypeAndAssertsTemplateBits 钉住两件事：
