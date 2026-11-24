@@ -17,7 +17,9 @@ package scheduler
 // skipCount before timing and asserts a zero delta afterwards (so a fireSkip
 // never silently replaces the measured guard work), and each warm-up is
 // asserted to have actually executed (published for changed, executed the
-// guard without publishing and without fireSkip for equal).
+// guard without publishing and without fireSkip for equal). The two
+// equal-guarded benchmarks first fire once to absorb the one-time post-setup
+// transition, so the warm-up they assert on is true steady state.
 
 import (
 	"runtime"
@@ -158,11 +160,18 @@ func BenchmarkRPMGuardChanged(b *testing.B) {
 // BenchmarkRPMFireEqualGuarded measures one real equal fire end-to-end: a group
 // scope forces a scoped recompute (never fireSkip, no root staging) whose digest
 // matches the last published digest, so the fire recompiles + digests but does
-// not publish.
+// not publish. The single prime fire before the snapshot is the exception: the
+// first scoped fire after a full publish flips the published whole bit, so it
+// publishes once by design.
 func BenchmarkRPMFireEqualGuarded(b *testing.B) {
 	models := rpmModels(rpmBenchModels())
 	s, _ := rpmHomogeneousScheduler(b, models)
 	skips := 0
+	// D2 (7a486270): the first scoped fire after a full publish flips the
+	// published whole bit and therefore publishes once. Absorb that one-time
+	// transition before snapshotting the steady state.
+	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+	s.compileOnce()
 	genWarm0 := s.View().Generation()
 	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
@@ -291,11 +300,17 @@ func BenchmarkRPMScopedChangedSmall(b *testing.B) {
 
 // BenchmarkRPMFullFireEqualGuarded forces the full-fidelity fallback
 // (scopeOverflow) each fire: full compile of the whole plan + digest + equal
-// guard skip, no publish.
+// guard skip, no publish. The single prime fire before the snapshot is the
+// exception: the staged setup publish could not hash, so the first same-root
+// full fire publishes once to arm the digest guard.
 func BenchmarkRPMFullFireEqualGuarded(b *testing.B) {
 	models := rpmModels(rpmBenchModels())
 	s, _ := rpmHomogeneousScheduler(b, models)
 	skips := 0
+	// D1 (b143e888): the staged setup publish could not hash, so the first
+	// same-root full fire publishes once to arm the digest. Absorb it here.
+	s.scopeOverflow.Store(true)
+	s.compileOnce()
 	genWarm0 := s.View().Generation()
 	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
