@@ -2,9 +2,9 @@
 package scheduler
 
 import (
-	"fmt"
 	"strconv"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -12,118 +12,30 @@ import (
 // domain.MaxFailoverAttempts（配置校验的同一硬上限）。
 const MaxAttemptPlanAccounts = domain.MaxFailoverAttempts
 
-type AttemptPlanIdentity struct {
-	RequestID         string
-	UserID            int64
-	RouteClassID      string
-	RequestedModel    string
-	RoutingGeneration uint64
-	// MaxAttempts bounds successful dispatches (1..8). 0 means unset and
-	// falls back to the array bound MaxAttemptPlanAccounts; values >8 clamp
-	// to 8. The proxy stamps its normalized proxy.failover_attempts here.
-	MaxAttempts       uint8
-	ApplyModelMapping bool
-	AffinityHash      uint64
-	HasAffinity       bool
-	// Conversation 请求带对话标识且会话簿已装配：预留**不认领**槽位（身份由 SDK
-	// 会话簿按对话合成），该位原样写进 Selection.Conversation。零值 = 槽位路径。
-	Conversation bool
-}
+// 一次派发的**值契约**的 canonical 定义在 internal/api（P3c II）：Attempt /
+// AttemptPlanIdentity / AttemptLane 的定义体见 api/attempt.go，RouteRef 见
+// api/route_ref.go。本包只留别名与三条常量值别名，理由是迁移面——Attempt 在数据面
+// 有 26 处纯传值引用、AttemptPlanIdentity 有 137 行测试引用，别名让它们不必一次性
+// 改名（旧拼写仍编译、仍是同一类型）。
+//
+// **这里是兼容层，不是第二份定义**：本包不得再出现这四个名字的 StructType 或方法
+// 声明（Validate / Valid 只许在 api）。判据是机械的，见
+// internal/api/type_uniqueness_gate_test.go（AST 逐文件扫 + lane 常量逐名逐值相等）；
+// 靠"两边都登记代际门禁"兜不住——那条门禁只认 *ast.StructType，给别名登记会直接红。
+type AttemptPlanIdentity = api.AttemptPlanIdentity
 
-type AttemptLane string
+type AttemptLane = api.AttemptLane
 
+// 三条 lane 常量**必须**逐条指向 api 的同名常量：写成 `AttemptLane = "primary"`
+// 这类字面量也是合法 Go，但常量集合会裂成两套——build 绿、现有门禁绿，运行时却被
+// api.Attempt.Validate 以 "Lane must be valid" 判死。故值一律取别名而非复制。
 const (
-	AttemptLanePrimary  AttemptLane = "primary"
-	AttemptLaneExplore  AttemptLane = "explore"
-	AttemptLaneDegraded AttemptLane = "degraded"
+	AttemptLanePrimary  AttemptLane = api.AttemptLanePrimary
+	AttemptLaneExplore  AttemptLane = api.AttemptLaneExplore
+	AttemptLaneDegraded AttemptLane = api.AttemptLaneDegraded
 )
 
-func (l AttemptLane) Valid() bool {
-	switch l {
-	case AttemptLanePrimary, AttemptLaneExplore, AttemptLaneDegraded:
-		return true
-	}
-	return false
-}
-
-type Attempt struct {
-	AttemptID            string
-	RouteClassID         string
-	QualityClassID       string
-	CandidateFingerprint string
-	TemplateID           int64
-	AccountID            int64
-	RequestedModel       string
-	MappedModel          string
-	Lane                 AttemptLane
-	Ordinal              uint8
-	RoutingGeneration    uint64
-	IdentityRevision     int64
-	PreviousAttemptID    *string
-	PreviousAccountID    *int64
-	CallerCategory       string
-	OperationTag         string
-}
-
-func (a Attempt) Validate() error {
-	if a.AttemptID == "" {
-		return fmt.Errorf("AttemptID required")
-	}
-	if a.RouteClassID == "" {
-		return fmt.Errorf("RouteClassID required")
-	}
-	if a.QualityClassID == "" {
-		return fmt.Errorf("QualityClassID required")
-	}
-	if a.CandidateFingerprint == "" {
-		return fmt.Errorf("CandidateFingerprint required")
-	}
-	if a.TemplateID == 0 {
-		return fmt.Errorf("TemplateID required")
-	}
-	if a.AccountID == 0 {
-		return fmt.Errorf("AccountID required")
-	}
-	if a.RequestedModel == "" {
-		return fmt.Errorf("RequestedModel required")
-	}
-	if a.MappedModel == "" {
-		return fmt.Errorf("MappedModel required")
-	}
-	if !a.Lane.Valid() {
-		return fmt.Errorf("Lane must be valid")
-	}
-	if a.Ordinal == 0 {
-		return fmt.Errorf("Ordinal must be >0")
-	}
-	if a.RoutingGeneration == 0 {
-		return fmt.Errorf("RoutingGeneration must be >0")
-	}
-	if a.IdentityRevision <= 0 {
-		return fmt.Errorf("IdentityRevision must be >0")
-	}
-	if a.CallerCategory == "" {
-		return fmt.Errorf("CallerCategory required")
-	}
-	if c := domain.CallerKind(a.CallerCategory); !c.Valid() {
-		return fmt.Errorf("CallerCategory invalid %q", a.CallerCategory)
-	}
-	if a.OperationTag == "" {
-		return fmt.Errorf("OperationTag required")
-	}
-	if op := domain.OperationTag(a.OperationTag); !op.Valid() {
-		return fmt.Errorf("OperationTag invalid %q", a.OperationTag)
-	}
-	if a.Ordinal == 1 && a.PreviousAttemptID != nil {
-		return fmt.Errorf("PreviousAttemptID must be nil for ordinal 1")
-	}
-	if a.Ordinal > 1 {
-		if a.PreviousAttemptID == nil || *a.PreviousAttemptID == "" {
-			return fmt.Errorf("PreviousAttemptID required for ordinal >1")
-		}
-	}
-	return nil
-}
+type Attempt = api.Attempt
 
 type AttemptReservation func(accountID int64) bool
 

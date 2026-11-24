@@ -131,7 +131,12 @@ var structFieldSpecs = []structFieldSpec{
 		[]string{`json:"identity_revision"`}, []string{`json:"revision"`}},
 	{"internal/scheduler", "HealthKey",
 		[]string{"AccountID", "Quality", "Identity", "IdentityRevision"}, []string{"Revision"}, nil, nil},
-	{"internal/scheduler", "Attempt",
+	// P3c II：Attempt 的 canonical 定义搬进 internal/api（scheduler 只剩
+	// `type Attempt = api.Attempt` 别名）。dir 必须跟着类型走，且**不能**两边都登记：
+	// gateStructShape 只认 *ast.StructType，别名是 SelectorExpr ⇒ 给 scheduler 也登
+	// 一条会让本断言的 "结构体必须存在" 直接红。"只有一份定义"由
+	// internal/api/type_uniqueness_gate_test.go 承担（本门禁只钉字段形状）。
+	{"internal/api", "Attempt",
 		[]string{"AccountID", "CandidateFingerprint", "IdentityRevision"}, []string{"LifecycleRevision"}, nil, nil},
 	{"internal/rule", "Event",
 		[]string{"AccountID", "CandidateFingerprint", "ExpectedIdentityRevision"},

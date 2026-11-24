@@ -155,7 +155,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	if err != nil && (errors.Is(err, api.ErrFormatUnavailable) || errors.Is(err, api.ErrNoAvailable) || errors.Is(err, api.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
-			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
+			targetIdentity := api.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 			if sel2, plan2, attempt2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
@@ -342,8 +342,8 @@ func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.Respo
 // （零转换）；images 端点按调用器选上游子路径（generations/edits，路由子路径
 // 不同）。返回 (sel, plan, attempt, err) 与 selectWithPlan(*) 逐字一致（只提
 // 函数，零语义变化）。
-func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
+func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*api.Selection, scheduler.AttemptPlan, api.Attempt, error) {
+	identity := api.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 	if format == domain.FormatOpenAIImages {
 		if ic, ok := route.caller.(*imagesCaller); ok {
 			rr := scheduler.RouteRefForOp(groupID, string(format), reqModel, ic.operationTag())
@@ -358,7 +358,7 @@ func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, req
 // 已占并发槽，记录后写出；首个预留为 Codex 且未命中 → 不钉选原样返回）；命中再 contPin 推进计划到绑定账号（失败 fail-closed：
 // 记录后写出，绝不迁移到其他账号）。ok=false 表示已收尾写出，调用方直接 return。
 // 释放/记录时机与现状逐字一致（contPin 内部自行释放被跳过候选）。
-func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *api.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*api.Selection, scheduler.Attempt, *continuation.Binding, bool) {
+func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *api.Selection, plan *scheduler.AttemptPlan, attempt api.Attempt) (*api.Selection, api.Attempt, *continuation.Binding, bool) {
 	if contPrevID == "" {
 		return sel, attempt, nil, true
 	}
@@ -402,7 +402,7 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 // 判据读的是计划上的**构造期政策位**（plan.ContinuationIncompatible），不是控制面
 // 谓词：结论在编译期按逐 Type 能力位算好、构造期一次拷进计划，数据面只读一位
 // （spec §9：政策构造期定型，数据面不回调控制面）。
-func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *api.Selection, plan api.AttemptPlan, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *api.Selection, plan api.AttemptPlan, attempt api.Attempt) (*continuation.Binding, *formatError) {
 	if !plan.ContinuationIncompatible() {
 		return nil, nil
 	}

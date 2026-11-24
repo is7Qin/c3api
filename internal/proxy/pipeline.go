@@ -218,7 +218,7 @@ func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr htt
 // 无预检语义）。
 // 记录（recordRejected/buildLog/finish/recordLog/MarkResult）参数逐字段与三份
 // 原内联管线一致（行为契约：状态码/错误帧/Retry-After/固定文案逐字节不变）。
-func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *api.Selection, plan scheduler.AttemptPlan, attempt scheduler.Attempt, st attemptState, upstream upstreamAttempt, sink pipelineSink, precheck bool) {
+func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *api.Selection, plan scheduler.AttemptPlan, attempt api.Attempt, st attemptState, upstream upstreamAttempt, sink pipelineSink, precheck bool) {
 	lastSel := sel
 	var (
 		lastCode   int
@@ -227,7 +227,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		lastHdr    http.Header
 		lastBody   []byte
 		// lastOrdinal 最后一次实际尝试的序号（耗尽行的 err_logs.attempt_ordinal；
-		// 0 = 一次 dispatch 都没发生——Ordinal 恒 > 0，见 scheduler.Attempt.Validate）。
+		// 0 = 一次 dispatch 都没发生——Ordinal 恒 > 0，见 api.Attempt.Validate）。
 		lastOrdinal uint8
 	)
 	// Fold-at-source ownership: this loop is the SOLE producer. One
@@ -368,7 +368,7 @@ func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, fo
 // （S3 的 (request_id, attempt_ordinal) 去重锚）。**只有本函数里的三处产出点与
 // writeFailoverExhausted 填值**，其余（recordRejected / record / codex 本地拒绝 /
 // caller 侧 handled=true 终态）一律 NULL——它们没有 attempt 语义。
-func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *api.Selection, attempt scheduler.Attempt, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
+func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *api.Selection, attempt api.Attempt, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
 	// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
 	// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
 	// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则

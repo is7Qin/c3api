@@ -17,8 +17,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 )
 
@@ -56,7 +56,7 @@ func (p *Proxy) SetAttemptLogs(s AttemptLogSink) {
 //
 // 无条件性：本函数不读 qualityRecorder/foldOwner —— 观测面未装配时 flow 边会
 // 丢弃，但尝试明细照写（它是审计事实，不是观测面的副产品）。
-func (p *Proxy) recordFailedDispatch(attempt scheduler.Attempt, reqID string, format domain.RequestFormat, code int, clientCancel bool, callErr error, msg string, latency time.Duration) {
+func (p *Proxy) recordFailedDispatch(attempt api.Attempt, reqID string, format domain.RequestFormat, code int, clientCancel bool, callErr error, msg string, latency time.Duration) {
 	if p.attemptLogs == nil {
 		return
 	}

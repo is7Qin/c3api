@@ -29,26 +29,26 @@ func (p *Proxy) normalizedAttempts() int {
 // Attempt is threaded by value alongside it, so no path value-returns
 // CurrentAttempt on the hot path — identity is projected once at settle/arm
 // and read downstream.
-func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
+func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity api.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, api.Attempt, error) {
 	if p.sched == nil {
-		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, api.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, api.Attempt{}, api.ErrGroupNotFound
 	}
 	route := scheduler.RouteRefFor(groupID, string(format), model)
 	return p.selectWithPlanForRoute(route, groupID, format, model, identity)
 }
 
-func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
+func (p *Proxy) selectWithPlanForRoute(route api.RouteRef, groupID int64, format domain.RequestFormat, model string, identity api.AttemptPlanIdentity) (*api.Selection, scheduler.AttemptPlan, api.Attempt, error) {
 	if p.sched == nil {
-		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, api.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, api.Attempt{}, api.ErrGroupNotFound
 	}
 	identity.MaxAttempts = uint8(p.normalizedAttempts())
 	plan, err := p.sched.NewAttemptPlan(identity, route)
 	if err != nil {
-		return nil, plan, scheduler.Attempt{}, err
+		return nil, plan, api.Attempt{}, err
 	}
 	sel, attempt, err := p.reservePlanAttempt(&plan)
 	if err != nil {
-		return nil, plan, scheduler.Attempt{}, err
+		return nil, plan, api.Attempt{}, err
 	}
 	return sel, plan, attempt, nil
 }
@@ -59,14 +59,14 @@ func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, 
 // route/quality/model identity, so the lease is released and the selection
 // fails closed as format-unavailable — never dispatched under a fabricated
 // identity.
-func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*api.Selection, scheduler.Attempt, error) {
+func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*api.Selection, api.Attempt, error) {
 	sel, attempt, err := p.sched.ReserveAttempt(plan)
 	if err != nil {
-		return nil, scheduler.Attempt{}, err
+		return nil, api.Attempt{}, err
 	}
 	if attempt.Validate() != nil {
 		sel.HandleOrDetached().Release()
-		return nil, scheduler.Attempt{}, api.ErrFormatUnavailable
+		return nil, api.Attempt{}, api.ErrFormatUnavailable
 	}
 	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：供给准入门放行候选时
 	// **同一次视图读取**捕获归属/分成/代数，已由 ReserveAttempt 写入
@@ -77,10 +77,10 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*api.Selection,
 
 // retryOutcomeForAttempt projects the real plan-canonical attempt identity
 // onto the terminal facts of a handled=false classification — the shape the
-// typed retry matrix consumes. Identity comes from the scheduler.Attempt
+// typed retry matrix consumes. Identity comes from the api.Attempt
 // (never a placeholder); commit/result/status come from the observed code,
 // callErr and client context.
-func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, ctx context.Context) AttemptOutcome {
+func retryOutcomeForAttempt(attempt api.Attempt, code int, callErr error, ctx context.Context) AttemptOutcome {
 	clientCancel := dispatchClientCancel(ctx, code)
 	accountFatal := !clientCancel && callErr != nil && (sdkbridge.IsFatal(callErr) || sdkbridge.IsBPSAccountFatal(callErr))
 	terminal := true
@@ -114,7 +114,7 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 // only valid target, so the overlay sets HardContinuation (and the
 // terminal-429 shape the outcome contract demands) and the matrix never
 // migrates it.
-func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, attempt scheduler.Attempt, hard bool) bool {
+func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, attempt api.Attempt, hard bool) bool {
 	if attempt.AttemptID == "" || attempt.AccountID == 0 {
 		return false
 	}
@@ -134,6 +134,6 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 // ReserveAttempt). There is no plan-less fall-through — a nil plan has no
 // selection lane and fails closed. The settled Attempt threads alongside the
 // selection (session-local projection).
-func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*api.Selection, scheduler.Attempt, error) {
+func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*api.Selection, api.Attempt, error) {
 	return p.reservePlanAttempt(plan)
 }

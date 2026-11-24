@@ -17,7 +17,6 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -130,7 +129,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 
 	// 选号：复用主流 resp 路由面（openai-responses 格式——四类型全可达；
 	// search 无独立路由，独立选号无会话绑定）。
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: false}
+	identity := api.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: false}
 	sel, plan, attempt, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponses, reqModel, identity)
 	if err != nil {
 		p.handleSelectError(w, err)

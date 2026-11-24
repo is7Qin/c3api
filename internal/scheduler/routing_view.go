@@ -5,6 +5,7 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
 )
@@ -74,14 +75,16 @@ type DecisionView struct {
 	whole bool
 }
 
-// RouteRef identifies a compiled route: group + format + model + operation + canonical RouteClassID.
-type RouteRef struct {
-	GroupID      int64
-	Format       string
-	Model        string
-	OperationTag string
-	RouteClassID string
-}
+// RouteRef 的 canonical 定义在 internal/api（api/route_ref.go，P3c II）：本包只留
+// 别名。构造/归一函数（RouteRefFor / RouteRefForOp / normRouteRef /
+// canonicalRouteRefWithOp）留在这里——它们依赖 operationTagForFormat / routeKey 这类
+// **路由编译器事实**，搬进契约层就等于让 api 反向知道路由怎么编译。
+//
+// 别名 ⇒ RouteRefFor(...) 的返回类型与 api.RouteRef 是**同一个类型**，不是第二份
+// 身份：`scheduler.RouteRefFor(...)` 与 `api.RouteRef{...}` 混写在类型层面无歧义，
+// 也不多一次转换。唯一性由 internal/api/type_uniqueness_gate_test.go 钉住
+// （本包不得再出现这四个名字的 StructType 或方法声明）。
+type RouteRef = api.RouteRef
 
 // RouteDecision is the immutable published route: compiled candidates own all
 // request-independent metadata; the request path only carries a cursor.

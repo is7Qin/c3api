@@ -175,7 +175,7 @@ func (p *Proxy) contEnqueue(ctx context.Context, protocolTag, respID string, gro
 // authority the continuation cannot be pinned to its owning account.
 //
 // the settled attempt threads in (no CurrentAttempt on the hot path).
-func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocolTag, prevID string, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocolTag, prevID string, attempt api.Attempt) (*continuation.Binding, *formatError) {
 	if p.cont == nil {
 		return nil, errContUnavailable
 	}
@@ -203,7 +203,7 @@ func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocol
 // session-local projection — the loop threads the settled Attempt
 // values (entry attempt in, next attempt per advance) and never value-returns
 // CurrentAttempt on the hot path.
-func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *api.Selection, attempt scheduler.Attempt, b *continuation.Binding) (*api.Selection, scheduler.Attempt, *formatError) {
+func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *api.Selection, attempt api.Attempt, b *continuation.Binding) (*api.Selection, api.Attempt, *formatError) {
 	for {
 		if attempt.AccountID == b.AccountID {
 			if attempt.CandidateFingerprint == hex.EncodeToString(b.Fingerprint[:]) &&
@@ -211,13 +211,13 @@ func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *api.Selection, attempt
 				return sel, attempt, nil
 			}
 			sel.HandleOrDetached().Release()
-			return nil, scheduler.Attempt{}, errContStale
+			return nil, api.Attempt{}, errContStale
 		}
 		sel.HandleOrDetached().Release()
 		plan.AbandonLastAttempt()
 		next, nextAttempt, err := p.selectNextWithPlan(plan)
 		if err != nil {
-			return nil, scheduler.Attempt{}, errContStale
+			return nil, api.Attempt{}, errContStale
 		}
 		sel, attempt = next, nextAttempt
 	}

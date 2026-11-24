@@ -4,7 +4,7 @@ package proxy
 import (
 	"encoding/hex"
 
-	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func pipelineID(raw string) [32]byte {
@@ -18,7 +18,7 @@ func pipelineID(raw string) [32]byte {
 
 // pipelineBase projects the plan-canonical attempt identity onto an outcome
 // skeleton (no terminal facts — the completer overlays those).
-func pipelineBase(attempt scheduler.Attempt) AttemptOutcome {
+func pipelineBase(attempt api.Attempt) AttemptOutcome {
 	return AttemptOutcome{
 		ID: AttemptID(attempt.AttemptID), RouteClassID: RouteClassID(attempt.RouteClassID),
 		QualityClassID: QualityClassID(attempt.QualityClassID), Fingerprint: CandidateFingerprint(attempt.CandidateFingerprint),

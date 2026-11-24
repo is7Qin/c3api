@@ -9,7 +9,6 @@ import (
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
-	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -23,7 +22,7 @@ type ctxKeyDispatch struct{}
 // dispatchObservation is exactly one AttemptContext + one observer created by
 // the dispatch owner before the upstream call, plus the plan-canonical base
 // identity the caller overlays terminal facts onto. It exists only for
-// plan-backed dispatches with a valid scheduler.Attempt — identity is the
+// plan-backed dispatches with a valid api.Attempt — identity is the
 // compiled attempt's own (canonical IDs / ordinal / lane / generation /
 // lifecycle revision / previous linkage), never a placeholder.
 type dispatchObservation struct {
@@ -141,7 +140,7 @@ func (s *DispatchObserverStats) Stats() any {
 	return dispatchObserverStats{Rejected: s.p.observationRejected.Load()}
 }
 
-func (p *Proxy) pipelineObserver(sel *api.Selection, attempt scheduler.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {
+func (p *Proxy) pipelineObserver(sel *api.Selection, attempt api.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {
 	if sel == nil || attempt.Validate() != nil {
 		return nil, false
 	}
@@ -166,7 +165,7 @@ func (p *Proxy) observerFor(base AttemptOutcome, appendFlow AttemptFlowAppend) *
 // foldOwner is the request-local fold-at-source producer owned exclusively by
 // failoverLoopWithPlan. It exists only for plan-backed dispatched requests
 // with a wired quality recorder: beginDispatch arms it with the real
-// scheduler.Attempt, so no synthetic fact can enter the cells. beginDispatch
+// api.Attempt, so no synthetic fact can enter the cells. beginDispatch
 // arms the current dispatch attempt; the stable seam closure (one per
 // request) stashes each real dispatch outcome as a packed fact; settle emits
 // the chain once through the completion walk or records the honest
@@ -243,7 +242,7 @@ const (
 	foldLaneUnknownCode
 )
 
-func foldLaneCodeOf(lane scheduler.AttemptLane) uint8 {
+func foldLaneCodeOf(lane api.AttemptLane) uint8 {
 	if code, ok := foldLaneCodes[lane]; ok {
 		return code
 	}
@@ -255,10 +254,10 @@ func foldLaneTokenOf(code uint8) string { return foldLaneTokens[code] }
 // foldLaneCodes maps the plan lane to the packed stash code. Unknown lanes
 // fall to foldLaneUnknownCode (non-zero, so comma-ok is required — a plain
 // map read would silently yield primary).
-var foldLaneCodes = map[scheduler.AttemptLane]uint8{
-	scheduler.AttemptLanePrimary:  foldLanePrimaryCode,
-	scheduler.AttemptLaneExplore:  foldLaneExploreCode,
-	scheduler.AttemptLaneDegraded: foldLaneDegradedCode,
+var foldLaneCodes = map[api.AttemptLane]uint8{
+	api.AttemptLanePrimary:  foldLanePrimaryCode,
+	api.AttemptLaneExplore:  foldLaneExploreCode,
+	api.AttemptLaneDegraded: foldLaneDegradedCode,
 }
 
 // foldLaneTokens is the reverse map; unknown codes fall to "" (zero value),
@@ -307,7 +306,7 @@ func newFoldOwner(recorder *quality.Recorder, tap AttemptFlowAppend) *foldOwner 
 // rejection) records no flow and is never counted incomplete. Walk inputs are
 // extracted now (pointers dereferenced, lane coded, hex decoded) so the stash
 // never references scheduler memory.
-func (f *foldOwner) arm(attempt scheduler.Attempt) {
+func (f *foldOwner) arm(attempt api.Attempt) {
 	f.route = pipelineID(attempt.RouteClassID)
 	f.gen = attempt.RoutingGeneration
 	f.cur = packedArm{
@@ -441,7 +440,7 @@ func clockMinute() int64 { return time.Now().UTC().Truncate(time.Minute).Unix() 
 // canonical attempt identity (threaded settle value —): a dispatch
 // without a valid recorded attempt gets no observation and no flow binding —
 // nothing is ever recorded under a fabricated identity.
-func (p *Proxy) beginDispatch(ctx context.Context, sel *api.Selection, attempt scheduler.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {
+func (p *Proxy) beginDispatch(ctx context.Context, sel *api.Selection, attempt api.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {
 	if sel == nil {
 		return ctx, nil
 	}

@@ -9,7 +9,7 @@ import (
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
 // (RouteClassID/QualityClassID/Fingerprint/Lane/Generation/IdentityRevision)
-// is plan-canonical: it comes from the scheduler.Attempt recorded by
+// is plan-canonical: it comes from the api.Attempt recorded by
 // ReserveAttempt (pipelineBase), never from placeholder values.
 type AttemptID string
 
@@ -185,7 +185,7 @@ type AttemptOutcome struct {
 	OperationTag   OperationTag
 	Ordinal        uint8
 	// IdentityRevision carries K on dispatched outcomes (plan-canonical, copied
-	// from scheduler.Attempt). Values built by the synthetic caller/WS/retry
+	// from api.Attempt). Values built by the synthetic caller/WS/retry
 	// constructors are a placeholder (1): those outcomes never dispatched through
 	// a plan attempt, feed only the observation/wire surface, and do not take part
 	// in the continuation (I,K) comparison (contPin compares the plan-canonical
