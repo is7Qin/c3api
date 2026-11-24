@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
-	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
 // TestReloadReconcilesClientEgress 配置面回收的**接线**：每次全量 reload / 组级批重载
@@ -24,7 +24,7 @@ import (
 // 没有这条接线，ApplyBatch 就是死代码：资源可见性永远停在某一版，代理 CRUD 之后旧
 // 摘要不会被摘。
 func TestReloadReconcilesClientEgress(t *testing.T) {
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.2.3", Port: 1080,
 		Username: "u", Password: "p1", Enabled: true}
 	tplA := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-4o"})
@@ -43,7 +43,7 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 
 	keep1, ok := table.retained(0, 1)
 	require.True(t, ok, "绑定代理的账号必须被保留")
-	require.Equal(t, []domain.EgressResourceKey{domain.EgressResourceKey(egress.New("socks5", "10.1.2.3", 1080, "u", "p1").Key()), {}},
+	require.Equal(t, []domain.EgressResourceKey{domain.EgressResourceKey(proxySpec("socks5", "10.1.2.3", 1080, "u", "p1").Key()), {}},
 		keep1, "保留键 = 当前出口摘要 + 直连（直连恒保留是控制器策略）")
 	keep2, ok := table.retained(0, 2)
 	require.True(t, ok)
@@ -58,9 +58,9 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 	require.NoError(t, s.InvalidateAllSync())
 	require.Equal(t, 2, table.count(), "重载必须再次下发指令")
 	keep1, _ = table.retained(1, 1)
-	require.Equal(t, domain.EgressResourceKey(egress.New("socks5", "10.1.2.3", 1080, "u", "p2").Key()), keep1[0],
+	require.Equal(t, domain.EgressResourceKey(proxySpec("socks5", "10.1.2.3", 1080, "u", "p2").Key()), keep1[0],
 		"新配置的出口摘要（旧摘要不再出现 ⇒ 历史规格被摘除）")
-	require.NotEqual(t, domain.EgressResourceKey(egress.New("socks5", "10.1.2.3", 1080, "u", "p1").Key()), keep1[0])
+	require.NotEqual(t, domain.EgressResourceKey(proxySpec("socks5", "10.1.2.3", 1080, "u", "p1").Key()), keep1[0])
 
 	// 账号消失 ⇒ 控制器点名删除（含没有会话池的账号）。
 	loader.set(10, []*domain.Account{direct})
@@ -126,7 +126,7 @@ func (l *universeLoader) setUngrouped(accs []*domain.Account) {
 // 组级增量不重扫账号表：从组里移除**不是**账号移除（账号仍在全集/数据库里），资源
 // 保留；真正的删除只由下一次全量装载的全集差分发现（§3.3b-4）。
 func TestReconcileCoversUngroupedAccounts(t *testing.T) {
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	tplCodex := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-5"})
 	tplCodex.CredentialType = credential.TypeCodexOAuth
 	grouped := acc(1, tplCodex, 0)   // K=0 ⇒ 没有会话池
@@ -173,9 +173,9 @@ func TestReconcileCoversUngroupedAccounts(t *testing.T) {
 
 // TestFullReloadKeepsUngroupedEgressInBothLayers 两级出口资源消费**同一份**快照
 // （§3.3b-1 的结构要求）：未编组账号独占的代理出口在全量 reload 后必须仍留在
-// egress.Pool 里（不被按路由根口径误剪），并在同一批次里作为保留键交给传输资源表。
+// 出口池里（不被按路由根口径误剪），并在同一批次里作为保留键交给传输资源表。
 func TestFullReloadKeepsUngroupedEgressInBothLayers(t *testing.T) {
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.9.9.9", Port: 1080,
 		Username: "u", Password: "p", Enabled: true}
 	tplCodex := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-5"})
@@ -185,7 +185,7 @@ func TestFullReloadKeepsUngroupedEgressInBothLayers(t *testing.T) {
 		memLoader: newMemLoader(map[int64][]*domain.Account{}),
 		ungrouped: []*domain.Account{ungrouped},
 	}
-	spec := egress.New("socks5", "10.9.9.9", 1080, "u", "p")
+	spec := proxySpec("socks5", "10.9.9.9", 1080, "u", "p")
 	want := pool.For(spec)
 
 	table := newRecordingResources()
@@ -198,7 +198,7 @@ func TestFullReloadKeepsUngroupedEgressInBothLayers(t *testing.T) {
 	require.Equal(t, 1, pool.Size())
 	keep, ok := table.retained(0, 3)
 	require.True(t, ok)
-	require.Equal(t, domain.EgressResourceKey(egress.ResourceKey(want)), keep[0],
+	require.Equal(t, domain.EgressResourceKey(egressapi.ResourceKey(want)), keep[0],
 		"同一批次交给传输资源表的是同一个出口的资源键")
 }
 
@@ -230,7 +230,11 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 		defer close(done)
 		s.withPublisherLock(func(b *poolReclaim) {
 			b.Threads = []identitypool.ThreadRetire{{AccountID: 1, ThreadKey: "old-thread"}}
-			cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 1}}, nil, s.clientAccounts())
+			cfg, ferr := s.accounts.fullLocked(nil, []*domain.Account{{ID: 1}}, nil, s.clientAccounts())
+			if ferr != nil {
+				t.Errorf("fullLocked: %v", ferr) // 非测试 goroutine：不用 require（见上）
+				return
+			}
 			b.config = &cfg
 		})
 	}()
@@ -238,7 +242,8 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 
 	// 批次 B = 新配置（删 1、加 2）：在 A 的锁外收尾期间取号（2）并先应用。
 	s.withPublisherLock(func(b *poolReclaim) {
-		cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil, s.clientAccounts())
+		cfg, err := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil, s.clientAccounts())
+		require.NoError(t, err)
 		b.config = &cfg
 	})
 

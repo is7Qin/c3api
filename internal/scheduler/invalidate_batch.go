@@ -137,8 +137,17 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 		succeeded = true
 		// 组级装载同样的账号级隔离审计（每次装载覆盖，见 AccountExtMismatchSource）。
 		s.logAccountExtMismatches()
-		var stepScope []int64
-		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, st, reclaim)
+		stepScope, nextPools, err := s.invalidateOneIntoLocked(m, byID, pools, gid, accs, st, reclaim)
+		if err != nil {
+			// 出口解析失败 = 装配违例（egressClientFor）：整批放弃，一次都不 stage
+			// ——半成品快照比不发布更糟。工作根是私有副本，丢弃即可；已收集的锁外
+			// 副作用必须一起丢（它们属于一份不会发布的配置，照跑会退役旧快照仍在
+			// 引用的线程）。不置 reloadRequired：重试不会让装配回来。
+			s.log.Warn("group invalidate aborted; keeping previous snapshot", logx.Error(err))
+			reclaim.discard()
+			return
+		}
+		pools = nextPools
 		scope = unionScope(scope, stepScope)
 	}
 	if !succeeded {
@@ -148,7 +157,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	// 账号配置快照：以全量装载的全集为基线，用折叠后的工作根（byID）覆盖本次触达的
 	// 账号。从组里移除账号不是账号移除——它仍在全集里，资源保留；真正的删除由下一次
 	// 全量装载的全集差分发现（§3.3b-4）。
-	cfg := s.accounts.mergedLocked(byID, s.cfg.Egress, s.clientAccounts())
+	cfg := s.accounts.mergedLocked(byID, s.clientAccounts())
 	sv := newStaticView(m, byID, pools)
 	s.publisher.stageLocked(sv)
 	// 传输资源（条目 + client 桶）的配置面回收：输入与全量 reload 同口径
@@ -201,11 +210,16 @@ func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*ac
 // 一路传到这里，否则两个单叶构造点会各自退回逐次计算——功能不变，但批次内"每模板
 // 一次"的收益只剩 buildSnapshots 那一半。传整个 *batchState 而不是只传 digests：
 // 表与会话不可分（见 batchState 的注释），helper 拿不到半个。
-func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identitypool.Registry, gid int64, accs []*domain.Account, st *batchState, reclaim *poolReclaim) (scope []int64, poolsOut *identitypool.Registry) {
+func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identitypool.Registry, gid int64, accs []*domain.Account, st *batchState, reclaim *poolReclaim) (scope []int64, poolsOut *identitypool.Registry, err error) {
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress, st.digests)
+	gs, _, err := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress, st.digests)
+	if err != nil {
+		// 装配违例：本步**一个字节都不折叠**（buildSnapshots 在写 m/byID 之前
+		// 就失败），错误由批路径统一处理（整批放弃 + 丢弃 reclaim）。
+		return nil, pools, err
+	}
 	newAccs := gs[gid].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
@@ -333,7 +347,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 	// 仍旧（新增账号无池 → 不注入身份；旧 K 槽不足 → claim==nil 兜底）。
 	// 逐步池转换：每成功组一次全表重建，prev 源 = 上一步工作池，不得重取批前源。
 	poolsOut = s.buildIdentityPools(byID, pools, reclaim)
-	return scope, poolsOut
+	return scope, poolsOut, nil
 }
 
 // unionScope 合并有序去重 scope：保留 scope 的既有顺序，追加 add 中尚未出现

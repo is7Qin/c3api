@@ -18,7 +18,6 @@ import (
 	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/testsupport/pgtest"
-	"github.com/is7qin/c3api/pkg/egress"
 
 	// Registers pgtest's repository-dependent hooks.
 	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
@@ -76,7 +75,8 @@ func TestPGLoadGroupAccountsFeedsDigestCache(t *testing.T) {
 	// 精确不变量是 **hits = 构造次数 − 不同模板对象数 = A − T**。
 	// （生产单组失效的公式是 2A − T，见 TestPGBatchInvalidationHitsDigestCacheAcrossGroups。）
 	cache := newTemplateDigestCache()
-	_, byID := buildSnapshots(map[int64][]*domain.Account{g.ID: accs}, nil, egress.NewPool(nil), cache)
+	_, byID, err := buildSnapshots(map[int64][]*domain.Account{g.ID: accs}, nil, testEgressPool, cache)
+	require.NoError(t, err)
 	const distinctTemplates = 1
 	constructions := len(accs) // 本场景每账号构造一次
 	require.GreaterOrEqual(t, cache.hits, 1, "真实载入器 → 快照必须至少命中一次")

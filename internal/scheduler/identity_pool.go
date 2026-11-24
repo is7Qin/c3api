@@ -18,8 +18,6 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
-	// 只留 egress.CloseClients（实现）；出口的值类型走 pkg/egressapi。
-	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/egressapi"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -36,12 +34,27 @@ type poolReclaim struct {
 	// config 本批次的账号配置快照（账号全集 → 当前出口 + 资源指令 + 批次代号）。
 	// nil = 本批次不携带配置（单元用例直接建池）。应用在锁外、与线程退役同一个批次。
 	config *accountConfig
-	// egress 本批次被摘出注册表的出口 client（egress.Pool.Detach 的返回）：与配置
+	// egress 本批次被摘出注册表的出口 client（EgressPool.Detach 的返回）：与配置
 	// 指令共享"锁内只收集、锁外才动系统调用"的纪律——关闭空闲连接可能在连接收尾上
 	// 等待，不能留在 publisher.mu 里。
 	egress []*egressapi.Client
 	retire func(accountID int64, threadKey string)
 	apply  func(batch domain.ResourceBatch)
+}
+
+// discard 丢弃本批已收集的锁外副作用（本批**不会发布**时调用：装配违例 / 装载
+// 失败导致整批放弃）。
+//
+// 为什么必须显式丢：withPublisherLock 无条件执行 reclaim（它不知道锁内发生了什么），
+// 而"新配置不发布"意味着这些退役动作属于一份不存在的配置——照跑会把**旧快照仍在
+// 引用**的线程退役掉，比不发布更糟。
+func (b *poolReclaim) discard() {
+	if b == nil {
+		return
+	}
+	b.Reclaim.Threads = nil
+	b.egress = nil
+	b.config = nil
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -53,7 +66,11 @@ func (b *poolReclaim) run() {
 	// Reclaim.Run 是 no-op，等价于改前的 `if b.retire != nil { … }`。
 	b.Reclaim.Run(b.retire)
 	// 出口 client 与线程退役同一批、同一纪律：锁内只摘，锁外关闭。
-	egress.CloseClients(b.egress)
+	// 逐项 CloseIdle 与被删掉的 egress.CloseClients 逐字同义——它本来就只是一层
+	// 循环，而 CloseIdle 是 egressapi.Client 的值方法（本包不再 import 实现包）。
+	for _, c := range b.egress {
+		c.CloseIdle()
+	}
 	// 配置面回收放最后：账号删除与出口可见性必须在**同一个** gen 准入之后应用——
 	// 旧批次删掉的可能是新配置刚建出来的条目。
 	if b.config != nil && b.apply != nil {

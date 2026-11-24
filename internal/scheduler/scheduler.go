@@ -23,8 +23,6 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
-	// 只剩 *Pool 与 NewPool（实现，B 单把它们换成消费方端口）；出口的值类型走 pkg/egressapi。
-	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -34,9 +32,10 @@ var (
 	// 五条运行期选号哨兵同样不在本块：canonical 定义在 internal/api/errors.go，
 	// 本包只留别名（见 errors_compat.go）。
 	// ErrEgressNotWired 是**装配违例**（不是运行期故障）：账号绑定了出口代理，
-	// 但 Config.Egress 从未注入。装载期直接报错并保留旧快照——绝不静默退化成
-	// 直连（那会让"配了代理"的账号从别人的 IP 出栈，且没人知道）。启动期由 main
-	// 的 "proxy 表有 enabled 条目 + 池未注入 ⇒ fatalf" 兜住（spec §4.7）。
+	// 但 Config.Egress 从未注入。装载期由**唯一的出口解析点**（egressClientFor，
+	// egress_port.go）直接报错并保留旧快照——绝不静默退化成直连（那会让"配了
+	// 代理"的账号从别人的 IP 出栈，且没人知道）。启动期由 main 的 "proxy 表有
+	// enabled 条目 + 池未注入 ⇒ fatalf" 兜住（spec §4.7）。
 	ErrEgressNotWired = errors.New("scheduler: egress pool not wired but accounts are bound to proxies")
 )
 
@@ -60,9 +59,15 @@ type Config struct {
 	ClientResources ClientResources
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
-	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
-	// 非 nil，但记住"外部没注入"这一事实——遇到已绑定代理的账号则装载期报错。
-	Egress *egress.Pool
+	// transport 的 Proxy 一项）。
+	//
+	// 类型是**消费方端口**（EgressPool，见 egress_port.go）：核心路由不再把出口
+	// 实现当作自己类型系统的一部分，pkg/egress.Pool 凭结构满足它、实现包零改动。
+	//
+	// nil = 未装配，它是一条**合法装配**而不是被补齐的缺省：未绑定账号照常走直连
+	// （默认传输），已绑定账号则装载期报 ErrEgressNotWired。两种情形都不补池——
+	// 补出来的空池会让"没注入"看起来像"注入了"。
+	Egress EgressPool
 	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
@@ -133,16 +138,13 @@ type RuntimeInfo struct {
 }
 
 type Scheduler struct {
-	cfg    Config
-	loader Loader
-	// egressWired 记录 Config.Egress 是否**由外部显式注入**（false ⇒ New 补的
-	// 空池）。只用于装载期装配违例判定（ErrEgressNotWired），不进热路径。
-	egressWired bool
-	rule        *rule.RuleEngine
-	log         *logx.Logger
-	view        atomic.Pointer[RoutingView]
-	gen         atomic.Uint64
-	publisher   *routingPublisher
+	cfg       Config
+	loader    Loader
+	rule      *rule.RuleEngine
+	log       *logx.Logger
+	view      atomic.Pointer[RoutingView]
+	gen       atomic.Uint64
+	publisher *routingPublisher
 	// accounts 账号配置权威（账号全集/当前出口/批次代号/组级基线）。guarded by
 	// publisher.mu：只由 reload/组级批的控制面推进，请求路径不读取。routingPublisher
 	// 只持 pending/发布状态，不再保存不参与路由的账号影子配置。
@@ -264,30 +266,27 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 // （保测试兼容）；hub 非 nil 即在 New 内订阅 onRuleFailure（首个 MarkResult
 // 前完成——装配序保证），nil = 不订阅（无规则摘除面的纯选号测试）。
 // cfg.StalenessProbe 为空保持探针解线（backstop fail-safe 全量 reload）。
-// cfg.Egress 为空则补一个空底座池（**池恒非 nil ⇒ 快照的 egress 字段恒非 nil**，
-// 热路径因此不需要任何 nil 判断）；"外部没注入"这一事实单独记住，供装载期
-// 装配违例判定（有绑定代理的账号 ⇒ ErrEgressNotWired）。
+// cfg.Egress 为 nil 是**合法装配**（未接出口，见 Config.Egress）：未绑定账号照常
+// 直连，绑定账号则在装载期成为装配违例（ErrEgressNotWired）。**"没注入"不再被补成
+// 一个空池**——补池会让装配缺失看起来像装配完成。快照的 egress 字段仍**恒非 nil**：
+// 解析器（egressClientFor）要么给出 client、要么让整次装载失败，热路径因此不需要
+// 任何 nil 判断。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealth, log *logx.Logger, latchStore *latch.LatchStore, hub *latch.Hub) *Scheduler {
 	if latchStore == nil {
 		latchStore = latch.NewLatchStore()
 	}
-	wired := cfg.Egress != nil
-	if !wired {
-		cfg.Egress = egress.NewPool(nil)
-	}
 	s := &Scheduler{
-		cfg:         cfg,
-		loader:      loader,
-		egressWired: wired,
-		rule:        ruleEngine,
-		health:      h,
-		log:         log,
-		timeNow:     time.Now,
-		latch:       latchStore,
-		compiler:    NewRoutingCompiler(),
-		compileCh:   make(chan struct{}, 1),
-		scopeCh:     make(chan scopedCompileReq, scopeChCap),
-		incidents:   newIncidentTracker(),
+		cfg:       cfg,
+		loader:    loader,
+		rule:      ruleEngine,
+		health:    h,
+		log:       log,
+		timeNow:   time.Now,
+		latch:     latchStore,
+		compiler:  NewRoutingCompiler(),
+		compileCh: make(chan struct{}, 1),
+		scopeCh:   make(chan scopedCompileReq, scopeChCap),
+		incidents: newIncidentTracker(),
 	}
 	if hub != nil {
 		hub.Subscribe(s.onRuleFailure)
@@ -450,16 +449,6 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 		s.reloadRequired = true
 		return err
 	}
-	// 装配违例（不是运行期故障）：有账号绑定了代理，但池从未注入——此时快照只能
-	// 给出直连出口，等于静默改道。直接报错并保留旧快照；**不**置 reloadRequired
-	// （重试不会让装配回来，粘性重试只是空转；启动期由 main 的 fatalf 兜住）。
-	if !s.egressWired {
-		if accID, proxyID, bound := proxyBoundAccount(m); bound {
-			s.log.Warn("egress pool not wired but accounts are bound to proxies; keeping previous snapshot",
-				logx.Int64("account_id", accID), logx.Int64("proxy_id", proxyID))
-			return fmt.Errorf("%w: account %d → proxy %d", ErrEgressNotWired, accID, proxyID)
-		}
-	}
 	cur := s.view.Load()
 	var oldByID map[int64]*accountSnapshot
 	if s.publisher.pending != nil {
@@ -477,7 +466,24 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 下一次重载从 DB 读回的是新 ent 行 → 新 domain 模板对象 → 新表项，故模板
 	// 内容的改动必然重算（跨 reload 复用同一张表会让摘要陈旧，见类型注释）。
 	digests := newTemplateDigestCache()
-	groups, byID := buildSnapshots(m, oldByID, s.cfg.Egress, digests)
+	groups, byID, err := buildSnapshots(m, oldByID, s.cfg.Egress, digests)
+	if err != nil {
+		// 出口解析失败 = 装配违例（见 egressClientFor）：此时快照只能给出直连出口，
+		// 等于静默改道。直接报错并保留旧快照；**不**置 reloadRequired（重试不会让
+		// 装配回来，粘性重试只是空转；启动期由 main 的 fatalf 兜住）。
+		s.log.Warn("reload aborted; keeping previous snapshot", logx.Error(err))
+		return err
+	}
+	// 账号配置快照（账号全集 → 当前出口 + 资源指令）：一次算好，两级资源共用。
+	// **紧跟 buildSnapshots**：它是第二条会因装配违例而失败的出口解析路径（账号
+	// 全集含未编组账号，buildSnapshots 看不到它们），必须排在任何"锁外副作用收集"
+	// 之前——withPublisherLock 无条件执行收集到的 reclaim，半收集的退役动作属于一份
+	// 不会发布的配置。
+	cfg, err := s.accounts.fullLocked(byID, all, s.cfg.Egress, s.clientAccounts())
+	if err != nil {
+		s.log.Warn("reload aborted; keeping previous snapshot", logx.Error(err))
+		return err
+	}
 	// codex 槽位池：与静态叶**同一发布点**（sv.identityPools）——门禁读的
 	// MaxConcurrency（byID 叶）与 request 认领的池 K 恒同源，杜绝「门禁上限
 	// 已变、池仍旧」的双发布路径。按当前账号集与容量重建注册表
@@ -487,8 +493,6 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	prevReg := s.prevIdentityPoolsLocked()
 	pools := s.buildIdentityPools(byID, prevReg, reclaim)
 	identitypool.CollectRetiredPools(prevReg, pools, reclaim.retireSink())
-	// 账号配置快照（账号全集 → 当前出口 + 资源指令）：一次算好，两级资源共用。
-	cfg := s.accounts.fullLocked(byID, all, s.cfg.Egress, s.clientAccounts())
 	sv := newStaticView(groups, byID, pools)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -549,19 +553,6 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	return nil
 }
 
-// proxyBoundAccount 返回第一个绑定了出口代理的账号（装配违例定位用）。装载结果
-// 是组→账号的 map（同一账号可能出现在多个组），故按账号 id 首次出现即可。
-func proxyBoundAccount(m map[int64][]*domain.Account) (accountID, proxyID int64, found bool) {
-	for _, accs := range m {
-		for _, a := range accs {
-			if a != nil && a.ProxyID != nil {
-				return a.ID, *a.ProxyID, true
-			}
-		}
-	}
-	return 0, 0, false
-}
-
 func (s *Scheduler) TryLatch(accountID int64, fingerprint string, identityRevision int64) bool {
 	if s.latch == nil {
 		return false
@@ -596,7 +587,10 @@ func (s *Scheduler) LatchStore() *latch.LatchStore { return s.latch }
 // EgressWired 报告出口 client 池是否**由外部显式注入**（Config.Egress != nil）。
 // 只给启动期装配门用（main：代理表里有启用条目而这里 false ⇒ fatalf，spec §4.7）：
 // 装配缺失要在一开始就炸，而不是等到第一个请求悄悄按直连出栈。
-func (s *Scheduler) EgressWired() bool { return s.egressWired }
+//
+// 判据直接读 cfg：池不再被 New 补齐，所以"注入了没有"与"字段是不是 nil"是同一件
+// 事——不存在第二个需要同步的布尔。
+func (s *Scheduler) EgressWired() bool { return s.cfg.Egress != nil }
 
 // runtimeStatusFor 从可持久生命周期字段推导账号装载时的运行时初始状态：
 // failed_at 置位 = 运行时 disabled（SDK/rule 判死的持久事实；恢复唯一入口
@@ -695,15 +689,17 @@ func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Accoun
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
 //
-// pool 是出口 client 池（**恒非 nil**，由 cfg.Egress 保证）：这里做**唯一一次**
-// 规格解析——快照上存的是解析好的 `*egressapi.Client`，热路径只读指针。仍保持包级
-// 函数（不为了 pool 改成方法）：复用/发布的调用面太多，改接收者等于改一片。
+// pool 是出口 client 池（**可为 nil**：未接出口是合法装配）：规格解析经
+// egressClientFor（**唯一解析点**）完成——快照上存的是解析好的 `*egressapi.Client`，
+// 热路径只读指针。解析失败（绑定账号 + 池未注入）返回 ErrEgressNotWired 而不是
+// nil ——**没有**"给个 nil 当直连"的分支。仍保持包级函数（不为了 pool 改成方法）：
+// 复用/发布的调用面太多，改接收者等于改一片。
 //
 // digests 是**调用方作用域**的模板摘要表（可为 nil = 逐次计算）：reloadLocked
 // 一次重载建一张，invalidateGroupsLocked 一个批次建一张并贯穿该批所有组——
 // 缓存生命周期由调用方决定，本函数既不建也不清（在函数内建等于"每组一次"，
 // 批量路径上同一个模板会被重复派生 G 次）。
-func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot, pool *egress.Pool, digests *templateDigestCache) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot, pool EgressPool, digests *templateDigestCache) (map[int64]*groupSnapshot, map[int64]*accountSnapshot, error) {
 	// First pass: collect per-account group membership and latest Account object.
 	type accInfo struct {
 		acc      *domain.Account
@@ -738,10 +734,10 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		}
 		// 出口解析：**只在这里发生一次**（快照期，非热路径）。未绑定 = 直连
 		// 单例；已绑定 = 按规格摘要取/建（同规格跨重载复用同一 client）。
-		// 池恒非 nil ⇒ 结果恒非 nil ⇒ 热路径无需任何 nil 判断。
-		eg := pool.Direct()
-		if acc.Proxy != nil {
-			eg = pool.For(specOfDomain(acc.Proxy))
+		// 解析器要么给出非 nil client、要么报装配违例 ⇒ 热路径无需任何 nil 判断。
+		eg, err := egressClientFor(pool, &acc)
+		if err != nil {
+			return nil, nil, err
 		}
 		av := newSnapshotStatic(acc, a.Template, inf.groupIDs, eg, digests)
 		if old, exists := oldByID[id]; exists {
@@ -793,7 +789,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		gs.routes = buildRoutes(gs.accounts)
 		groups[gid] = gs
 	}
-	return groups, byID
+	return groups, byID, nil
 }
 
 // tplRouteFactsKey 是 buildRoutes 的去重键：**模板侧路由事实**的投影。

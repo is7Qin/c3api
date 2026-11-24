@@ -40,8 +40,11 @@
   与账号级事实。`Conversation` 由 proxy 入口置位（`rm.hasConv && p.conversations != nil`：
   会话簿为 nil 时回到槽位路径，避免匿名身份）。
 - 出口的值类型来自 `pkg/egressapi`（快照解析成 `*egressapi.Client` 指针）；连接的
-  持有者是 `pkg/egress.Pool`（实现，本包只经 `Config.Egress` 拿到它），回收在快照
-  reconcile。
+  持有者是 `pkg/egress.Pool`（实现），本包只经**消费方端口** `EgressPool`
+  （`Config.Egress`，四方法）拿到它，回收在快照 reconcile。**本包不得直接 import
+  `pkg/egress`**（硬规则）。出口解析只有一处：`egressClientFor`——未绑定账号 + 未接
+  池 ⇒ 直连兜底（默认传输），绑定账号 + 未接池 ⇒ 装载期 `ErrEgressNotWired`，绝不
+  静默退化成直连。
 
 ## 验证
 

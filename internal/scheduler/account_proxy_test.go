@@ -11,18 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
-// testEgressPool 是 fixture 的出口池（绝大多数用例不关心出口，直连即可）。
-var testEgressPool = egress.NewPool(nil)
+// testEgressPool 是 fixture 的出口池（绝大多数用例不关心出口，直连即可）。只读
+// 用途（Direct）——每个调度器另有自己的池，见 newFakeEgressPool。
+var testEgressPool = newFakeEgressPool()
 
 // directEgress 返回直连出口 client——测试 fixture 的默认出口。生产路径一律由
 // buildSnapshots 从 Config.Egress 解析，不存在这个入口。
-func directEgress() *egress.Client { return testEgressPool.Direct() }
+func directEgress() *egressapi.Client { return testEgressPool.Direct() }
 
-// proxySched 构造注入了出口池的调度器（组 10，已武装编译道）。
-func proxySched(t *testing.T, pool *egress.Pool, accs ...*domain.Account) *Scheduler {
+// proxySched 构造注入了出口池的调度器（组 10，已武装编译道）。形参是端口而不是
+// 具体实现：用例断言的四件事（Direct/For/Size/Detach 的语义）就是契约本身。
+func proxySched(t *testing.T, pool EgressPool, accs ...*domain.Account) *Scheduler {
 	t.Helper()
 	cfg := testCfg()
 	cfg.Egress = pool
@@ -46,18 +48,18 @@ func TestSelectEgressAlwaysResolved(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 
 	t.Run("未绑定 ⇒ Direct 同指针", func(t *testing.T) {
-		pool := egress.NewPool(nil)
+		pool := newFakeEgressPool()
 		s := proxySched(t, pool, acc(1, tplA, 4))
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
 		defer sel.Handle.Release()
 		require.NotNil(t, sel.Egress, "Egress 恒非 nil（热路径不写 nil 判断）")
 		require.Same(t, pool.Direct(), sel.Egress, "未绑定必须复用直连单例（同指针）")
-		require.Equal(t, egress.Spec{}, sel.Egress.Spec, "直连 = 零值 Spec")
+		require.Equal(t, egressapi.Spec{}, sel.Egress.Spec, "直连 = 零值 Spec")
 	})
 
 	t.Run("绑定 ⇒ 池内该规格的 client", func(t *testing.T) {
-		pool := egress.NewPool(nil)
+		pool := newFakeEgressPool()
 		px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.2.3", Port: 1080,
 			Username: "u", Password: "p", Enabled: true}
 		s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
@@ -66,9 +68,9 @@ func TestSelectEgressAlwaysResolved(t *testing.T) {
 		defer sel.Handle.Release()
 		require.NotNil(t, sel.Egress)
 		require.NotSame(t, pool.Direct(), sel.Egress)
-		require.Equal(t, egress.New("socks5", "10.1.2.3", 1080, "u", "p").Key(), sel.Egress.Spec.Key(),
+		require.Equal(t, proxySpec("socks5", "10.1.2.3", 1080, "u", "p").Key(), sel.Egress.Spec.Key(),
 			"绑定的出口摘要必须与装载展开的规格一致")
-		require.Same(t, pool.For(egress.New("socks5", "10.1.2.3", 1080, "u", "p")), sel.Egress,
+		require.Same(t, pool.For(proxySpec("socks5", "10.1.2.3", 1080, "u", "p")), sel.Egress,
 			"同一规格必须命中池里同一个 client（连接池跨快照保留）")
 		require.Equal(t, 1, pool.Size())
 	})
@@ -81,7 +83,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 
 	t.Run("绑定但代理禁用", func(t *testing.T) {
-		pool := egress.NewPool(nil)
+		pool := newFakeEgressPool()
 		px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.2.3", Port: 1080, Enabled: false}
 		s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
 		_, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
@@ -93,7 +95,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 	})
 
 	t.Run("绑定但代理缺失", func(t *testing.T) {
-		pool := egress.NewPool(nil)
+		pool := newFakeEgressPool()
 		a := acc(1, tplA, 4)
 		proxyID := int64(9)
 		a.ProxyID = &proxyID // 绑定了，但 Proxy 未展开（已软删/不存在）
@@ -107,7 +109,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 	})
 
 	t.Run("禁用账号 + 直连同样不入选", func(t *testing.T) {
-		pool := egress.NewPool(nil)
+		pool := newFakeEgressPool()
 		a := acc(1, tplA, 4)
 		a.Enabled = false
 		s := proxySched(t, pool, a)
@@ -119,7 +121,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 // TestProxyRoutesToUsableProxy 正向对照：绑定可用的代理时账号**必须**入选，
 // 否则上面那些"不入选"的断言可能只是因为整个路由没编译出来。
 func TestProxyRoutesToUsableProxy(t *testing.T) {
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeHTTP, Host: "10.1.2.3", Port: 3128, Enabled: true}
 	s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
@@ -164,7 +166,7 @@ func TestProxyPlanKeySensitivity(t *testing.T) {
 
 	// ④ 改绑定后**在途计划失效**（spec §4.7）：同一账号从 A 换到 B，键不等 ⇒
 	// 预留谓词 fact.planKey != c.PlanKey ⇒ 计划被重编译。
-	s := proxySched(t, egress.NewPool(nil), proxyAcc(t, 1, tplA, pxA))
+	s := proxySched(t, newFakeEgressPool(), proxyAcc(t, 1, tplA, pxA))
 	require.NoError(t, s.InvalidateAllSync()) // 同内容重载 ⇒ 键判等
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
@@ -178,9 +180,11 @@ func TestReloadSkipsSnapshotWhenEgressUnwired(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	plain := acc(1, tplA, 4)
 	m := newMemLoader(map[int64][]*domain.Account{10: {plain}})
-	// testCfg() 不注入 Egress ⇒ egressWired=false。
+	// testCfg() **不注入** Egress ⇒ Config.Egress == nil（原先的夹具前提正相反：
+	// 那时 New 会补一个空底座池，靠一个布尔记住"外部没注入"）。现在"没注入"直接
+	// 体现在字段本身。
 	s := newSchedWithCfg(t, testCfg(), m)
-	require.False(t, s.egressWired, "fixture 前提：池未注入")
+	require.Nil(t, s.cfg.Egress, "fixture 前提：端口未注入")
 	before := s.view.Load()
 	require.NotNil(t, before)
 
@@ -192,10 +196,9 @@ func TestReloadSkipsSnapshotWhenEgressUnwired(t *testing.T) {
 	require.Same(t, before, s.view.Load(), "装配违例必须保留旧快照（不发布半成品）")
 	require.False(t, s.reloadRequired, "装配违例不是暂时故障，不置粘性重试")
 
-	// 注入池后同一份数据源即可装载（违例消失）。测试内直接补装配：等价于
+	// 注入端口后同一份数据源即可装载（违例消失）。测试内直接补装配：等价于
 	// main 在 New 时就把池传进 Config。
-	s.cfg.Egress = egress.NewPool(nil)
-	s.egressWired = true
+	s.cfg.Egress = newFakeEgressPool()
 	require.NoError(t, s.reload(context.Background()))
 	require.Equal(t, 1, s.cfg.Egress.Size(), "绑定可用的账号要让池里出现该规格")
 }
@@ -206,7 +209,7 @@ func TestReloadPrunesUnreferencedEgress(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	pxA := &domain.Proxy{ID: 1, Scheme: domain.ProxySchemeSOCKS5, Host: "10.0.0.1", Port: 1080, Enabled: true}
 	pxB := &domain.Proxy{ID: 2, Scheme: domain.ProxySchemeHTTP, Host: "10.0.0.2", Port: 3128, Enabled: true}
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	m := newMemLoader(map[int64][]*domain.Account{10: {proxyAcc(t, 1, tplA, pxA)}})
 	cfg := testCfg()
 	cfg.Egress = pool
@@ -237,7 +240,7 @@ func TestReloadPrunesUnreferencedEgress(t *testing.T) {
 func TestEgressHotPathIsFieldRead(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	px := &domain.Proxy{ID: 1, Scheme: domain.ProxySchemeHTTPS, Host: "10.0.0.1", Port: 8443, Enabled: true}
-	pool := egress.NewPool(nil)
+	pool := newFakeEgressPool()
 	s := proxySched(t, pool, proxyAcc(t, 1, tplA, px))
 	sizeBefore := pool.Size()
 

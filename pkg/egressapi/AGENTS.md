@@ -5,9 +5,10 @@
 ## 为什么有这个包
 
 P5-3-A 把出口的**值类型**从 `pkg/egress`（实现层）搬到这里，理由是方向：调度器的核心
-路由只该依赖"出口**是什么**"，不该依赖"出口**怎么被建出来**"。搬走之后，
-`internal/scheduler` 的 `Config.Egress *egress.Pool` 仍在（那是 P5-3-B 的端口化），但
-快照、静态键与资源键都只认本包的类型。
+路由只该依赖"出口**是什么**"，不该依赖"出口**怎么被建出来**"。P5-3-B 随后把
+`Config.Egress` 换成消费方端口（`scheduler.EgressPool`），`pkg/egress` 从
+`internal/scheduler` 的**直接** import 图里消失（传递闭包仍经 `sdkbridge`，见账本 575）。
+快照、静态键与资源键只认本包的类型。
 
 **硬边界（无豁免）**：本包只 import stdlib，**不得** import 任何 `internal/*`（
 `internal/architecture` 的硬规则，pkg 侧没有 legacy 通道），也**不得** import
@@ -33,6 +34,9 @@ P5-3-A 把出口的**值类型**从 `pkg/egress`（实现层）搬到这里，�
 - **`NewClient` 生产侧只许 `pkg/egress.Pool`（`NewPool` / `For`）调用**：槽位表里装
   什么（proxy URL、transport 克隆、`DisableCompression`、连接配额）是实现侧的结论。
   测试可以直接写 `egress.Client{Spec: spec}`（槽位全 nil，accessor 返回 nil）。
+  唯一例外在 `internal/scheduler/egress_port.go` 的 `unwiredDirectEgress`：**未接
+  出口池**时那个"没有底座"的直连出口（两个口味都是 `http.DefaultClient`，与删掉的
+  `egress.NewPool(nil).Direct()` 逐项同形），它不是代理出口的派生路径。
 - 零值 `Client` = 直连，全部读取面对 nil 安全（`CloseIdle` 对 nil 接收者也安全）。
 - 本包的类型被 `pkg/egress` 用**类型别名**转出（兼容层，见
   `pkg/egress/compat.go` 的移除条件）；别名是同一类型，不是包装。

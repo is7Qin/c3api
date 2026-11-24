@@ -45,7 +45,13 @@ func TestReconcileStaleBatchPreservesNewEntry(t *testing.T) {
 		s.withPublisherLock(func(b *poolReclaim) {
 			b.Threads = []identitypool.ThreadRetire{{AccountID: 1, ThreadKey: "old-thread"}}
 			// A = 旧配置：账号全集为空（账号 2 已不在配置里）。
-			cfg := s.accounts.fullLocked(nil, []*domain.Account{}, nil, s.clientAccounts())
+			cfg, ferr := s.accounts.fullLocked(nil, []*domain.Account{}, nil, s.clientAccounts())
+			if ferr != nil {
+				// 装配违例不可能出现在这条夹具上（账号未绑定出口）；真出现就点名，
+				// 不能在非测试 goroutine 里 require（FailNow 只许测试 goroutine 调）。
+				t.Errorf("fullLocked: %v", ferr)
+				return
+			}
 			b.config = &cfg
 		})
 	}()
@@ -53,7 +59,8 @@ func TestReconcileStaleBatchPreservesNewEntry(t *testing.T) {
 
 	// B = 新配置（账号 2 加回）：取更大的号并先完成应用。
 	s.withPublisherLock(func(b *poolReclaim) {
-		cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil, s.clientAccounts())
+		cfg, err := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil, s.clientAccounts())
+		require.NoError(t, err)
 		b.config = &cfg
 	})
 	// 真实准备：账号 2 按新配置建出的条目就是"新配置的资源"。

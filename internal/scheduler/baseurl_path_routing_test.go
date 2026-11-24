@@ -21,7 +21,8 @@ func TestSelect_TemplateBaseURLWithPathStillRoutes(t *testing.T) {
 	acc := &domain.Account{ID: 1, Name: "a", Enabled: true, TemplateID: tpl.ID, Template: tpl,
 		IdentityRevision: 1, MaxConcurrency: 8, UpstreamKey: "sk-test"}
 
-	groups, byID := buildSnapshots(map[int64][]*domain.Account{1: {acc}}, nil, testEgressPool, nil)
+	groups, byID, err := buildSnapshots(map[int64][]*domain.Account{1: {acc}}, nil, testEgressPool, nil)
+	require.NoError(t, err)
 	sv := &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID)}
 	dec, err := NewRoutingCompiler().Compile(CompilerInputs{Static: sv})
 	require.NoError(t, err)

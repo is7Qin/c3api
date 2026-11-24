@@ -292,7 +292,8 @@ func TestBuildSnapshotsDigestCacheCountersFollowProductionShape(t *testing.T) {
 
 	cache := newTemplateDigestCache()
 	byGroup := map[int64][]*domain.Account{10: accs}
-	groups, byID := buildSnapshots(byGroup, nil, testEgressPool, cache)
+	groups, byID, err := buildSnapshots(byGroup, nil, testEgressPool, cache)
+	require.NoError(t, err)
 
 	require.Len(t, byID, accounts)
 	require.Len(t, groups[10].accounts, accounts)
@@ -301,7 +302,8 @@ func TestBuildSnapshotsDigestCacheCountersFollowProductionShape(t *testing.T) {
 	require.Equal(t, templates, len(cache.entries))
 
 	// 缓存路径与逐次计算路径的叶子必须同键（缓存不得改变任何事实）。
-	_, plainByID := buildSnapshots(byGroup, nil, testEgressPool, nil)
+	_, plainByID, err := buildSnapshots(byGroup, nil, testEgressPool, nil)
+	require.NoError(t, err)
 	for id, cached := range byID {
 		require.Equal(t, plainByID[id].static.Load().key, cached.static.Load().key,
 			"account %d: 缓存路径与逐次计算的 planKey 必须相等", id)

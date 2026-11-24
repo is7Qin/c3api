@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -69,7 +71,8 @@ func benchmarkGroupRebuildProd(b *testing.B, accounts, templates int) {
 	b.Run("after/per-reload-digest-cache", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			groups, byID := buildSnapshots(byGroup, nil, testEgressPool, newTemplateDigestCache())
+			groups, byID, err := buildSnapshots(byGroup, nil, testEgressPool, newTemplateDigestCache())
+			require.NoError(b, err)
 			routeBenchSink.groups = groups
 			routeBenchSink.facts = attachCompilerFacts(byID)
 		}
@@ -77,7 +80,8 @@ func benchmarkGroupRebuildProd(b *testing.B, accounts, templates int) {
 	b.Run("before/per-leaf-recompute", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			groups, byID := buildSnapshots(byGroup, nil, testEgressPool, nil)
+			groups, byID, err := buildSnapshots(byGroup, nil, testEgressPool, nil)
+			require.NoError(b, err)
 			routeBenchSink.groups = groups
 			routeBenchSink.facts = attachCompilerFacts(byID)
 		}

@@ -327,8 +327,14 @@ var allowRules = []allowRule{
 	// 它与 deny 里的 "pkg/egress" 是**两个不同的包**：deny 走段感知前缀
 	// （matchesPrefix：`pkg == prefix || HasPrefix(pkg, prefix+"/")`），所以
 	// pkg/egressapi 不会被 "pkg/egress" 误伤——落地前实测确认（本包用例绿）。
-	// scheduler 仍留 pkg/egress 的 `*Pool` / `NewPool` / `CloseClients`（实现，不是值
-	// 类型），故 deny 与账本 576 在本单都原样保留，等 B 单端口化后一起收。
+	//
+	// P5-3-B 起 deny 变成**硬规则**：调度器声明消费方端口 EgressPool（四个方法），
+	// Config.Egress 改接口，egress.NewPool(nil) / CloseClients 全部退场——本包不再
+	// 把出口**实现**当作自己类型系统的一部分（同时删掉账本 576）。
+	// 诚实边界：这只消除**直接边**。pkg/egress 仍在 scheduler 的**传递**闭包里
+	// （唯一路径 scheduler → sdkbridge → pkg/egress，债 575 未清）——sdkbridge 是
+	// 真正把字节送上网的执行面，它持有实现是设计而不是债。别拿
+	// `go list -deps ./internal/scheduler` 来"证明"这条债没修好。
 	{from: "internal/scheduler", to: []string{
 		"internal/domain", "internal/credential", "internal/worker", "internal/api",
 		"internal/latch", "internal/rule", "internal/identitypool", "pkg/logx",
@@ -443,10 +449,14 @@ const (
 	//      （这一条含 2 条边：到 identityfence 的契约依赖 + 到 repository 的实现依赖）
 	// 同时新增两条叶子规则 internal/loadport 与 internal/identityfence。
 	// P5-3-A 变更（1 条新增 allow 边，仍只有 to: 白名单，没有新增 all: true）：
-	//   scheduler 的 to 加 pkg/egressapi（出口值类型的中立落点；P5-3-B 会把
-	//   pkg/egress 从 scheduler 的 import 表里彻底去掉，那时候才删账本 576）。
-	//   注意 deny 仍是 ["pkg/egress"]、debtMax 仍是 19：本单只做类型中立化。
-	// 前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
+	//   scheduler 的 to 加 pkg/egressapi（出口值类型的中立落点）。
+	// P5-3-B 变更：**指纹不变，这是预期结果**。本单删的是账本里的一行（576），
+	//   allow 矩阵一个字节都没动——scheduler 的 to 与 deny 原样保留（deny 从此是
+	//   硬规则），也没有新增 all: true。指纹钉的是 allowRules + leafRule 的规范化
+	//   序列化，不含账本，所以"删债"不该动它；反过来，若这里被迫改指纹，就说明
+	//   有人在删债的同时动了矩阵——那正是本常量存在的理由。
+	// 前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，本单仍为此值）
+	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
 	allowMatrixFingerprint = "bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d"
 
@@ -621,7 +631,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 19,
+	debtMax: 18,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -642,7 +652,6 @@ var productionLedger = ledger{
 		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
 		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
 		{"internal/scheduler", "internal/sdkbridge", "scheduler 仅依赖 sdkbridge 的 RotatePolicy 与 ThreadHandle 值类型；客户端探测已下沉为本包 ClientResources/RetireThread 接口；待 P5 将非契约 SDK 类型从 scheduler 移出后再消除此边", phaseP5},
-		{"internal/scheduler", "pkg/egress", "类型与执行实现暂同包；P5 把 Client/Spec/Flavour/ResourceKey 迁到中立包后，本边转为硬规则（禁止 import 实现包）", phaseP5},
 	},
 	keep: []legacyRow{
 		{"internal/db/migrate/gen", "internal/repository", "迁移 DDL 生成器（go:generate）必须读取 repository 的 baseline DDL 与 hook 排除项；它是离线工具链、不是运行期包，结构上永不可能消除", phaseKeep},

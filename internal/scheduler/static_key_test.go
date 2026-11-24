@@ -484,7 +484,8 @@ func TestBuildSnapshotsGIDIsMinOfGroupIDs(t *testing.T) {
 		2: {a},
 		5: {a},
 	}
-	_, byID := buildSnapshots(m, nil, testEgressPool, nil)
+	_, byID, err := buildSnapshots(m, nil, testEgressPool, nil)
+	require.NoError(t, err)
 	leaf, ok := byID[1]
 	require.True(t, ok)
 	st := leaf.static.Load()
