@@ -16,6 +16,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -148,10 +149,14 @@ type FailureDeps struct {
 // 评审：同一失败不得双条 Warn）。
 var (
 	ErrMissingCredentialDiscriminator = errors.New("sdkbridge: missing credential discriminator")
-	ErrMissingCandidateFingerprint    = errors.New("sdkbridge: missing candidate fingerprint")
-	ErrCandidateFingerprintMismatch   = errors.New("sdkbridge: candidate fingerprint mismatch")
-	ErrMissingExpectedRevision        = errors.New("sdkbridge: missing expected revision")
-	ErrStaleFailureRevision           = errors.New("sdkbridge: stale failure revision")
+	// 三枚身份围栏哨兵是 internal/identityfence canonical 的**变量别名**：同一 error 值，
+	// 不是本包另造的独立 error 值，也不是 wrap。跨包 errors.Is 由此成立——scheduler /
+	// rulepersist 侧拿到的那一枚与本包判到的就是同一个值。要改判据/文案就改
+	// identityfence，不要在这里重建（重建会让跨包判等静默 false，正是 P3c 要消的那条）。
+	ErrMissingCandidateFingerprint  = identityfence.ErrMissingCandidateFingerprint
+	ErrCandidateFingerprintMismatch = identityfence.ErrCandidateFingerprintMismatch
+	ErrMissingExpectedRevision      = identityfence.ErrMissingExpectedRevision
+	ErrStaleFailureRevision         = errors.New("sdkbridge: stale failure revision")
 )
 
 func credentialTypeOf(acct *domain.Account) (credential.Type, bool) {
@@ -270,11 +275,14 @@ func HandleFailure(ctx context.Context, deps FailureDeps, event CredentialFailur
 	return err
 }
 
+// 三枚身份哨兵按 canonical（identityfence）判等：本包的导出名只是它们的别名
+// （同一 error 值），所以这里写哪一侧都等价——写 canonical 是为了让"判据的主语"
+// 在源码上就看得出来，防止下一个人把别名换成本包自建 error 后判等静默漂移。
 func isTransientFailure(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, repository.ErrStaleIdentityRevision) || errors.Is(err, ErrStaleFailureRevision) || errors.Is(err, ErrCandidateFingerprintMismatch) || errors.Is(err, ErrMissingCandidateFingerprint) || errors.Is(err, ErrMissingExpectedRevision) || errors.Is(err, ErrMissingCredentialDiscriminator) {
+	if errors.Is(err, repository.ErrStaleIdentityRevision) || errors.Is(err, ErrStaleFailureRevision) || errors.Is(err, identityfence.ErrCandidateFingerprintMismatch) || errors.Is(err, identityfence.ErrMissingCandidateFingerprint) || errors.Is(err, identityfence.ErrMissingExpectedRevision) || errors.Is(err, ErrMissingCredentialDiscriminator) {
 		return false
 	}
 	return true

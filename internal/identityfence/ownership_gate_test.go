@@ -24,15 +24,17 @@ import (
 // 为什么需要它：generation_symbol_gate_test.go 以**集合**枚举 revision 命名的标识符，
 // 而 alias 与定义同名——`var ErrMissingExpectedRevision = identityfence.ErrMissingExpectedRevision`
 // 在那种口径下只计一次，集合相等照样绿。也就是说：把三个 errors.New 搬回 scheduler、
-// 让 identityfence 反向 alias scheduler，集合门禁**看不见**。本文件把三件事钉成 AST 断言：
+// 让 identityfence 反向 alias scheduler，集合门禁**看不见**。本文件把四件事钉成 AST 断言：
 //
 //	(a) 三个哨兵的 errors.New 与 CandidateFingerprint 的**实现体**必须在本包；
 //	(b) internal/scheduler/candidate_identity.go 里这三个名字只能是 `identityfence.ErrX`
 //	    的赋值，两个函数体只能是单条 `return identityfence.X(...)`（别名必须是**同一
 //	    error 值**，不是 fmt.Errorf 重建——重建会让 errors.Is 判等断裂）；
-//	(c) 该文件内不许出现 errors.New，且任何函数体都不许有第二个语句。
+//	(c) 该文件内不许出现 errors.New，且任何函数体都不许有第二个语句；
+//	(d) internal/sdkbridge/failure.go 里这三个名字同样只能是 `identityfence.ErrX` 的
+//	    别名，且整包不再自建它们（P3c 前的反方向现状钉死已按 P5-1 v3.3 §G 删除）。
 //
-// 扫描面纪律：模块根由 go.mod 向上查找；两个目录各自**逐个** require.NotEmpty，
+// 扫描面纪律：模块根由 go.mod 向上查找；每处扫描目录都 require.NotEmpty，
 // 否则路径写错（或目录被清空）会让全部断言在空集合上恒绿。
 
 // fenceModuleRoot 从本文件向上找含 go.mod 的目录。找不到即 FailNow。
@@ -312,40 +314,67 @@ func TestSchedulerSideHasNoSecondImplementation(t *testing.T) {
 	}
 }
 
-// TestSdkbridgeStillOwnsSecondSentinelSet 把"世界上还有第二套同名哨兵"这条**现状**钉住。
+// TestSdkbridgeAliasesIdentityfenceSentinels 是 P3c 后的**反向**断言：sdkbridge 不再
+// 自持第二套同名哨兵——三个导出名必须是 identityfence canonical 的变量别名（同一
+// error 值），且不得再以自建 error 的形态出现。
 //
-// 为什么必须钉：本文件上面三条断言只证明"identityfence 是 scheduler/rulepersist 这条轴
-// 的权威"，它们**证明不了**"全局只有一处"——internal/sdkbridge/failure.go:151-153 仍自持
-// 一套同名三哨兵（`sdkbridge:` 前缀，各一枚独立的 errors.New），failure.go:277 用它自己
-// 那三枚做 errors.Is。跨轴比较（scheduler 家族的 error × sdkbridge 的判定）今天会
-// 静默 false。基线即如此、本单未合并（P5-1 非目标：不动 sdkbridge 的同名哨兵）。
+// 为什么要机械钉住：跨包 `errors.Is` 成立与否**只**取决于两边是不是同一个值。把别名
+// 换回本包自建（哪怕文案照抄）会让跨轴判等重新静默 false，而编译、行为测试、以及本
+// 文件的 canonical 唯一性断言都不会红——只有 AST 看得见。
 //
-// 钉住的形态与 generation_symbol_gate 的词表同款：**现状可见、改动必须显式**。
-// P3c 把 sdkbridge 统一到 identityfence 时，这条断言会红——那不是回归，是提醒你把
-// 它删掉并更新本注释（以及两个包注释里"已知第二套"的说明）。
-func TestSdkbridgeStillOwnsSecondSentinelSet(t *testing.T) {
+// 本用例的前身是 TestSdkbridgeStillOwnsSecondSentinelSet（P5-1 v3.3 §G 的现状钉死，
+// 当时写明"P3c 统一时显式删除"）；它现在钉的是同一件事的反面，判据 (b) 的 sdkbridge
+// 版本（见 TestSchedulerKeepsOnlyAliasesAndForwards）。
+func TestSdkbridgeAliasesIdentityfenceSentinels(t *testing.T) {
 	root := fenceModuleRoot(t)
 	files := fenceParseDir(t, root, "internal/sdkbridge")
+	target := fenceFileByName(t, root, "internal/sdkbridge", "failure.go")
 
-	// fenceSentinelNames 只收 `var X = errors.New(...)` 形态：一个名字出现在这里，
-	// 就等于"该包**独立自持**了这枚哨兵"，不可能是 identityfence 的别名。
-	got := fenceSentinelNames(files)
-	want := []string{
-		"ErrCandidateFingerprintMismatch",
-		"ErrMissingCandidateFingerprint",
-		"ErrMissingExpectedRevision",
-	}
-	require.Subset(t, got, want,
-		"sdkbridge 的第二套哨兵必须仍在（P5-1 非目标：不合并）。若已统一到 identityfence，请删除本断言并同步两处包注释")
-
-	// 独立性的第二条证据：sdkbridge 不得 import identityfence（别名会以 import 为前提）。
-	for i, f := range files {
-		for imp := range fenceImportSet(t, f) {
-			require.NotEqual(t, "github.com/is7qin/c3api/internal/identityfence", imp,
-				"internal/sdkbridge 的第 %d 个源文件 import 了 identityfence：那说明第二套已被别名取代，"+
-					"本断言与两处包注释必须一起更新", i+1)
+	// (1) 三个名字：在 failure.go 里恰好各一处 `var ErrX = identityfence.ErrX`。
+	aliased := map[string]int{}
+	for _, d := range target.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, sp := range gd.Specs {
+			vs, ok := sp.(*ast.ValueSpec)
+			if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+				continue
+			}
+			sel, ok := vs.Values[0].(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			id, ok := sel.X.(*ast.Ident)
+			if !ok || id.Name != "identityfence" {
+				continue
+			}
+			require.Equal(t, vs.Names[0].Name, sel.Sel.Name,
+				"别名必须指向同名哨兵（%s = identityfence.%s）：换名意味着两枚不同的 error 值",
+				vs.Names[0].Name, vs.Names[0].Name)
+			aliased[vs.Names[0].Name]++
 		}
 	}
+	require.Equal(t, map[string]int{
+		"ErrMissingCandidateFingerprint":  1,
+		"ErrCandidateFingerprintMismatch": 1,
+		"ErrMissingExpectedRevision":      1,
+	}, aliased,
+		"sdkbridge 的三个身份哨兵必须**恰好各有一次** `var ErrX = identityfence.ErrX`：0 = 名字被搬走或改指；2 = 别名分裂")
+
+	// (2) 三个名字不得再落在 `var X = errors.New(...)` 形态里。扫**整包**而不只是
+	// failure.go：换个文件重建同样是第二份（fenceSentinelNames 只收那一种形态，
+	// 命中即等于"该包独立自持了这枚哨兵"）。
+	got := fenceSentinelNames(files)
+	for name := range aliased {
+		require.NotContains(t, got, name,
+			"%s 仍由 sdkbridge 自建：别名被换回自建值 ⇒ 跨包 errors.Is 会重新静默 false", name)
+	}
+
+	// (3) 别名的前提：主语必须真的在 import 面里。
+	require.Contains(t, fenceImportSet(t, target), "github.com/is7qin/c3api/internal/identityfence",
+		"failure.go 必须 import identityfence：三个别名的值只能来自那里（没有 import 就没有同一 error 值）")
 }
 
 // fenceFileByName 解析 dir 下的单个文件（相对模块根的 relDir）。

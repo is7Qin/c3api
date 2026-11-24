@@ -10,19 +10,21 @@
 // 会让"谁是权威"变成"谁刚好 import 了谁"；搬进一个只依赖 domain 的叶子包之后，
 // 这条轴上的权威只有一处，消费方各自 import 它。
 //
-// **已知的第二套（不要读成本包是全局唯一）**：internal/sdkbridge/failure.go 自持一套
-// 同名三哨兵（`sdkbridge:` 前缀，各一枚独立的 errors.New），failure.go:277 用它自己
-// 那三枚判等。基线即如此、本单未合并——跨轴（scheduler 家族的 error × sdkbridge 的
-// 判定）现在仍会静默 false。P3c 把 sdkbridge 统一到本包时才消除；
-// ownership_gate_test.go 的 TestSdkbridgeStillOwnsSecondSentinelSet 把这条现状机械钉住
-// （统一时必须显式删掉那条断言，而不是让它悄悄失效）。
+// **第二套已消除（P3c I-A）**：internal/sdkbridge/failure.go 原先自持一套同名三哨兵
+// （`sdkbridge:` 前缀，各一枚独立的 errors.New），其 isTransientFailure 用自己那三枚
+// 判等——跨轴（scheduler 家族的 error × sdkbridge 的判定）会静默 false。现在那三个导出
+// 名是本包 canonical 的**变量别名**（同一 error 值），跨包 errors.Is 成立。反向断言
+// （sdkbridge 只许别名、不许自建）钉在两处：ownership_gate_test.go 的
+// TestSdkbridgeAliasesIdentityfenceSentinels（AST，扫整包）与 sdkbridge 的
+// TestIdentitySentinelsAreSharedWithIdentityfence（值身份 + 双向 errors.Is）。
 //
 // 边界：本包只依赖 internal/domain（指纹由 domain.AccountCandidateFingerprint /
 // domain.CandidateFPHex 派生）。**不**依赖 repository（repository.ErrStaleIdentityRevision
 // 是仓储 CAS 的哨兵，归 repository，不搬）、**不**依赖 scheduler（否则等于把哨兵挪了个寂寞）。
 //
 // 计数与语义由 identityfence_test.go 的归属门禁机械钉住：三个 errors.New 与
-// CandidateFingerprint 的实现体必须在本包，scheduler 侧只许留别名 + 一行转发。
+// CandidateFingerprint 的实现体必须在本包，scheduler / sdkbridge 两侧只许留别名
+// （scheduler 另有一行转发）。
 package identityfence
 
 import (

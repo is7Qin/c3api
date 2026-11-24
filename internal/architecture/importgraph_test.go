@@ -329,8 +329,14 @@ var allowRules = []allowRule{
 	}, deny: []string{"pkg/egress"}},
 
 	// 上游 SDK 桥：执行面的一端，允许 pkg/egress 实现。
+	// P3c 起新增一条 internal/identityfence：三个身份围栏哨兵不再由本包各铸一枚
+	// errors.New（那会让跨包 errors.Is 恒假，上游已分类成"缺身份"的判决落到本包会
+	// 被 isTransientFailure 判成"可重试"），而是 canonical 的变量别名（同一 error 值）。
+	// 方向是"执行面实现 → 叶子契约"：identityfence 只 import domain，既不成环，也不会把
+	// repository/scheduler 带进来。
 	{from: "internal/sdkbridge", to: []string{
-		"internal/domain", "internal/credential", "internal/worker", "pkg/egress", "pkg/logx",
+		"internal/domain", "internal/credential", "internal/identityfence", "internal/worker",
+		"pkg/egress", "pkg/logx",
 	}},
 
 	// HTTP 控制器：自己的子包 + 控制器层，不允许直接摸 repository/scheduler，
@@ -430,7 +436,7 @@ const (
 	//      （这一条含 2 条边：到 identityfence 的契约依赖 + 到 repository 的实现依赖）
 	// 同时新增两条叶子规则 internal/loadport 与 internal/identityfence。
 	// 前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8
-	allowMatrixFingerprint = "844fad1f53f6d5576add269a7fe2f544e387baf712666788cee953c75442b9b5"
+	allowMatrixFingerprint = "6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy

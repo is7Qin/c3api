@@ -14,7 +14,7 @@ import (
 // scheduler.go:504,590,1140,1219、routing_compiler_candidates.go:109、本包的
 // revisionVocabulary）判到的就是另一枚值——语义会**静默**改变。故三个 var 必须是
 // 同一 error 值。归属由 internal/identityfence/ownership_gate_test.go 机械钉住
-// （它同时钉住 sdkbridge 那套独立哨兵的存在——见该文件的 TestSdkbridgeStillOwnsSecondSentinelSet）。
+// （P3c 起它也钉住 sdkbridge 侧只许别名——TestSdkbridgeAliasesIdentityfenceSentinels）。
 //
 // 移除条件（可执行；条件未满足前**禁止删除**）：
 //
@@ -38,8 +38,8 @@ func candidateFingerprint(a *domain.Account) (string, error) {
 // failover_plan_test.go、search_endpoint_test.go）——sdkbridge 并不 import 它（也 import 不了：
 // 那会与 scheduler → sdkbridge 成环）。
 //
-// **注意**：internal/sdkbridge/failure.go 另有一套同名三哨兵（`sdkbridge:` 前缀），
-// 本单未合并；本包这条轴上的"单一事实源"只覆盖 scheduler / rulepersist。
+// **注意**：internal/sdkbridge/failure.go 从 P3c 起也改用本轴的别名（同一 error 值），
+// 故这条轴上的"单一事实源"覆盖 scheduler / rulepersist / sdkbridge 三处消费方。
 func CandidateFingerprint(a *domain.Account) (string, error) {
 	return identityfence.CandidateFingerprint(a)
 }
