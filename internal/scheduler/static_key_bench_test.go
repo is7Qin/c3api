@@ -20,7 +20,8 @@ var planKeyEqSink bool
 //     这是最常见的路径（每次编译对每个账号比较一次，绝大多数账号未变），也是本次
 //     "两枚 string → 一枚 [32]byte"直接受益的那条。
 //   - differ-credential：只有凭据面不同（上游鉴权键轮转）。本单元改的就是这一维；
-//     重排后 credentialPairDigest 是 planKey 的**末字段**，所以这也是"最晚短路"的那条。
+//     重排后 factsDigest 是 planKey 的**末字段**（凭据面是它的 upstreamKey 段），
+//     所以这也是"最晚短路"的那条。
 //   - differ-last-field：只有 groupIDsDigest（组归属变更）不同。重排前它是末字段、
 //     重排后是末字段之前的一枚数组——**保留这个名字是为了 before/after 的标签可比**，
 //     它测的是"在数组块尾部才短路"这一形状。

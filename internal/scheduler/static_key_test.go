@@ -78,6 +78,10 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 	// 列表，staticKey 展平后 = 二者之并（无遗漏、无重复）。"字段集"与"归属"钉在
 	// 同一处：字段挪错组、增删字段，都必须有意为之。
 	var (
+		// 22 项 = 26 − 5（codexAccountID / codexInstallation / codexEmail /
+		// bpsProfileDigest / credentialPairDigest）+ 1（factsDigest）。U40 之后
+		// **没有**按 provider 命名的字段：加 provider 只改 ProviderFacts 的槽位与
+		// 编码段（static_facts.go），这张表不动。
 		declaredPlanKeyFields = []string{
 			"accountID", "name", "templateID", "baseURL",
 			"maxConcurrency", "enabled", "cacheDomain", "upstreamCostMultiplierBp",
@@ -85,8 +89,6 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			// routable 可用性决策位（spec-proxy-pool §4.1/§4.7）：代理 enabled 翻转
 			// 不碰任何账号字段，没有这一位键就判等 ⇒ 旧叶子继续带着"可派发"结论入场。
 			"routable",
-			"codexAccountID", "codexInstallation",
-			"codexEmail", "bpsProfileDigest",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
 			"supportedFormats", "modelMappingKey",
 			"upstreamPathsKey", // custom 路径进 planKey：改路径必须换新计划
@@ -94,9 +96,10 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			// 复用分支让 reserveOnView 读到旧 tpl，开关永远不生效（spec §5）。
 			"codexResponsesTransport",
 			"groupIDsDigest",
-			// credentialPairDigest 声明在**末尾**：比较顺序优化（32 字节数组是这里最贵的
+			// factsDigest 声明在**末尾**：比较顺序优化（32 字节数组是这里最贵的
 			// 单字段比较，放末位让"其它维不同"的分支永不付这笔钱），不是归属变更。
-			"credentialPairDigest",
+			// 它承载 provider 身份事实 + 凭据原文（static_facts.go 的六段编码）。
+			"factsDigest",
 		}
 		declaredPayloadKeyFields = []string{
 			"codexOAuthToken", "codexOAuthRefresh", "codexOAuthExpires",
@@ -125,14 +128,14 @@ func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 	// 证明「变过」，而计划需要「现在走哪条线」这一事实本身（egress 规格摘要）。
 	// 摘要与 K 冗余是**有意**的：任一失效路径单独失守都不会让旧计划继续打旧出口。
 	//
-	// upstream_key 的承载字段是 credentialPairDigest：它只以「凭据原文」的身份进键
-	// （上游键轮转 ⇒ 换计划），本单元把上游键与 pat 原文一起折叠成一枚摘要，故两条
-	// 声明行/路径都落到同一枚字段上。
+	// upstream_key 的承载字段是 factsDigest：它只以「凭据原文」的身份进键
+	// （上游键轮转 ⇒ 换计划）。U39 把上游键与 pat 原文折叠成一枚摘要，U40 再把那枚
+	// 摘要并入 factsDigest，故声明行落到同一枚字段上。
 	carrier := map[domain.AccountField]string{
 		domain.FieldName:                   "name",
 		domain.FieldTemplateID:             "templateID",
 		domain.FieldBaseURL:                "baseURL",
-		domain.FieldUpstreamKey:            "credentialPairDigest",
+		domain.FieldUpstreamKey:            "factsDigest",
 		domain.FieldMaxConcurrency:         "maxConcurrency",
 		domain.FieldGroupIDs:               "groupIDsDigest",
 		domain.FieldEnabled:                "enabled",
@@ -240,8 +243,12 @@ func TestStaticKeyBPSProfileDigestInvalidatesSemanticProfileChanges(t *testing.T
 	old := makeSnapshot(profileA)
 	same := makeSnapshot([]byte(` { "device_id": "d", "profile_id": "p" } `))
 	changed := makeSnapshot(profileB)
-	require.Equal(t, old.key.bpsProfileDigest, same.key.bpsProfileDigest)
-	require.NotEqual(t, old.key.bpsProfileDigest, changed.key.bpsProfileDigest)
+	// 叶标量：语义相同的 profile（仅空白/键序不同）必须同摘要。
+	require.Equal(t, old.bpsProfileDigest, same.bpsProfileDigest)
+	require.NotEqual(t, old.bpsProfileDigest, changed.bpsProfileDigest)
+	// 键侧承载者是 factsDigest 的 bpsProfileDigest 段（U40 起不再有独立字段）。
+	require.Equal(t, old.key.factsDigest, same.key.factsDigest)
+	require.NotEqual(t, old.key.factsDigest, changed.key.factsDigest)
 	require.NotEqual(t, old.key, changed.key)
 }
 
@@ -271,9 +278,9 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 			Template:         tp,
 			Ext: &domain.AccountExt{
 				CodexAccountID: new("acct-up"),
-				// 凭据原文**进键**——但只以 credentialPairDigest（长度前缀 + sha256 的
-				// pair 摘要）形式：改前它是 planKey 里的 string 字段，本单元把原文从键里
-				// 去掉，键仍必须对 pat 轮转敏感（否则复用旧叶 ⇒ 上游拿旧凭据）。
+				// 凭据原文**进键**——但只以 factsDigest（长度前缀 + sha256 的六段摘要）
+				// 形式：U39 把原文从键里去掉，U40 把它并入 provider 事实摘要，键仍必须
+				// 对 pat 轮转敏感（否则复用旧叶 ⇒ 上游拿旧凭据）。
 				CodexPATKey: &pat,
 				CodexIdentity: &domain.CodexIdentity{
 					InstallationID: "inst",
@@ -320,7 +327,6 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		{"upstreamCostMultiplierBp", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamCostMultiplierBp = new(9000) }},
 		{"groupIDs set", func(_ *domain.Account, _ *domain.Template, gids *[]int64) { *gids = []int64{3} }},
 		{"codexAccountID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexAccountID = new("other") }},
-		{"codexInstallation", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexIdentity.InstallationID = "inst2" }},
 		{"credentialType", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.CredentialType = "codex_oauth" }},
 		{"stripImageTools", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.StripImageTools = false }},
 		{"models set", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.Models = []string{"m-a"} }},
@@ -375,12 +381,61 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated refresh token must change the key")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated refresh token must NOT invalidate in-flight plans (payload only)")
 	})
-	t.Run("codexEmail edit MUST change the key", func(t *testing.T) {
+	t.Run("codexEmail edit MUST NOT change the key", func(t *testing.T) {
+		// U40 删掉了 codexEmail：它不是决策输入（domain.CandidateFingerprint 的
+		// hashFields 实参清单里从来没有它），改前它的唯一作用是「改 email 白重建
+		// 叶子」。改回来后键必须判等——这是**语义反转**，写在这里是为了别让下一个人
+		// 把它当回归"修"回去。
+		//
+		// 代价写在明处：叶子复用后 Selection.Ext 指向旧快照，数据面若去读 email 会
+		// 拿到陈旧值。这一类读取由 static_plan_facts_gate_test.go 的 CodexEmail
+		// 读点注册表（今天为空）永久拦住。
 		a, tp, gids := inputs()
 		a.Ext.CodexEmail = new("e@example.com")
 		m := newSnapshotStatic(a, tp, gids, directEgress(), nil)
-		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "email is reachable via Selection.Ext, so it must not be served stale")
-		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "email is a decision input (read by the fingerprint path), so it invalidates in-flight plans")
+		require.True(t, staticKeyOf(oldAv) == staticKeyOf(m),
+			"email 不是决策输入 ⇒ 改 email 不得换叶子（U40）")
+		require.True(t, planKeyOf(oldAv) == planKeyOf(m),
+			"email 不进 planKey ⇒ 改 email 不得作废在途计划（U40）")
+	})
+	t.Run("codexInstallation is sensitive on the codex channel only", func(t *testing.T) {
+		// factsDigest 的 installation 段取 $S.installationID，而该叶标量**仅 codex
+		// 通道**定型 ⇒ 静态/BPS 通道对 installation 不敏感（键里的事实不比叶子带着
+		// 的事实更细）。上面 inputs() 的模板是 api_key，故它已不在敏感度表里；这里
+		// 显式钉住两侧：codex 敏感、api_key 不敏感。
+		codexTpl := func() *domain.Template {
+			tp := &domain.Template{BaseURL: "https://tpl.example/v1", CredentialType: credential.TypeCodexOAuth}
+			return tp
+		}
+		withInstall := func(inst string) planKey {
+			tp := codexTpl()
+			a := domain.Account{
+				ID: 7, TemplateID: 3, UpstreamKey: "sk", Enabled: true, MaxConcurrency: 4,
+				IdentityRevision: 5, Template: tp,
+				Ext: &domain.AccountExt{
+					CodexAccountID: new("acct-up"),
+					CodexIdentity:  &domain.CodexIdentity{InstallationID: inst},
+				},
+			}
+			return planKeyOf(newSnapshotStatic(a, tp, nil, directEgress(), nil))
+		}
+		require.NotEqual(t, withInstall("inst"), withInstall("inst2"),
+			"codex 通道：installation 进 factsDigest")
+
+		apiTpl := &domain.Template{BaseURL: "https://tpl.example/v1", CredentialType: credential.TypeAPIKey}
+		ifTpl := func(inst string) planKey {
+			a := domain.Account{
+				ID: 7, TemplateID: 3, UpstreamKey: "sk", Enabled: true, MaxConcurrency: 4,
+				IdentityRevision: 5, Template: apiTpl,
+				Ext: &domain.AccountExt{
+					CodexAccountID: new("acct-up"),
+					CodexIdentity:  &domain.CodexIdentity{InstallationID: inst},
+				},
+			}
+			return planKeyOf(newSnapshotStatic(a, apiTpl, nil, directEgress(), nil))
+		}
+		require.Equal(t, ifTpl("inst"), ifTpl("inst2"),
+			"api_key 通道：installation 不在 $S.installationID 里 ⇒ 不得进 factsDigest")
 	})
 }
 

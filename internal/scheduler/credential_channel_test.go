@@ -38,9 +38,10 @@ func bpsAccWith(id int64, maxConc int, ext *domain.AccountExt) *domain.Account {
 //
 //   - 不建会话池（会话池只按 codex 通道建）；
 //   - installation / cacheDomain 不进静态视图（它们是 codex 会话路径的事实）；
-//   - planKey.codexInstallation 为空（BPS 分支从不写它，错填值换不掉叶子）；
-//   - 反向对照：同一 ext 挂在 codex 模板上时上述三项全部有值——证明"没有值"不是
-//     因为夹具没填。
+//   - factsDigest 与「同一账号但 ext 不带 CodexIdentity」的孪生体同键（installation
+//     是 factsDigest 的一段，而 BPS 上该段恒为空，错填值换不掉叶子）；
+//   - 反向对照：同一 ext 挂在 codex 模板上时 installation 真的进 factsDigest——
+//     证明"不进摘要"不是因为夹具没填。
 func TestBPSIgnoresCodexIdentity(t *testing.T) {
 	mixedExt := func(id int64, inst string) *domain.AccountExt {
 		return &domain.AccountExt{
@@ -62,14 +63,31 @@ func TestBPSIgnoresCodexIdentity(t *testing.T) {
 	bpsAv := v.static.byID[1].static.Load()
 	require.Empty(t, bpsAv.installationID, "BPS 不读 Codex installation")
 	require.Empty(t, bpsAv.cacheDomain, "BPS 不走 codex 会话路径（无缓存域事实）")
-	require.Empty(t, bpsAv.key.codexInstallation, "错填的 installation 不得进 BPS 的 planKey")
-	require.NotEmpty(t, bpsAv.key.bpsProfileDigest, "BPS 的 profile 摘要才是它的事实")
+	require.NotEmpty(t, bpsAv.bpsProfileDigest, "BPS 的 profile 摘要才是它的事实")
 	require.Nil(t, v.static.identityPools.pools[1], "BPS 不得建 codex 会话池")
+
+	// 错填的 installation 不得进 BPS 的 factsDigest：与「同一账号但 ext 不带
+	// CodexIdentity」的孪生体**同键**（键里的事实不比叶子带着的事实更细）。
+	bpsTwin := *bps
+	bpsTwin.Ext = &domain.AccountExt{
+		AccountID: 1, CredentialType: credential.TypeBPS,
+		BPSProfile: []byte(`{"profile_id":"p","device_id":"d"}`),
+	}
+	require.Equal(t, bpsAv.key.factsDigest,
+		newSnapshotStatic(bpsTwin, bps.Template, nil, directEgress(), nil).key.factsDigest,
+		"错填的 installation 不得进 BPS 的 factsDigest")
+	require.NotEqual(t, [32]byte{}, bpsAv.key.factsDigest,
+		"BPS 的身份事实（账号归属 + profile 摘要）必须真的进了摘要")
 
 	codexAv := v.static.byID[2].static.Load()
 	require.Equal(t, "inst-codex", codexAv.installationID, "反向对照：codex 通道照常读 installation")
-	require.NotEmpty(t, codexAv.key.codexInstallation, "反向对照：codex 的 installation 进 planKey")
 	require.NotNil(t, v.static.identityPools.pools[2], "反向对照：codex 建池")
+	// 反向对照：codex 的 installation 进 factsDigest（同一账号只改 installation）。
+	codexTwin := *codex
+	codexTwin.Ext = mixedExt(2, "inst-other")
+	require.NotEqual(t, codexAv.key.factsDigest,
+		newSnapshotStatic(codexTwin, codex.Template, nil, directEgress(), nil).key.factsDigest,
+		"反向对照：codex 的 installation 进 factsDigest")
 }
 
 // TestEmptyCredentialTypeIsUndispatchable 钉住一条**当前不可达**的路径，它的价值是

@@ -106,7 +106,7 @@ func TestPlanKeyCredentialPairEquivalenceClasses(t *testing.T) {
 			for _, pat := range reps {
 				acc, tpl, gids := fixture(ty.cred, upstream, pat)
 				key := planKeyOf(newSnapshotStatic(acc, tpl, gids, directEgress(), nil))
-				_, pair := frozenPlanKey(acc, tpl, gids)
+				_, pair, _ := frozenPlanKey(acc, tpl, gids)
 				// 口径自证：冻结推导的 pair 就是原文本身（BPS 分支今天不写 pat 字段，
 				// 故为 ""）。这条把"等价类"钉在**原始三元组**上，而不是钉在某个中间量上。
 				wantPair := frozenCredentialPair{upstream: upstream, pat: pat}

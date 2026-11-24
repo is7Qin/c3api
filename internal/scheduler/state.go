@@ -64,8 +64,8 @@ type snapshotStatic struct {
 	// `private:<账号ID>`）；installationID 账号 ext 的 installation（同
 	// installationIDOf，缺列 = ""）。两者都在构造期一次定型，预留时只做字段拷贝进
 	// Selection（会话路径不认领槽位，installation 只能从这里来；私有域拼接若放在
-	// 预留里会每次分配）。源字段已在键里（cacheDomain / accountID /
-	// codexInstallation），换值 ⇒ 换叶子 ⇒ 新值。
+	// 预留里会每次分配）。源字段已在键里（cacheDomain / accountID / factsDigest
+	// 的 installation 段），换值 ⇒ 换叶子 ⇒ 新值。
 	cacheDomain    string
 	installationID string
 	// bpsProfileDigest is the canonical opaque profile digest used by the

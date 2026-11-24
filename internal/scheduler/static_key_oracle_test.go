@@ -20,8 +20,8 @@ type frozenCredentialPair struct {
 
 // frozenPlanKey re-implements the ORIGINAL plan-key derivation independently of
 // planKeyOf / newSnapshotStatic (a frozen old-algorithm oracle) **except** for the
-// credential pair, which it returns as the frozen raw pair instead of writing it
-// into a key field.
+// provider facts + credential pair, which it returns as the frozen raw facts
+// instead of writing a digest into a key field.
 //
 // 凭据维度的 oracle 地位已被 static_key_credential_test.go 的 1125 组等价类测试
 // **接管**（本单元：planKey 去载荷）。理由不是省事：改前凭据面是两枚 string 字段，
@@ -31,10 +31,12 @@ type frozenCredentialPair struct {
 // 相等——比逐值相等更强：它同时锁住两个方向（不得合并、不得拆分）。
 //
 // 本函数因此只证其余维度（账号/模板/组归属/出口/可用性）仍与改前同源：比较时把
-// 构造函数产出的 credentialPairDigest 抹零，再与这里的 planKey 逐字段相等。
-func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (planKey, frozenCredentialPair) {
+// 构造函数产出的 factsDigest 抹零，再与这里的 planKey 逐字段相等；摘要本身改由
+// 「冻结的事实选择 + FactsDigest」交叉验证（编码由 KAT 单独钉住）。
+func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (planKey, frozenCredentialPair, ProviderFacts) {
 	var k planKey
 	var pair frozenCredentialPair
+	var facts ProviderFacts
 	k.accountID = acc.ID
 	k.name = acc.Name
 	k.templateID = acc.TemplateID
@@ -61,17 +63,21 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (plan
 	// 可用性决策位：独立重述（不调用 routableFor——oracle 必须是**另一份**推导，
 	// 否则构造函数与 oracle 同源，比对就退化成自证）。
 	k.routable = acc.Enabled && (acc.ProxyID == nil || (acc.Proxy != nil && acc.Proxy.Enabled))
+	// provider 事实（U40）：按改前的三条分支冻结「进 factsDigest 的那六段」。
+	// 编码不在 oracle 里重写（那是把实现抄一遍）——KAT 钉字节，这里只钉**事实选择**：
+	// BPS 不吃 Codex installation/PAT，installation 只在 codex 通道成型（$S.installationID
+	// 的定型条件），profile 摘要只对 BPS 非空。
+	if tpl != nil {
+		facts.Channel = credential.ChannelOf(tpl.CredentialType)
+		if facts.Channel == credential.ChannelCodex {
+			facts.InstallationID = installationIDOf(acc.Ext)
+		}
+		facts.BPSProfileDigest = domain.BPSProfileDigest(tpl.CredentialType, acc.Ext)
+	}
 	if ext := acc.Ext; ext != nil {
-		if tpl != nil && tpl.CredentialType.IsBPS() {
-			// BPS 只吃上游账号归属，不吃 Codex email/PAT/installation。
-			k.codexAccountID = derefString(ext.CodexAccountID)
-		} else {
-			k.codexAccountID = derefString(ext.CodexAccountID)
-			k.codexEmail = derefString(ext.CodexEmail)
+		facts.CodexAccountID = derefString(ext.CodexAccountID)
+		if facts.Channel != credential.ChannelBPS {
 			pair.pat = derefString(ext.CodexPATKey)
-			if id := ext.CodexIdentity; id != nil {
-				k.codexInstallation = id.InstallationID
-			}
 		}
 	}
 	if tpl != nil {
@@ -84,26 +90,27 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (plan
 		// custom 路径同样进键（编码由 TestDigestUpstreamPaths 单独冻结）
 		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
 		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
-		if tpl.CredentialType.IsBPS() && acc.Ext != nil {
-			k.bpsProfileDigest = domain.BPSProfileHash(acc.Ext.BPSProfile)
-		}
 	}
 	k.groupIDsDigest = digestInt64s(gids)
-	return k, pair
+	return k, pair, facts
 }
 
-// requirePlanKeyMatchesFrozen 断言 got 与冻结推导除**凭据摘要**外逐字段相等，并断言
-// 凭据摘要确实由构造期写入（非零值——否则下面的抹零比对会让凭据维度整个逃逸）。
+// requirePlanKeyMatchesFrozen 断言 got 与冻结推导除**factsDigest** 外逐字段相等，
+// 并断言 factsDigest 确实由构造期写入、且等于「冻结的事实选择」的摘要。
 //
-// 为什么要抹掉那一维：凭据原文已折叠为摘要，包内任何"独立"的摘要推导都只是把实现
-// 抄一遍；凭据面的判据是**等价类**，由 TestPlanKeyCredentialPairEquivalenceClasses
-// 的 1125 组参照测试覆盖（见 frozenPlanKey 的注释）。其余维度仍逐字段对照冻结推导。
+// 为什么要抹掉那一维：摘要值不能由 oracle 独立重算（包内再写一份长度前缀 + sha256
+// 只是把实现抄一遍）；字节由 static_facts_kat_test.go 的 KAT 钉住，关系由
+// TestPlanKeyCredentialPairEquivalenceClasses 的 1125 组等价类钉住。这里保留的是
+// **事实选择**那一维：frozenPlanKey 独立陈述「哪六段进摘要」（BPS 排除 installation/PAT、
+// installation 只在 codex 通道成型），把它喂给编码器再与构造器的输出比。
 func requirePlanKeyMatchesFrozen(t *testing.T, got planKey, acc domain.Account, tpl *domain.Template, gids []int64, msgAndArgs ...any) {
 	t.Helper()
-	want, _ := frozenPlanKey(acc, tpl, gids)
-	require.NotEqual(t, [32]byte{}, got.credentialPairDigest,
-		"凭据摘要必须由构造期写入：零值意味着凭据面整个逃逸了冻结比对")
-	got.credentialPairDigest = [32]byte{}
+	want, pair, facts := frozenPlanKey(acc, tpl, gids)
+	require.NotEqual(t, [32]byte{}, got.factsDigest,
+		"factsDigest 必须由构造期写入：零值意味着 provider 事实面整个逃逸了冻结比对")
+	require.Equal(t, FactsDigest(facts, pair.upstream, pair.pat), got.factsDigest,
+		"factsDigest 必须与冻结的 provider 事实口径一致（改前分支语义：BPS 不吃 pat/installation）")
+	got.factsDigest = [32]byte{}
 	require.Equal(t, want, got, msgAndArgs...)
 }
 
@@ -163,12 +170,15 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := planKeyOf(newSnapshotStatic(tc.acc, tc.tpl, tc.gids, directEgress(), nil))
-		want, pair := frozenPlanKey(tc.acc, tc.tpl, tc.gids)
+		want, pair, facts := frozenPlanKey(tc.acc, tc.tpl, tc.gids)
 		require.Equal(t, tc.pair, pair, "%s: 冻结推导的凭据口径", tc.name)
-		// 非空性：构造函数真的写了摘要。否则下面"抹零后相等"会让凭据维度整个逃逸。
-		require.NotEqual(t, [32]byte{}, got.credentialPairDigest, "%s: 摘要必须非零值", tc.name)
-		got.credentialPairDigest = [32]byte{}
-		require.Equal(t, want, got, "%s: 除凭据摘要外的全部维度必须与冻结推导同源", tc.name)
+		// 非空性：构造函数真的写了摘要。否则下面"抹零后相等"会让 provider 事实面整个逃逸。
+		require.NotEqual(t, [32]byte{}, got.factsDigest, "%s: 摘要必须非零值", tc.name)
+		// 事实选择与构造器同源：BPS 排除 pat/installation、codex 的 installation 进摘要。
+		require.Equal(t, FactsDigest(facts, pair.upstream, pair.pat), got.factsDigest,
+			"%s: factsDigest 必须与冻结的 provider 事实口径一致", tc.name)
+		got.factsDigest = [32]byte{}
+		require.Equal(t, want, got, "%s: 除 factsDigest 外的全部维度必须与冻结推导同源", tc.name)
 	}
 
 	// Permutation of the same groupID set is invariant (canonical digest).

@@ -97,24 +97,26 @@ type staticReadSpec struct {
 // 里没有消费者读不到的冗余字段。
 var staticReadPaths = map[string]staticReadSpec{
 	// --- 整结构体/指针/切片读取 ---
-	"$S.acc":                   {staticPathContainer, "整账号：深路径前缀、整体交给候选指纹权威（ProbeAccount 的 &av.acc）"},
-	"$S.tpl":                   {staticPathContainer, "模板指针：nil 检查与前缀"},
-	"$S.acc.Ext":               {staticPathContainer, "凭据扩展指针：nil 检查 + 装配到 Selection.Ext 的穿透把手（收窄属计划 fence 消费面收口的范围）"},
-	"$S.acc.Ext.CodexIdentity": {staticPathContainer, "身份四元组指针：nil 检查与前缀"},
-	"$S.acc.Proxy":             {staticPathContainer, "出口代理展开指针：**只有构造/判据期**读它（newSnapshotStatic 定型 routable、staticKeyOf 重算出口摘要），整交给 specOfDomain；消费期不得下钻（摘要入键后由 proxyDigest 承载）"},
-	"$S.acc.ProxyID":           {staticPathField, "proxyDigest"},       // 绑定关系（nil = 直连）与 $S.acc.Proxy 同源承载：绑定变化 ⇒ 摘要变；可用性位另见 $S.routable
-	"$S.routable":              {staticPathField, "routable"},          // 唯一可用性决策位（**快照事实**，不是领域字段）：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
-	"$S.cacheDomain":           {staticPathField, "cacheDomain"},       // 生效缓存域（构造期由 $S.acc.ID + $S.acc.CacheDomain 定型）：预留只拷进 Selection.CacheDomain
-	"$S.installationID":        {staticPathField, "codexInstallation"}, // installation（构造期由 $S.acc.Ext.CodexIdentity.InstallationID 定型）：预留只拷进 Selection.InstallationID
-	"$S.bpsProfileDigest":      {staticPathField, "bpsProfileDigest"},  // BPS profile canonical digest，构造期冻结后进入 planKey
-	"$S.egress":                {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
+	"$S.acc":         {staticPathContainer, "整账号：深路径前缀、整体交给候选指纹权威（ProbeAccount 的 &av.acc）"},
+	"$S.tpl":         {staticPathContainer, "模板指针：nil 检查与前缀"},
+	"$S.acc.Ext":     {staticPathContainer, "凭据扩展指针：nil 检查 + 装配到 Selection.Ext 的穿透把手（收窄属计划 fence 消费面收口的范围）"},
+	"$S.acc.Proxy":   {staticPathContainer, "出口代理展开指针：**只有构造/判据期**读它（newSnapshotStatic 定型 routable、staticKeyOf 重算出口摘要），整交给 specOfDomain；消费期不得下钻（摘要入键后由 proxyDigest 承载）"},
+	"$S.acc.ProxyID": {staticPathField, "proxyDigest"}, // 绑定关系（nil = 直连）与 $S.acc.Proxy 同源承载：绑定变化 ⇒ 摘要变；可用性位另见 $S.routable
+	"$S.routable":    {staticPathField, "routable"},    // 唯一可用性决策位（**快照事实**，不是领域字段）：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
+	"$S.cacheDomain": {staticPathField, "cacheDomain"}, // 生效缓存域（构造期由 $S.acc.ID + $S.acc.CacheDomain 定型）：预留只拷进 Selection.CacheDomain
+	// installationID：构造期由 installationIDOf 定型（**仅 codex 通道**），此后有两个
+	// 读者——预留拷进 Selection.InstallationID，构造器把同一个值送进 factsDigest 的
+	// installation 段。键里承载它的是 factsDigest，不是独立字段（U40）。
+	"$S.installationID":   {staticPathField, "factsDigest"},
+	"$S.bpsProfileDigest": {staticPathField, "factsDigest"}, // BPS profile canonical digest，构造期冻结后进入 factsDigest 的 bpsProfileDigest 段
+	"$S.egress":           {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
 
 	// --- 账号侧标量 ---
 	"$S.acc.ID":                       {staticPathField, "accountID"},
 	"$S.acc.Name":                     {staticPathField, "name"},
 	"$S.acc.TemplateID":               {staticPathField, "templateID"},
 	"$S.acc.BaseURL":                  {staticPathField, "baseURL"},
-	"$S.acc.UpstreamKey":              {staticPathField, "credentialPairDigest"}, // 上游鉴权键：与 pat 原文一起折叠进凭据 pair 摘要（消费面另有 Selection.UpstreamKey 的数据面透传，同源于本路径）
+	"$S.acc.UpstreamKey":              {staticPathField, "factsDigest"}, // 上游鉴权键：factsDigest 的 upstreamKey 段（消费面另有 Selection.UpstreamKey 的数据面透传，同源于本路径）
 	"$S.acc.MaxConcurrency":           {staticPathField, "maxConcurrency"},
 	"$S.acc.Enabled":                  {staticPathField, "enabled"},
 	"$S.acc.CacheDomain":              {staticPathField, "cacheDomain"},
@@ -122,15 +124,25 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.IdentityRevision":         {staticPathField, "identityRevision"},
 	"$S.acc.SupplierUserID":           {staticPathField, "supplierUserID"},
 
-	// --- 账号凭据面（决策输入子集） ---
-	"$S.acc.Ext.CodexAccountID": {staticPathField, "codexAccountID"},
-	"$S.acc.Ext.CodexEmail":     {staticPathField, "codexEmail"},
-	"$S.acc.Ext.CodexPATKey":    {staticPathField, "credentialPairDigest"}, // pat 原文：与上游鉴权键合并为同一枚摘要（BPS 分支不读 ⇒ 不进 BPS 的键）
+	// --- 账号凭据面（决策输入子集）：五条读点全部落到同一枚 factsDigest ---
+	//
+	// U40 把 codexAccountID / codexInstallation / bpsProfileDigest / credentialPairDigest
+	// 折叠成一枚摘要；`field` 类的 detail 因此从四个名字收敛成一个。这不是放宽：
+	// ③ 的「键字段集 ≡ 消费字段集」仍是双向相等断言，five-paths→one-field 只是把
+	// 「哪条读点落哪枚字段」重新算了一遍。
+	//
+	// 两条路径随字段一起删除，且**只能**靠删读路径删字段：
+	//   - $S.acc.Ext.CodexEmail：email 不是决策输入（CandidateFingerprint 的 hashFields
+	//     实参清单里从来没有它），读点从 newSnapshotStatic 删除；
+	//   - $S.acc.Ext.CodexIdentity（连同 .InstallationID）：installation 改由
+	//     $S.installationID 叶标量提供（该标量本来就在），构造器不再下钻身份指针。
+	//     这一条同时解释了容器路径为什么消失——它的唯一读者就是被删掉的那次下钻。
+	"$S.acc.Ext.CodexAccountID": {staticPathField, "factsDigest"}, // factsDigest 的 codexAccountID 段
+	"$S.acc.Ext.CodexPATKey":    {staticPathField, "factsDigest"}, // pat 原文：factsDigest 的 pat 段（BPS 分支不读 ⇒ 不进 BPS 的键）
 	// $S.acc.Ext.BPSProfile 不再出现：S3a 把这条派生收口进 domain.BPSProfileDigest，
-	// scheduler 只读冻结后的 $S.bpsProfileDigest（下一行）。若谁在控制面重新直接读
+	// scheduler 只读冻结后的 $S.bpsProfileDigest（上一段）。若谁在控制面重新直接读
 	// profile，本表与实际读路径集的**相等**判据会立刻红——删行不是放宽，是把声明
 	// 收紧到"实际没有这条读"。
-	"$S.acc.Ext.CodexIdentity.InstallationID": {staticPathField, "codexInstallation"},
 
 	// --- 账号凭据面（载荷：只影响叶子内容是否新鲜） ---
 	"$S.acc.Ext.CodexOAuthToken":        {staticPathField, "codexOAuthToken"},
