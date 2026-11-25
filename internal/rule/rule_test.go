@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -61,7 +61,7 @@ func (f *fakeRuleStore) UpdateRule(ctx context.Context, r domain.Rule) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.rules[r.ID]; !ok {
-		return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, r.ID)
+		return fmt.Errorf("%w: id=%d missing", storeerr.ErrNotFound, r.ID)
 	}
 	f.rules[r.ID] = r
 	return nil
@@ -71,7 +71,7 @@ func (f *fakeRuleStore) DeleteRule(ctx context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.rules[id]; !ok {
-		return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
+		return fmt.Errorf("%w: id=%d missing", storeerr.ErrNotFound, id)
 	}
 	delete(f.rules, id)
 	return nil
@@ -82,7 +82,7 @@ func (f *fakeRuleStore) DeleteRulesBatch(ctx context.Context, ids []int64) error
 	defer f.mu.Unlock()
 	for _, id := range ids {
 		if _, ok := f.rules[id]; !ok {
-			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
+			return fmt.Errorf("%w: id=%d missing", storeerr.ErrNotFound, id)
 		}
 	}
 	for _, id := range ids {
@@ -430,7 +430,8 @@ func TestSeedRules(t *testing.T) {
 }
 
 // mustCountAny 表内规则数（接受唯一约束包装 store；种子幂等测试用）。
-func mustCountAny(t *testing.T, st repository.RuleStore) int64 {
+// 形参收窄到本包的 ruleStore：本包测试不再需要 import 存储实现层。
+func mustCountAny(t *testing.T, st ruleStore) int64 {
 	t.Helper()
 	n, err := st.CountRules(context.Background())
 	require.NoError(t, err)
@@ -592,7 +593,7 @@ func (u *uniqueRuleStore) CreateRule(ctx context.Context, r domain.Rule) (int64,
 	defer u.mu.Unlock()
 	for _, existing := range u.rules {
 		if existing.Name == r.Name || existing.Priority == r.Priority {
-			return 0, fmt.Errorf("%w: priority=%d or name=%q", repository.ErrConflict, r.Priority, r.Name)
+			return 0, fmt.Errorf("%w: priority=%d or name=%q", storeerr.ErrConflict, r.Priority, r.Name)
 		}
 	}
 	r.ID = u.next

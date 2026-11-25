@@ -19,13 +19,21 @@ import (
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/template"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 // ErrNotFound 批量操作中存在性检查失败（缺失 id）。
-var ErrNotFound = errors.New("repository: not found")
+//
+// canonical 定义在 internal/storeerr：哨兵是调用方用来分类的控制流，不该逼
+// rule/sdkbridge 为一次 errors.Is 而 import 整个存储实现层。本处只许**同值别名**
+// （var = storeerr.X），== 与 errors.Is 因此同时成立，包内 40+ 处包裹零改动。
+var ErrNotFound = storeerr.ErrNotFound
 
 // ErrConflict 唯一约束冲突（规则 priority/name 等；service 映射 409）。
-var ErrConflict = errors.New("repository: conflict")
+//
+// 别名理由同 ErrNotFound；在此自建 errors.New 只会造出文案相同的第二个实例，
+// 静默打断 == 同值判定。
+var ErrConflict = storeerr.ErrConflict
 
 // ErrInvalidInput 表示写入会破坏跨实体业务不变量。
 var ErrInvalidInput = errors.New("repository: invalid input")

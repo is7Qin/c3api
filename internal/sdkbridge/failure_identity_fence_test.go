@@ -11,7 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 // configRevisionStore 是"镜像真实 guard"的替身：CAS 只围栏身份代际 K，并以
@@ -53,7 +53,7 @@ func (s *configRevisionStore) FailAccountCAS(_ context.Context, _ int64, expecte
 		return s.casErr
 	}
 	if s.acct.IdentityRevision != expected {
-		return repository.ErrStaleIdentityRevision
+		return storeerr.ErrStaleIdentityRevision
 	}
 	s.acct.LifecycleRevision++
 	s.acct.FailedAt = &failedAt

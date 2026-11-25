@@ -19,7 +19,7 @@ import (
 	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -83,7 +83,7 @@ type Codex struct {
 //
 // **围栏（§3.3b-2 的轮转回写半边）**：写入必须带来源身份代际 K，存储侧以
 // `WHERE … AND account.identity_revision = expected` 提交；命中 0 行 = 这一版
-// 身份已被管理面替换 ⇒ 返回 repository.ErrStaleIdentityRevision，**不是**重试
+// 身份已被管理面替换 ⇒ 返回 storeerr.ErrStaleIdentityRevision，**不是**重试
 // 信号（陈旧轮转不得覆盖新凭据，也不得反过来禁用账号）。
 //
 // 为什么围栏维度不是旧 RT：RT 每轮都轮换，多实例下同一账号的两个 Auth 各自
@@ -1424,7 +1424,7 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
 //     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值），**带存储围栏**：
 //     `expectedIdentityRevision = e.srcRev`（**条目当前**的身份代际），命中 0 行 ⇒
-//     身份已被管理面替换 ⇒ repository.ErrStaleIdentityRevision
+//     身份已被管理面替换 ⇒ storeerr.ErrStaleIdentityRevision
 //
 // 为什么这里可以（也必须）用当前 K：轮转换的是**这个条目自己的** AT/RT，不是某一次
 // 请求的证据。K 只在身份类字段（base_url / template_id / installation）变更时推进
@@ -1467,7 +1467,7 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	defer cancel()
 	err := a.rotate.WriteOAuthRotation(ctx, e.accountID, srcRev, at, rt, e.expiresAt)
 	if err != nil {
-		if errors.Is(err, repository.ErrStaleIdentityRevision) {
+		if errors.Is(err, storeerr.ErrStaleIdentityRevision) {
 			// 存储围栏拒绝：这一版身份已被管理面替换（旧 Auth 在途 refresh 迟到的
 			// 结果）。丢弃即可——新凭据的令牌由新条目自己维护。
 			a.log.Warn("codex rotation writeback rejected by identity fence",

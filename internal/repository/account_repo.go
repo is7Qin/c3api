@@ -19,6 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/proxy"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 type AccountRepo struct {
@@ -415,14 +416,17 @@ func (r *AccountRepo) SetAccountFailed(ctx context.Context, id int64, failedAt t
 }
 
 // ErrStaleRevision CAS 失效：期望 revision 已过期。
-var ErrStaleRevision = fmt.Errorf("%w: stale lifecycle_revision", ErrConflict)
+//
+// canonical 在 internal/storeerr，本处只许同值别名（理由同 batch.go 的 ErrConflict）。
+// 它与 ErrStaleIdentityRevision 是**不同**的 CAS 轴，errors.Is 分支靠文案后缀区分。
+var ErrStaleRevision = storeerr.ErrStaleRevision
 
 // ErrStaleIdentityRevision 失效路径 CAS 失效：期望 identity_revision（K）
 // 已过期。失效事件携带它被计算时所见的 K；K 只由管理面身份写入推进，
 // 故 stale 在此意味着"身份已授权变更，旧判决作废"——与 C 前置条件的
 // ErrStaleRevision（"客户端令牌过期"）语义不同，不得混用（errors.Is
 // 分支靠它区分 K 陈旧与 C 陈旧）。
-var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConflict)
+var ErrStaleIdentityRevision = storeerr.ErrStaleIdentityRevision
 
 // FailAccountCAS 生命周期 fenced 失效：guard K（expectedIdentityRevision）
 // 并原子 +1 C，设置 failed_at/last_error/failure_source。
