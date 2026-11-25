@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func TestQualityRecorder_OwnershipForeignCellRejected(t *testing.T) {
@@ -144,7 +144,7 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(9), qc(9))))
 	// a live consumer row populates the flow minute.
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	snap := r.Snapshot()
 	for _, rows := range snap.Quality {
 		for _, qm := range rows {
@@ -152,7 +152,7 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 		}
 	}
 	for _, fm := range snap.Flow {
-		fm.SetFlowRows([]repository.RoutingFlowRow{ownerTestRow(7777)})
+		fm.SetFlowRows([]qualitymodel.RoutingFlowRow{ownerTestRow(7777)})
 	}
 	snap2 := r.Snapshot()
 	for _, rows := range snap2.Quality {

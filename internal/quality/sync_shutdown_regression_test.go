@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 // TestQualitySync_ShutdownDrainFailureRetainsPending pins the behavior behind
@@ -41,7 +41,7 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
 	// a live row with the same leading account carries the shutdown-drain
 	// contract.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 
@@ -98,13 +98,13 @@ type gatedFailingPG struct {
 	once    sync.Once
 }
 
-func (g *gatedFailingPG) UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error {
+func (g *gatedFailingPG) UpsertQualityRow(ctx context.Context, row qualitymodel.RoutingQualityRow) error {
 	g.once.Do(func() { close(g.entered) })
 	<-g.release
 	return context.DeadlineExceeded
 }
 
-func (g *gatedFailingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error {
+func (g *gatedFailingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []qualitymodel.RoutingFlowRow) error {
 	return context.DeadlineExceeded
 }
 

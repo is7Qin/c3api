@@ -19,14 +19,14 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // routingLateSnapshotDropped 进程级"超期快照被拒并丢弃"计数（判据 B5 的三处
 // 可观测面之一；与 routingLoss 同风格：包级原子计数器 + 只读访问器）。
-// 语义：快照分钟早于观测保留截止（repository.ErrRoutingSnapshotBeyondRetention），
+// 语义：快照分钟早于观测保留截止（qualitymodel.ErrRoutingSnapshotBeyondRetention），
 // 该分钟的链已被保留策略丢弃 → 结清租约不再重试，此处记账。
 var routingLateSnapshotDropped atomic.Int64
 
@@ -49,8 +49,8 @@ const (
 )
 
 type PGQualityWriter interface {
-	UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error
-	UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error
+	UpsertQualityRow(ctx context.Context, row qualitymodel.RoutingQualityRow) error
+	UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []qualitymodel.RoutingFlowRow) error
 }
 
 type SyncConfig struct {
@@ -849,7 +849,7 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 			rows := flowRowsFromMinute(snap, w.instanceSrc, seq)
 			if err := w.pg.UpsertFlowSnapshot(ctx, w.instanceSrc, time.Unix(minute, 0).UTC(), 1, seq, rows); err != nil {
 				rows = nil
-				if errors.Is(err, repository.ErrRoutingSnapshotBeyondRetention) {
+				if errors.Is(err, qualitymodel.ErrRoutingSnapshotBeyondRetention) {
 					// 超期快照是**数据丢失**，不是"旧序号"的幂等 no-op：
 					// 该分钟分区已被 retention DROP，重试永不成功。故可观测地
 					// 丢弃——Warn（带 minute/instance_src）+ 进程计数 + 结清
@@ -1045,7 +1045,7 @@ func isRowDataError(err error) bool {
 
 func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) ([]qRow, error) {
 	for i, r := range chunk {
-		row := repository.RoutingQualityRow{
+		row := qualitymodel.RoutingQualityRow{
 			IdentityVersion:      r.key.IdentityVersion,
 			RouteClassID:         domain.RouteClassIDVal(r.key.RouteClassID),
 			QualityClassID:       domain.QualityClassIDVal(r.key.QualityClassID),
@@ -1132,7 +1132,7 @@ func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *q
 	return nil, append(leftUnpersisted, rightUnpersisted...)
 }
 
-func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []repository.RoutingFlowRow {
+func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []qualitymodel.RoutingFlowRow {
 	if fm == nil {
 		return nil
 	}

@@ -14,13 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 type fakePG struct {
 	mu      sync.Mutex
-	quality []repository.RoutingQualityRow
-	flows   map[string][]repository.RoutingFlowRow
+	quality []qualitymodel.RoutingQualityRow
+	flows   map[string][]qualitymodel.RoutingFlowRow
 	seqs    map[string]int64
 	failAll bool
 	poison  map[string]bool // key = hex fingerprint
@@ -34,17 +34,17 @@ type fakePG struct {
 
 func newFakePG() *fakePG {
 	return &fakePG{
-		flows:  make(map[string][]repository.RoutingFlowRow),
+		flows:  make(map[string][]qualitymodel.RoutingFlowRow),
 		seqs:   make(map[string]int64),
 		poison: make(map[string]bool),
 	}
 }
 
-func (f *fakePG) keyQ(row repository.RoutingQualityRow) string {
+func (f *fakePG) keyQ(row qualitymodel.RoutingQualityRow) string {
 	return hex.EncodeToString(row.CandidateFingerprint[:]) + ":" + row.BucketMinute.String() + ":" + hex.EncodeToString(row.RouteClassID[:])
 }
 
-func (f *fakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *fakePG) UpsertQualityRow(_ context.Context, row qualitymodel.RoutingQualityRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -72,7 +72,7 @@ func (f *fakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQuali
 	return nil
 }
 
-func (f *fakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, terminalMinute time.Time, _ int16, seq int64, rows []repository.RoutingFlowRow) error {
+func (f *fakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, terminalMinute time.Time, _ int16, seq int64, rows []qualitymodel.RoutingFlowRow) error {
 	if f.onFlow != nil {
 		f.onFlow(terminalMinute, seq)
 	}
@@ -88,7 +88,7 @@ func (f *fakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, termi
 	}
 	f.seqs[key] = seq
 	// store deep copy
-	cp := make([]repository.RoutingFlowRow, len(rows))
+	cp := make([]qualitymodel.RoutingFlowRow, len(rows))
 	copy(cp, rows)
 	f.flows[key] = cp
 	return nil
@@ -203,13 +203,13 @@ func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-flow", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 2, Lane: "explore", AccountID: 20, TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 200},
 	}))
 	w.doPG(context.Background())
 	require.GreaterOrEqual(t, len(pg.flows), 1)
-	var got []repository.RoutingFlowRow
+	var got []qualitymodel.RoutingFlowRow
 	for _, rows := range pg.flows {
 		got = rows
 	}
@@ -225,7 +225,7 @@ func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-flow2", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
-	require.NoError(t, foldConsumerRows(rec2.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec2.FlowOwner(), fixed.Unix(), []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
 	}))
 	pg2.failAll = true
@@ -247,7 +247,7 @@ func TestQualitySync_FlowRowsAreLookedUpAndPersisted(t *testing.T) {
 	w.SetClock(func() time.Time { return minute })
 
 	row := flowTestRow(minute, 1, 42, "success", true)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{row}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{row}))
 
 	// When: the owner is read and the flow minute is persisted.
 	got, ok := rec.FlowMinute(minute.Unix())
@@ -257,14 +257,14 @@ func TestQualitySync_FlowRowsAreLookedUpAndPersisted(t *testing.T) {
 
 	// Then: the retained row is emitted to PG.
 	require.False(t, got.IsEmptySnapshot())
-	require.Equal(t, []repository.RoutingFlowRow{row}, got.FlowRows())
-	var persisted []repository.RoutingFlowRow
+	require.Equal(t, []qualitymodel.RoutingFlowRow{row}, got.FlowRows())
+	var persisted []qualitymodel.RoutingFlowRow
 	for _, rows := range pg.flows {
 		persisted = rows
 	}
 	row.InstanceSrc = "empty-then-rows"
 	row.AbsoluteSequence = 1
-	require.Equal(t, []repository.RoutingFlowRow{row}, persisted)
+	require.Equal(t, []qualitymodel.RoutingFlowRow{row}, persisted)
 }
 
 func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
@@ -280,7 +280,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	qm.SetAttempts(10)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
 	// a live row carries the flow publish.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 	w.doRedis(context.Background())
@@ -459,8 +459,8 @@ func TestQualitySync_RoutingTypes(t *testing.T) {
 	var _ PGQualityWriter = (*fakePG)(nil)
 	// check domain types exist
 	_ = domain.RoutingIdentityVersion
-	_ = repository.RoutingQualityRow{}
-	_ = repository.RoutingFlowRow{}
+	_ = qualitymodel.RoutingQualityRow{}
+	_ = qualitymodel.RoutingFlowRow{}
 	// ensure json marshaling of redis payload includes hist
 	k := keyOf(fp(1), qc(1))
 	qm := NewQualityMinute(1000, k)
@@ -549,7 +549,7 @@ func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-fullflow", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
-	rows := []repository.RoutingFlowRow{
+	rows := []qualitymodel.RoutingFlowRow{
 		{
 			IdentityVersion: 1,
 			RouteClassID: func() domain.RouteClassIDVal {
@@ -690,7 +690,7 @@ type blockingPG struct {
 	block chan struct{}
 }
 
-func (b *blockingPG) UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error {
+func (b *blockingPG) UpsertQualityRow(ctx context.Context, row qualitymodel.RoutingQualityRow) error {
 	select {
 	case <-b.block:
 		return nil
@@ -698,7 +698,7 @@ func (b *blockingPG) UpsertQualityRow(ctx context.Context, row repository.Routin
 		return ctx.Err()
 	}
 }
-func (b *blockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error {
+func (b *blockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []qualitymodel.RoutingFlowRow) error {
 	select {
 	case <-b.block:
 		return nil

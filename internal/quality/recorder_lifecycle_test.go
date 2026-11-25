@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func TestQualityRecorder_Complete_HoldsMutex_NoDeadlock(t *testing.T) {
@@ -121,7 +121,7 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(1), qc(1))))
 	// a live consumer row populates the flow minute.
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	snap := r.Snapshot()
 	for _, rows := range snap.Quality {
 		for _, qm := range rows {
@@ -130,7 +130,7 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 		}
 	}
 	for _, fm := range snap.Flow {
-		fm.SetFlowRows([]repository.RoutingFlowRow{ownerTestRow(9999)})
+		fm.SetFlowRows([]qualitymodel.RoutingFlowRow{ownerTestRow(9999)})
 	}
 	snap2 := r.Snapshot()
 	for _, rows := range snap2.Quality {

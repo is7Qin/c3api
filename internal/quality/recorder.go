@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 const (
@@ -255,7 +255,7 @@ func (q *QualityMinute) merge(o *QualityMinute) {
 
 type FlowMinute struct {
 	minute        int64
-	flowRows      []repository.RoutingFlowRow
+	flowRows      []qualitymodel.RoutingFlowRow
 	emptySnapshot bool
 }
 
@@ -274,18 +274,18 @@ func (f *FlowMinute) Minute() int64 { return f.minute }
 //
 // 旧版逐次深拷贝访问器已删：发布/flush 路径全部走独占产物，逐次拷贝纯属多余
 // （压测 heap：FlowRows 深拷 0.69GB/战役），且拷贝掩盖了所有权语义。
-func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
+func (f *FlowMinute) FlowRows() []qualitymodel.RoutingFlowRow {
 	if f == nil {
 		return nil
 	}
 	return f.flowRows
 }
 
-func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
+func (f *FlowMinute) SetFlowRows(rows []qualitymodel.RoutingFlowRow) {
 	if f == nil {
 		return
 	}
-	cp := make([]repository.RoutingFlowRow, len(rows))
+	cp := make([]qualitymodel.RoutingFlowRow, len(rows))
 	for i := range rows {
 		cp[i] = rows[i]
 		if rows[i].PreviousAccountID != nil {
@@ -301,7 +301,7 @@ func (f *FlowMinute) HasFlowRows() bool     { return f != nil && (len(f.flowRows
 func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
 	if f.flowRows != nil {
-		cp.flowRows = make([]repository.RoutingFlowRow, len(f.flowRows))
+		cp.flowRows = make([]qualitymodel.RoutingFlowRow, len(f.flowRows))
 		for i := range f.flowRows {
 			cp.flowRows[i] = f.flowRows[i]
 			if f.flowRows[i].PreviousAccountID != nil {

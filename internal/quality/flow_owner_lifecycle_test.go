@@ -9,14 +9,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func TestFlowAccumulator_InputIndependence(t *testing.T) {
 	prevIn, prevEx := int64(1), int64(2)
-	incoming := []repository.RoutingFlowRow{ownerTestRow(10)}
+	incoming := []qualitymodel.RoutingFlowRow{ownerTestRow(10)}
 	incoming[0].PreviousAccountID = &prevIn
-	existing := []repository.RoutingFlowRow{ownerTestRow(20)}
+	existing := []qualitymodel.RoutingFlowRow{ownerTestRow(20)}
 	existing[0].PreviousAccountID = &prevEx
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
@@ -52,9 +52,9 @@ func TestFlowAccumulator_NoRowCapFoldsExactly(t *testing.T) {
 	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	minute := fixed.Truncate(time.Minute).Unix()
-	kept := []repository.RoutingFlowRow{ownerTestRow(30)}
+	kept := []qualitymodel.RoutingFlowRow{ownerTestRow(30)}
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, kept))
-	over := []repository.RoutingFlowRow{ownerTestRow(40), ownerTestRow(50), ownerTestRow(60)}
+	over := []qualitymodel.RoutingFlowRow{ownerTestRow(40), ownerTestRow(50), ownerTestRow(60)}
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, over))
 	got, ok := rec.FlowMinute(minute)
 	require.True(t, ok)
@@ -127,7 +127,7 @@ func TestRecorder_FinalizationDropsLateFlowFold(t *testing.T) {
 	// dropped (same precedent as TestFlowOwner_FoldRejectsAfterRecorderFinalization).
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	require.NoError(t, rec.Close())
 	foldOneRow(t, rec.FlowOwner(), 100, ownerTestRow(12))
 	stats := rec.FlowOwner().SnapshotStats()

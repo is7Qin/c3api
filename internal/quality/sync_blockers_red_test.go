@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func TestRed_CursorGenerationFencingRedis(t *testing.T) {
@@ -326,12 +326,12 @@ func TestRed_BisectTransientInChunkMustRefill(t *testing.T) {
 }
 
 type retryFakePG struct {
-	quality   []repository.RoutingQualityRow
+	quality   []qualitymodel.RoutingQualityRow
 	failFirst int
 	calls     int
 }
 
-func (f *retryFakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *retryFakePG) UpsertQualityRow(_ context.Context, row qualitymodel.RoutingQualityRow) error {
 	f.calls++
 	if f.calls <= f.failFirst {
 		return context.DeadlineExceeded
@@ -340,6 +340,6 @@ func (f *retryFakePG) UpsertQualityRow(_ context.Context, row repository.Routing
 	return nil
 }
 
-func (f *retryFakePG) UpsertFlowSnapshot(_ context.Context, _ string, _ time.Time, _ int16, _ int64, _ []repository.RoutingFlowRow) error {
+func (f *retryFakePG) UpsertFlowSnapshot(_ context.Context, _ string, _ time.Time, _ int16, _ int64, _ []qualitymodel.RoutingFlowRow) error {
 	return nil
 }

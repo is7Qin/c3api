@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func BenchmarkQualityRecorder(b *testing.B) {
@@ -42,11 +42,11 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 				b.Fatal(err)
 			}
 			for i := range retained {
-				if err := foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{flowTestRow(fixed, 1, int64(i), "success", true)}); err != nil {
+				if err := foldConsumerRows(rec.FlowOwner(), minute, []qualitymodel.RoutingFlowRow{flowTestRow(fixed, 1, int64(i), "success", true)}); err != nil {
 					b.Fatal(err)
 				}
 			}
-			dup := make([]repository.RoutingFlowRow, 0, 8)
+			dup := make([]qualitymodel.RoutingFlowRow, 0, 8)
 			for i := range 8 {
 				dup = append(dup, flowTestRow(fixed, 1, int64(i), "success", true))
 			}
@@ -73,7 +73,7 @@ func BenchmarkFlowRedisPayload(b *testing.B) {
 	rec.now = func() time.Time { return fixed }
 	owner := rec.FlowOwner()
 	m := fixed.Truncate(time.Minute).Unix()
-	rows := make([]repository.RoutingFlowRow, 0, 2000)
+	rows := make([]qualitymodel.RoutingFlowRow, 0, 2000)
 	for i := int64(1); i <= 2000; i++ {
 		rows = append(rows, ownerTestRow(i))
 	}

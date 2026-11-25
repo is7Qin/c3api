@@ -27,7 +27,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 const (
@@ -182,7 +182,7 @@ func materializeShell(shell *foldShell) *FlowMinute {
 			isTerminal      bool
 		}
 		type mergeAcc struct {
-			row repository.RoutingFlowRow
+			row qualitymodel.RoutingFlowRow
 			min int64
 		}
 		merged := make(map[mergeKey]*mergeAcc, len(shell.counts))
@@ -212,7 +212,7 @@ func materializeShell(shell *foldShell) *FlowMinute {
 			}
 			a, ok := merged[mk]
 			if !ok {
-				row := repository.RoutingFlowRow{
+				row := qualitymodel.RoutingFlowRow{
 					IdentityVersion:  int16(k.identityVersion),
 					RouteClassID:     k.route,
 					TerminalMinute:   terminalMinute,
@@ -239,7 +239,7 @@ func materializeShell(shell *foldShell) *FlowMinute {
 				a.row.Generation = k.generation
 			}
 		}
-		fm.flowRows = make([]repository.RoutingFlowRow, 0, len(merged))
+		fm.flowRows = make([]qualitymodel.RoutingFlowRow, 0, len(merged))
 		for _, a := range merged {
 			fm.flowRows = append(fm.flowRows, a.row)
 		}

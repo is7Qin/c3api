@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func foldVal(seed byte) domain.RouteClassIDVal {
@@ -27,14 +27,14 @@ func foldVal(seed byte) domain.RouteClassIDVal {
 // foldOneRow folds one consumer row through the request walk.
 // the Submit queue is gone; a single-fact FoldChain call carries the
 // same row with identical counting.
-func foldOneRow(t *testing.T, o *FlowOwner, minute int64, row repository.RoutingFlowRow) {
+func foldOneRow(t *testing.T, o *FlowOwner, minute int64, row qualitymodel.RoutingFlowRow) {
 	t.Helper()
 	foldRows(t, o, minute, row)
 }
 
 // foldRows folds rows through one request-walk call (Submit successor
 // for tests: same rows, same minute, identical counting).
-func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.RoutingFlowRow) {
+func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...qualitymodel.RoutingFlowRow) {
 	t.Helper()
 	o.FoldChain(minute, len(rows), func(i int) (
 		domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
@@ -57,7 +57,7 @@ func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.Routi
 // primitive the request walk lands on, with identical facts, deltas, and
 // class counters. Post-seal folds land residual exactly like the sealed
 // consumer path did; closed/finalized recorders reject with ErrCapacity).
-func foldConsumerRows(o *FlowOwner, minute int64, rows []repository.RoutingFlowRow) error {
+func foldConsumerRows(o *FlowOwner, minute int64, rows []qualitymodel.RoutingFlowRow) error {
 	if o.closed.Load() || o.rec.finalized() {
 		return ErrCapacity
 	}
@@ -137,7 +137,7 @@ func foldScript(t *testing.T, o *FlowOwner, bucket int64, chains [][]foldScriptE
 	return want
 }
 
-func foldRowsByFact(t *testing.T, rows []repository.RoutingFlowRow) map[attemptFact]int64 {
+func foldRowsByFact(t *testing.T, rows []qualitymodel.RoutingFlowRow) map[attemptFact]int64 {
 	t.Helper()
 	got := make(map[attemptFact]int64)
 	for _, r := range rows {
@@ -211,7 +211,7 @@ func TestFoldCounterFidelity_DeterministicIncrementsEqualChainCounts(t *testing.
 	}
 	// Consumer rows ride the same facts with explicit transitions:
 	// the old-alias "init", "retry", "flow", "plan", plus a rule-ok outcome.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 1, Lane: "primary", AccountID: 91, TransitionReason: "init", Outcome: "ok", IsTerminal: true, Generation: 1, ChainCount: 4},
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "explore", AccountID: 92, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "error", IsTerminal: true, Generation: 1, ChainCount: 2},
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "degraded", AccountID: 93, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "429", TransitionReason: "flow", Outcome: "4xx", IsTerminal: false, Generation: 1, ChainCount: 3},
@@ -421,7 +421,7 @@ func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 		}
 		return foldVal(6), 81, 80, 1, 2, "explore", "429", "success", true, true
 	})
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: foldVal(6), Ordinal: 1, Lane: "degraded", AccountID: 82, TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 3, ChainCount: 1},
 	}))
 

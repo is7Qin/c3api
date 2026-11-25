@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
@@ -23,7 +23,7 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 
 	// Old rows A retained for minute M.
 	m := fixed.Unix()
-	require.NoError(t, foldConsumerRows(owner, m, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(owner, m, []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 1, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 
@@ -33,7 +33,7 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 
 	// Same-minute merge B during the lease: folds into the live accumulator,
 	// bumps the version, stays dirty, exceeds the captured watermark.
-	require.NoError(t, foldConsumerRows(owner, m, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(owner, m, []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 2, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 2, ChainCount: 99},
 	}))
 
@@ -70,11 +70,11 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 	// persist the full cumulative snapshot with advancing sequence.
 	w.doPG(context.Background())
 	require.Empty(t, pg.flows, "clean minute must not re-persist")
-	rowC := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 3, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 3, ChainCount: 7}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowC}))
+	rowC := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 3, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 3, ChainCount: 7}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowC}))
 	w.doPG(context.Background())
-	rowD := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 4, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 4, ChainCount: 11}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowD}))
+	rowD := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 4, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 4, ChainCount: 11}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowD}))
 	w.doPG(context.Background())
 	key := "red-flow-stale:" + fixed.UTC().Truncate(time.Minute).String()
 	pg.mu.Lock()
@@ -100,8 +100,8 @@ func TestRed_FlowCumulativeSnapshotAcrossCycles(t *testing.T) {
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
-	rowA := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
+	rowA := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowA}))
 	w.doPG(context.Background())
 	key := "red-flow-cum:" + fixed.UTC().Truncate(time.Minute).String()
 	pg.mu.Lock()
@@ -111,9 +111,9 @@ func TestRed_FlowCumulativeSnapshotAcrossCycles(t *testing.T) {
 	require.Equal(t, int64(3), first[0].ChainCount)
 
 	// cycle 2: distinct edge B for the same minute must land on top of A
-	rowB := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
+	rowB := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
 	clk = fixed.Add(time.Second)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowB}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowB}))
 	w.doPG(context.Background())
 	pg.mu.Lock()
 	second := pg.flows[key]
@@ -128,7 +128,7 @@ func TestRed_FlowCumulativeSnapshotAcrossCycles(t *testing.T) {
 
 	// cycle 3: same edge identity as A folds into it (sum), never duplicates
 	clk = fixed.Add(2 * time.Second)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowA}))
 	w.doPG(context.Background())
 	pg.mu.Lock()
 	third := pg.flows[key]
@@ -157,8 +157,8 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
-	rowA := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
+	rowA := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowA}))
 	w.doPG(context.Background())
 	failed, retained := rec.FlowMinute(m)
 	require.True(t, retained, "failed delta must stay dirty-retained for next-cycle retry")
@@ -176,10 +176,10 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 	require.Equal(t, int64(3), got[0].ChainCount, "retry after failure must not duplicate the requeued delta")
 
 	// failure after a committed success: B fails, retry must carry A+B once
-	rowB := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
+	rowB := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
 	pg.failAll = true
 	clk = fixed.Add(2 * time.Second)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowB}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowB}))
 	w.doPG(context.Background())
 	pg.failAll = false
 	clk = fixed.Add(3 * time.Second)
@@ -214,14 +214,14 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
-	rowA := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
-	rowB := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
+	rowA := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
+	rowB := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowA}))
 
 	// barrier: merges into the live accumulator exactly while's upsert
 	// is failing (lease active, snapshot already materialized).
 	pg.onFlow = func(time.Time, int64) {
-		_ = foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowB})
+		_ = foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowB})
 	}
 	w.doPG(context.Background())
 	pg.onFlow = nil
@@ -270,7 +270,7 @@ func TestRed_BoundPruneLongLivedMaps(t *testing.T) {
 		qm := NewQualityMinute(minute.Unix(), k)
 		qm.SetAttempts(int64(i + 1))
 		require.NoError(t, rec.EnqueueQualityMinute(qm))
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 			{IdentityVersion: 1, TerminalMinute: minute, Ordinal: 1, Lane: "primary", AccountID: int64(i + 100), TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 		}))
 		// Use barrier for doPG to ensure sequential
@@ -322,7 +322,7 @@ func TestRed_BoundPruneLongLivedMaps(t *testing.T) {
 	qmNew := NewQualityMinute(newMinute.Unix(), kNew)
 	qmNew.SetAttempts(42)
 	require.NoError(t, rec.EnqueueQualityMinute(qmNew))
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), newMinute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), newMinute.Unix(), []qualitymodel.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: newMinute, Ordinal: 1, Lane: "primary", AccountID: 999, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 	done2 := make(chan struct{})

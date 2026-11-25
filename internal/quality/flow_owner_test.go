@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
-func ownerTestRow(account int64) repository.RoutingFlowRow {
-	return repository.RoutingFlowRow{
+func ownerTestRow(account int64) qualitymodel.RoutingFlowRow {
+	return qualitymodel.RoutingFlowRow{
 		IdentityVersion:  int16(domain.RoutingIdentityVersion),
 		Ordinal:          1,
 		Lane:             "primary",
@@ -32,7 +32,7 @@ func TestFlowOwner_SubmissionOwnsRows(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
-	rows := []repository.RoutingFlowRow{ownerTestRow(11)}
+	rows := []qualitymodel.RoutingFlowRow{ownerTestRow(11)}
 	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, 100, rows[0])
 	rows[0].AccountID = 99
@@ -50,7 +50,7 @@ func TestFlowOwner_WalkGuardsBeyondCapEight(t *testing.T) {
 	require.NoError(t, err)
 	ResetFlowChainCountersForTest()
 	owner := rec.FlowOwner()
-	rows := make([]repository.RoutingFlowRow, 100)
+	rows := make([]qualitymodel.RoutingFlowRow, 100)
 	for i := range rows {
 		rows[i] = ownerTestRow(int64(i + 1))
 	}
@@ -151,7 +151,7 @@ func TestFlowOwner_PreservesPreviousAccountPointerOwnership(t *testing.T) {
 func TestFlowMinute_SetFlowRowsCopiesPreviousAccountPointer(t *testing.T) {
 	// Given
 	previous := int64(7)
-	rows := []repository.RoutingFlowRow{ownerTestRow(11)}
+	rows := []qualitymodel.RoutingFlowRow{ownerTestRow(11)}
 	rows[0].PreviousAccountID = &previous
 	fm := &FlowMinute{minute: 100}
 
@@ -173,7 +173,7 @@ func TestFlowOwner_NoRowCapFoldsExactly(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
-	rows := []repository.RoutingFlowRow{ownerTestRow(1), ownerTestRow(2), ownerTestRow(3)}
+	rows := []qualitymodel.RoutingFlowRow{ownerTestRow(1), ownerTestRow(2), ownerTestRow(3)}
 	foldRows(t, owner, 100, rows...)
 	stats := owner.SnapshotStats()
 	require.Equal(t, int64(3), stats.EdgeRowsAccepted)
@@ -223,7 +223,7 @@ func TestFlowOwner_FoldDoesNotAliasInputRows(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	previous := int64(7)
-	incoming := []repository.RoutingFlowRow{ownerTestRow(11)}
+	incoming := []qualitymodel.RoutingFlowRow{ownerTestRow(11)}
 	incoming[0].PreviousAccountID = &previous
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, incoming))
 	incoming[0].AccountID = 99
@@ -235,7 +235,7 @@ func TestFlowOwner_FoldDoesNotAliasInputRows(t *testing.T) {
 	require.Equal(t, int64(11), rows[0].AccountID, "retained rows must not alias the caller's slice")
 	require.Equal(t, int64(1), rows[0].ChainCount, "mutating input rows must not change retained counts")
 	require.Equal(t, int64(7), *rows[0].PreviousAccountID, "retained rows must not alias the caller's pointers")
-	second := []repository.RoutingFlowRow{ownerTestRow(12)}
+	second := []qualitymodel.RoutingFlowRow{ownerTestRow(12)}
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, second))
 	second[0].AccountID = 98
 	after, ok := rec.FlowMinute(100)
@@ -256,7 +256,7 @@ func TestFlowOwnerRedisPayloadCached(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 
 	blob1, state, ok := owner.redisPayload(m)
 	require.True(t, ok)
@@ -273,7 +273,7 @@ func TestFlowOwnerRedisPayloadCached(t *testing.T) {
 	require.Equal(t, reflect.ValueOf(blob1).Pointer(), reflect.ValueOf(blob2).Pointer(),
 		"same version must reuse the cached blob")
 
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(12)}))
 	blob3, _, ok := owner.redisPayload(m)
 	require.True(t, ok)
 	require.NotEqual(t, reflect.ValueOf(blob1).Pointer(), reflect.ValueOf(blob3).Pointer(),
