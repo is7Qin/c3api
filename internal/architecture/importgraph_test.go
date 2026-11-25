@@ -422,6 +422,15 @@ var testFixtureAllow = []string{
 	// + latch 行为），不能搬走。生产边仍由 productionLedger 管——scheduler 的**生产**
 	// 代码没有这条 import（见 internal/scheduler 的规则）。
 	"internal/rulepersist",
+	// P5-4：scheduler 的两条用例要构造**真实**的 codex 传输 adapter——
+	// reconcile_removal_order_test.go 与 compile_quiet_reclaim_test.go 断言的是
+	// "资源回收/静默 reclaim 的顺序与退役时机"，必须让 adapter.Prepare 真的走一遍
+	// 传输路径才成立；换成端口替身等于把用例改成测替身。
+	//
+	// 生产边仍由 productionLedger 管：scheduler 的**生产**代码没有这条 import
+	// （P5-4 已把它从 scheduler 的 allow to 列表里删掉，testFixtureAllow 只加宽
+	// TestImports 口径，不影响 Imports 口径）。
+	"internal/sdkbridge",
 	"pkg/",
 }
 
@@ -633,7 +642,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 18,
+	debtMax: 17,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -653,7 +662,6 @@ var productionLedger = ledger{
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
 		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
-		{"internal/scheduler", "internal/sdkbridge", "scheduler 的生产代码（含 Config.RotatePolicy）已不再命名 sdkbridge 的轮换策略：策略由 internal/identitypool 拥有（Policy 与 DefaultPolicy 是唯一所有者，scheduler 只把它原样放进 Spec）。本边今天的唯一成因是**线程句柄**那一半——selection.Thread() 的返回类型是契约层钉住的 sdkbridge.ThreadHandle（实现一个接口，而不是本包选的类型）。两条判据：策略那一半 `rg -n 'sdkbridge.RotatePolicy' internal/scheduler --glob '!*_test.go'` 为 0 处；句柄那一半 `go list -f '<template: join .Imports>' ./internal/scheduler` 的**直接** import 仍含 internal/sdkbridge。句柄那一半**暂不消除**：它的唯一字段是 SDK 线程机的内部状态类型，构造与状态转移都在 sdkbridge 的线程工厂上，公开性也只由 api.SelectionHandle.Thread 的签名持有；搬到 契约层等于让 api 直接依赖 codexsdk 的线程机内部状态（第一次性原理论证见 P5-2b 修正案 §1；给句柄加别名只换拼写、不减少一条耦合）。它解决之前，本边与这条债都在。", phaseP5},
 	},
 	keep: []legacyRow{
 		{"internal/db/migrate/gen", "internal/repository", "迁移 DDL 生成器（go:generate）必须读取 repository 的 baseline DDL 与 hook 排除项；它是离线工具链、不是运行期包，结构上永不可能消除", phaseKeep},

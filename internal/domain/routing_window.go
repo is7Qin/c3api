@@ -18,13 +18,16 @@ import "time"
 // （落库窗读 + 基线截断），而它**不得**反向依赖 `internal/scheduler`（控制面）。
 //
 // 这条限制今天有**两道**：编译器（`repository → scheduler` 会经
-// `scheduler → sdkbridge → repository` 闭成 import 环）与 allow 矩阵
+// `scheduler → … → sdkbridge → repository` 闭成 import 环）与 allow 矩阵
 // （repository 的 to 白名单里没有 internal/scheduler）。
 //
 // 注意：编译器的这一道**不是**永久的，而且它比"某一条债"更强也更脆：只要存在
 // **任何**一条从 scheduler 到 sdkbridge 的路径，`repository → scheduler` 就会闭成环。
-// 今天是两条——直接依赖 scheduler → sdkbridge（账本 phaseP5 债 575），以及
-// scheduler → internal/api → sdkbridge。这些路径**全部**消失之后，编译器屏障才会
+// P5-4 之后直接的 `scheduler → sdkbridge` 已经不存在（账本债 575 已清偿），
+// 但闭包仍非空：`go list -deps ./internal/scheduler` 实测仍含 internal/sdkbridge，
+// 现存的路径是 scheduler → {internal/api, internal/identitypool} → sdkbridge
+// （api 的 SelectionHandle.Thread 返回 sdkbridge.ThreadHandle；
+// identitypool 持有 *sdkbridge.Threads）。这些路径**全部**消失之后，编译器屏障才会
 // 真的失效，届时拦住反向引用的就只有 allow 矩阵。谁要动矩阵那条规则，必须先回答
 // "为什么 repository 可以直接看控制面"。
 //

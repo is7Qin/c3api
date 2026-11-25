@@ -30,6 +30,13 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
+// ThreadHandle 是线程句柄在本包的公开拼写：本包是线程生命周期的唯一所有者，句柄是它
+// 交出去的间接面。它不是新类型（= SDK 桥的 ThreadHandle，同一个值）：字段构成、构造函数
+// 与全部方法仍由 sdkbridge 拥有——本包只负责"谁在源码里命名它"。
+// 这不算"换入口"：identitypool → sdkbridge 是 P5b 起就存在的边（importgraph 已登记），
+// 本别名不新增任何边；scheduler 因此不再直接依赖 sdkbridge。
+type ThreadHandle = sdkbridge.ThreadHandle
+
 // Session 一个会话：busy 独占标志 + 线程生命周期状态（§3.1 字段表）。
 //
 // 租借（busy.CAS false→true）成功的一方独占全部状态字段直到 release：读写都在
@@ -75,7 +82,7 @@ func (s *Session) Key() string { return s.threadKey }
 
 // Thread 本会话的不透明线程句柄（值语义、可拷贝；零值 = 匿名身份）。只搬运：
 // 任何状态转移都必须经 Step，否则会与持有者并发写同一份 threadState。
-func (s *Session) Thread() sdkbridge.ThreadHandle { return s.h }
+func (s *Session) Thread() ThreadHandle { return s.h }
 
 // Policy 建会话时抄下的轮换策略**只读副本**（策略变化 = 换新会话，所以它恒等于
 // 建会话那一刻池的策略）。抄的是本包归一后的部署策略（见 Policy），不是工厂的

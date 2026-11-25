@@ -8,7 +8,6 @@ import (
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // Selection 是数据面契约（api.Selection）的控制面拼写：别名，不是新类型。
@@ -63,9 +62,9 @@ func (s *selection) Release() {
 // 稳定项、与 session/thread/window 同源），字段拷贝、零分配。
 //
 // 无会话（非 codex / 池缺席 / 会话路径不认领槽位）→ 零值（SDK 视为匿名）。
-func (s *selection) Thread() sdkbridge.ThreadHandle {
+func (s *selection) Thread() identitypool.ThreadHandle {
 	if s == nil || s.session == nil {
-		return sdkbridge.ThreadHandle{}
+		return identitypool.ThreadHandle{}
 	}
 	return s.session.Thread()
 }
