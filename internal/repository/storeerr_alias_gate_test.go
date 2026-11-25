@@ -175,6 +175,14 @@ func TestRepositoryAliasesStoreerrSentinels(t *testing.T) {
 	require.True(t, ErrStaleIdentityRevision == storeerr.ErrStaleIdentityRevision,
 		"ErrStaleIdentityRevision 必须是 storeerr.ErrStaleIdentityRevision 的同值别名，不是文案相同的第二个实例")
 
+	// 文案断言必须同时钉在**本包别名**上：只钉 storeerr 的文案留不住
+	// 「别名换成 errors.New("repository: CONFLICT")」这类变异（文案变了，storeerr 一字未动）。
+	// 与上面的 == 互补：== 抓"新实例、同文案"，文案抓"这是另一枚值且文案也变了"。
+	require.Equal(t, "repository: not found", ErrNotFound.Error())
+	require.Equal(t, "repository: conflict", ErrConflict.Error())
+	require.Equal(t, "repository: conflict: stale lifecycle_revision", ErrStaleRevision.Error())
+	require.Equal(t, "repository: conflict: stale identity_revision", ErrStaleIdentityRevision.Error())
+
 	// (3) 别名的前提：本包至少有一个文件真的 import 了 storeerr。
 	imported := false
 	for _, f := range files {
