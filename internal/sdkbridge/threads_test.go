@@ -90,9 +90,12 @@ func TestThreadHandleZeroValueIsAnonymous(t *testing.T) {
 }
 
 // TestThreadsPolicyRoundTrip 策略是值类型：相等比较即"策略没变"（resize 判据）。
+//
+// 本包**不提供默认值**（P5-2b）：策略的所有者是会话池，默认值随所有权一起搬走，
+// 曾在这里的那条默认值断言也随之搬到 identitypool——默认值只有一处可读，本文件
+// 不再替它作证。
 func TestThreadsPolicyRoundTrip(t *testing.T) {
 	p := RotatePolicy{WMaxLo: 3, WMaxHi: 9}
 	require.Equal(t, p, NewThreads(p).Policy())
 	require.NotEqual(t, p, NewThreads(RotatePolicy{WMaxLo: 3, WMaxHi: 8}).Policy())
-	require.Equal(t, RotatePolicy{WMaxLo: 16, WMaxHi: 48}, DefaultRotatePolicy())
 }

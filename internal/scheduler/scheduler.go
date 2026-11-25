@@ -21,7 +21,6 @@ import (
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/rule"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -41,10 +40,11 @@ var (
 
 type Config struct {
 	SyncInterval time.Duration
-	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：会话池开线程与推进用它
-	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
-	// 随机 span）由 SDK 内部定。
-	RotatePolicy sdkbridge.RotatePolicy
+	// RotatePolicy codex 伪装身份轮换策略：会话池开线程与推进用它采样/演进。
+	// 零值 = Hi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口随机 span）由 SDK
+	// 内部定。类型是**会话池的**（identitypool.Policy）——策略的所有者是池，本包
+	// 只把它原样放进 Spec，不解析、不造默认值（默认值同样归池：DefaultPolicy）。
+	RotatePolicy identitypool.Policy
 	// RetireThread 退役账号某线程的空闲 WS 连接（sdkbridge.ClientTable 实现；nil =
 	// 未接——测试/未装配形态）。线程退休与重载丢槽的唯一出口。
 	//

@@ -22,13 +22,16 @@ import (
 // 白盒（package identitypool）因此不需要为测试导出任何东西。
 
 var (
-	policyA = sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
-	policyB = sdkbridge.RotatePolicy{WMaxLo: 4, WMaxHi: 9}
+	policyA = Policy{Lo: 1, Hi: 3}
+	policyB = Policy{Lo: 4, Hi: 9}
 )
 
-// testPolicy 无退休（WMaxHi 0）——池机制测试用（身份演化另测）。
-func testPolicy() sdkbridge.RotatePolicy {
-	return sdkbridge.RotatePolicy{}
+// testPolicy 无退休（Hi 0）——池机制测试用（身份演化另测）。
+//
+// 零值语义是**契约**：P5-2b 之前它也是零值（SDK 策略的零值），"不退休"由零值脊线
+// 承担，而不是由一个 Default 常量承担。
+func testPolicy() Policy {
+	return Policy{}
 }
 
 // sessionThreadKey 会话当前线程键（不解析：只用于"是否换了线程"的比较）。
@@ -55,11 +58,11 @@ func (r *retireSpy) snapshot() []string {
 }
 
 // newTestPool 构造容量 k 的池（installation "inst"，账号 7）。
-func newTestPool(k int, p sdkbridge.RotatePolicy) *Pool {
+func newTestPool(k int, p Policy) *Pool {
 	return newTestPoolWith(k, p, nil)
 }
 
-func newTestPoolWith(k int, p sdkbridge.RotatePolicy, retire func(int64, string)) *Pool {
+func newTestPoolWith(k int, p Policy, retire func(int64, string)) *Pool {
 	return resizeForTest(nil, Spec{
 		AccountID: 7, K: k, InstallationID: "inst", Policy: p, Retire: retire,
 	})
@@ -100,7 +103,7 @@ func slotIndex(p *Pool, s *Session) int {
 // 就是这两行的唯一调用点。
 func TestSessionRetireReportsOldThreadKey(t *testing.T) {
 	spy := &retireSpy{}
-	pool := newTestPoolWith(1, sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 1}, spy.fn)
+	pool := newTestPoolWith(1, Policy{Lo: 1, Hi: 1}, spy.fn)
 	session := pool.Claim()
 	require.NotNil(t, session)
 	oldKey := sessionThreadKey(session)
@@ -163,7 +166,7 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 // 179 步 vs 97 步）。真正的判据是结构性的一条：迁移后 `np.slots[i]` 就是原来那个
 // `*Session`——同一个句柄、同一份协议状态。剩下只需再验一句"迁移后状态机还活着"。
 func TestResizeSamePolicyKeepsThreadProgress(t *testing.T) {
-	policy := sdkbridge.RotatePolicy{WMaxLo: 2, WMaxHi: 2} // 每线程活 2 个窗口即退休
+	policy := Policy{Lo: 2, Hi: 2} // 每线程活 2 个窗口即退休
 
 	pool := newTestPool(1, policy)
 	session := pool.Claim()
@@ -246,13 +249,13 @@ func TestResizeInstallationChangeRebuildsAllSessions(t *testing.T) {
 func TestSyncIdentityPoolReusesWhenUnchanged(t *testing.T) {
 	p := testPolicy()
 	pool := newTestPool(3, p)
-	spec := func(k int, installation string, policy sdkbridge.RotatePolicy) Spec {
+	spec := func(k int, installation string, policy Policy) Spec {
 		return Spec{AccountID: 7, K: k, InstallationID: installation, Policy: policy}
 	}
 	require.Same(t, pool, syncForTest(pool, spec(3, "inst", p)), "未变复用")
 	require.NotSame(t, pool, syncForTest(pool, spec(4, "inst", p)), "容量变化重建")
 	require.NotSame(t, pool, syncForTest(pool, spec(3, "other", p)), "安装 ID 变化重建")
-	require.NotSame(t, pool, syncForTest(pool, spec(3, "inst", sdkbridge.RotatePolicy{WMaxLo: 2, WMaxHi: 4})), "策略变化重建")
+	require.NotSame(t, pool, syncForTest(pool, spec(3, "inst", Policy{Lo: 2, Hi: 4})), "策略变化重建")
 }
 
 // TestIdentityPoolClaimReleaseNoCrossSession 认领 K 个会话互不相同（不串会话）、
@@ -383,14 +386,14 @@ func TestIdentityPoolResizeBusySlotNotMigrated(t *testing.T) {
 // TestIdentityPoolRotatePolicyImmutable 轮换策略是**池的不可变构造参数**：池与会话
 // 各持同一份只读副本，池的读取不依赖任何会话——兜底路径因此不需要租借。
 func TestIdentityPoolRotatePolicyImmutable(t *testing.T) {
-	p := sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
+	p := Policy{Lo: 1, Hi: 3}
 	pool := newTestPool(3, p)
 	require.Equal(t, p, pool.RotatePolicy(), "池字段 = 构造参数")
 	for _, sl := range pool.slots {
-		require.Equal(t, p, sl.threads.Policy(), "会话持有建会话时的只读副本")
+		require.Equal(t, p.sdk(), sl.threads.Policy(), "会话持有建会话时的只读副本")
 		require.Equal(t, p, sl.Policy(), "Session.Policy 不穿句柄读协议状态以外的东西")
 	}
-	require.Equal(t, sdkbridge.RotatePolicy{}, (&Pool{}).RotatePolicy(),
+	require.Equal(t, Policy{}, (&Pool{}).RotatePolicy(),
 		"空池也按字段回答（不读 slot）")
 }
 
@@ -425,11 +428,11 @@ func TestResizeSamePolicyMigratesSessionPointers(t *testing.T) {
 	for i := range 2 {
 		require.Same(t, old.slots[i], grown.slots[i], "同一策略：按位次迁移会话指针")
 		require.Equal(t, threads[i], sessionThreadKey(grown.slots[i]))
-		require.Equal(t, policyA, grown.slots[i].threads.Policy())
+		require.Equal(t, policyA.sdk(), grown.slots[i].threads.Policy())
 	}
 	for i := 2; i < 4; i++ {
 		require.NotSame(t, old.slots[0], grown.slots[i], "扩容位次是新会话")
-		require.Equal(t, policyA, grown.slots[i].threads.Policy())
+		require.Equal(t, policyA.sdk(), grown.slots[i].threads.Policy())
 	}
 
 	shrunk := resizeForTest(grown, Spec{AccountID: 7, K: 1, InstallationID: "inst", Policy: policyA})
@@ -447,8 +450,8 @@ func TestResizePolicyChangeRebuildsSessions(t *testing.T) {
 	require.Equal(t, 2, next.Len())
 	for i := range 2 {
 		require.NotSame(t, old.slots[i], next.slots[i], "策略变化 ⇒ 新会话")
-		require.Equal(t, policyB, next.slots[i].threads.Policy(), "新会话按新策略构造")
-		require.Equal(t, policyA, old.slots[i].threads.Policy(), "已发布池/会话的策略不被 resize 改写")
+		require.Equal(t, policyB.sdk(), next.slots[i].threads.Policy(), "新会话按新策略构造")
+		require.Equal(t, policyA.sdk(), old.slots[i].threads.Policy(), "已发布池/会话的策略不被 resize 改写")
 		require.Equal(t, policyA, old.RotatePolicy())
 	}
 	require.Equal(t, policyB, next.RotatePolicy())
@@ -488,7 +491,7 @@ func TestResizePolicyReadDuringResize(t *testing.T) {
 		require.Equal(t, policyB, next.RotatePolicy())
 		require.Equal(t, policyA, old.RotatePolicy(), "旧池策略恒定")
 		for _, sl := range old.slots {
-			require.Equal(t, policyA, sl.threads.Policy(), "旧会话策略恒定（resize 不写共享会话）")
+			require.Equal(t, policyA.sdk(), sl.threads.Policy(), "旧会话策略恒定（resize 不写共享会话）")
 		}
 	}
 	close(stop)

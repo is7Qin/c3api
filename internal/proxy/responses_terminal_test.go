@@ -28,7 +28,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -881,7 +881,7 @@ func TestCodexResponsesTruncationDoesNotAdvanceIdentity(t *testing.T) {
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")},
 		up.URL, nil, nil, store,
 		withCodexIdentitySlots(1), // 单槽单会话：thread 只因推进而变化
-		withCodexRotatePolicy(sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
+		withCodexRotatePolicy(identitypool.Policy{Lo: 1, Hi: 1}))
 	srv := httptest.NewServer(AIRouter(p))
 	t.Cleanup(srv.Close)
 

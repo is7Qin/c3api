@@ -133,7 +133,7 @@ func requestPathBuild() {
 }
 
 func requestPathSession() {
-	_ = identitypool.NewSession("inst", identitypool.RotatePolicy{})
+	_ = identitypool.NewSession("inst", identitypool.Policy{})
 }
 
 func buildIdentityPools() {
@@ -141,7 +141,7 @@ func buildIdentityPools() {
 }
 
 func claimCodexSession() {
-	_ = identitypool.NewSession("inst", identitypool.RotatePolicy{})
+	_ = identitypool.NewSession("inst", identitypool.Policy{})
 }
 
 func unrelated() {

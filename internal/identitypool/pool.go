@@ -78,8 +78,9 @@ func (s *Session) Key() string { return s.threadKey }
 func (s *Session) Thread() sdkbridge.ThreadHandle { return s.h }
 
 // Policy 建会话时抄下的轮换策略**只读副本**（策略变化 = 换新会话，所以它恒等于
-// 建会话那一刻池的策略）。
-func (s *Session) Policy() sdkbridge.RotatePolicy { return s.threads.Policy() }
+// 建会话那一刻池的策略）。抄的是本包归一后的部署策略（见 Policy），不是工厂的
+// SDK 策略——本包的导出面不出现 SDK 类型。
+func (s *Session) Policy() Policy { return policyOf(s.threads.Policy()) }
 
 // Busy 会话此刻是否被租借（**只读**：独占协议唯一入口是 Claim/Release，没有 setter）。
 // 观测面用：迁移/收集断言"空闲才动、在飞不碰"。
@@ -90,8 +91,8 @@ func (s *Session) Busy() bool { return s.busy.Load() }
 //
 // 调用点白名单：建池（`buildIdentityPools` 路径上的 Resize/Sync）与全忙兜底的
 // 临时身份（`claimCodexSession`）——请求热路径不得在此之外新开会话（每会话 7 allocs）。
-func NewSession(installationID string, policy sdkbridge.RotatePolicy) *Session {
-	th := sdkbridge.NewThreads(policy)
+func NewSession(installationID string, policy Policy) *Session {
+	th := sdkbridge.NewThreads(policy.sdk())
 	h := th.Open(installationID)
 	return &Session{h: h, threadKey: th.Key(h), threads: th}
 }
@@ -106,8 +107,10 @@ type Pool struct {
 	installationID string
 	accountID      int64
 	// policy 本池的轮换策略（构造后不变）。所有会话按它开线程、按它推进；resize
-	// 比较它与新配置决定"迁移会话指针"还是"开新会话"。
-	policy sdkbridge.RotatePolicy
+	// 比较它与新配置决定"迁移会话指针"还是"开新会话"。存的是本包的 Policy，与
+	// 会话上的只读副本**同一个类型**（比较仍是数值比较）；SDK 形态只在 NewSession
+	// 的构造边界上出现一次（Policy.sdk）。
+	policy Policy
 	// retireThread 退役某线程的空闲 WS 连接（构造期注入；nil = 未接——测试形态）。
 	// 退休与重载丢槽都走它，装配点唯一。
 	retireThread func(accountID int64, threadKey string)
@@ -142,9 +145,9 @@ type hooks struct {
 
 // RotatePolicy 返回本池的轮换策略（**不可变构造参数**：读它不碰任何会话字段，
 // 因此兜底路径/配置比较都可以在租借之外安全读）。
-func (p *Pool) RotatePolicy() sdkbridge.RotatePolicy {
+func (p *Pool) RotatePolicy() Policy {
 	if p == nil {
-		return sdkbridge.RotatePolicy{}
+		return Policy{}
 	}
 	return p.policy
 }
@@ -218,7 +221,7 @@ type Spec struct {
 	AccountID      int64
 	K              int
 	InstallationID string
-	Policy         sdkbridge.RotatePolicy
+	Policy         Policy
 	Retire         func(accountID int64, threadKey string)
 }
 

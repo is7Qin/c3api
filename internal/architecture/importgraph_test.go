@@ -307,10 +307,12 @@ var allowRules = []allowRule{
 	}},
 
 	// 身份池（P5b）：会话池的唯一职责是持有"线程生命周期"，因此它依赖上游 SDK 桥的
-	// **线程值类型/工厂**（sdkbridge.ThreadHandle / Threads / RotatePolicy）；除此之外
-	// 只有 stdlib。它**不知道** scheduler 的任何类型（accountConfig / egress.Client /
-	// 资源批次），反向边由 TestImportGraphProduction 的 allow 矩阵直接拒绝——这条
-	// 规则是本单唯一新增的边，指纹随之显式更新（加宽必须可见）。
+	// **线程机**（sdkbridge.ThreadHandle / Threads）；除此之外只有 stdlib。轮换**策略**
+	// 自 P5-2b 起归本包所有（Policy / DefaultPolicy），SDK 桥只把它当构造参数收——
+	// 这条边不再为"策略"而存在（P5-2b 收窄的是理由，规则与指纹不变）。
+	// 它**不知道** scheduler 的任何类型（accountConfig / egress.Client / 资源批次），
+	// 反向边由 TestImportGraphProduction 的 allow 矩阵直接拒绝——这条规则是 P5b 那单
+	// 唯一新增的边，指纹随之显式更新（加宽必须可见）。
 	{from: "internal/identitypool", to: []string{"internal/sdkbridge"}},
 
 	// 调度：只依赖值类型层 + worker；执行面细节按 P5 收口（见账本）。
@@ -651,7 +653,7 @@ var productionLedger = ledger{
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
 		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
-		{"internal/scheduler", "internal/sdkbridge", "scheduler 仅依赖 sdkbridge 的 RotatePolicy 与 ThreadHandle 值类型；客户端探测已下沉为本包 ClientResources/RetireThread 接口；待 P5 将非契约 SDK 类型从 scheduler 移出后再消除此边", phaseP5},
+		{"internal/scheduler", "internal/sdkbridge", "scheduler 的生产代码（含 Config.RotatePolicy）已不再命名 sdkbridge 的轮换策略：策略由 internal/identitypool 拥有（Policy 与 DefaultPolicy 是唯一所有者，scheduler 只把它原样放进 Spec）。本边今天的唯一成因是**线程句柄**那一半——selection.Thread() 的返回类型是契约层钉住的 sdkbridge.ThreadHandle（实现一个接口，而不是本包选的类型）。两条判据：策略那一半 `rg -n 'sdkbridge.RotatePolicy' internal/scheduler --glob '!*_test.go'` 为 0 处；句柄那一半 `go list -f '<template: join .Imports>' ./internal/scheduler` 的**直接** import 仍含 internal/sdkbridge。句柄那一半**暂不消除**：它的唯一字段是 SDK 线程机的内部状态类型，构造与状态转移都在 sdkbridge 的线程工厂上，公开性也只由 api.SelectionHandle.Thread 的签名持有；搬到 契约层等于让 api 直接依赖 codexsdk 的线程机内部状态（第一次性原理论证见 P5-2b 修正案 §1；给句柄加别名只换拼写、不减少一条耦合）。它解决之前，本边与这条债都在。", phaseP5},
 	},
 	keep: []legacyRow{
 		{"internal/db/migrate/gen", "internal/repository", "迁移 DDL 生成器（go:generate）必须读取 repository 的 baseline DDL 与 hook 排除项；它是离线工具链、不是运行期包，结构上永不可能消除", phaseKeep},

@@ -16,6 +16,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/discovery"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/loadport"
 	"github.com/is7qin/c3api/internal/notify"
@@ -115,7 +116,7 @@ func newHealthFace(d healthDeps) *healthFace {
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
-		RotatePolicy:   sdkbridge.DefaultRotatePolicy(),
+		RotatePolicy:   identitypool.DefaultPolicy(),
 		Egress:         egressPool,
 		// 线程退休与配置批次应用都走同一张表：退线只退役会话线程，账号资源只按
 		// 控制器算好的**资源指令**（保留键集合 / 待删账号 / 批次代号）摘除——

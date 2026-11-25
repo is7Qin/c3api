@@ -8,14 +8,14 @@ Pool size=88 align=8
   cursor atomic.Uint64 offset=24 size=8
   installationID string offset=32 size=16
   accountID int64 offset=48 size=8
-  policy sdkbridge.RotatePolicy offset=56 size=16
+  policy identitypool.Policy offset=56 size=16
   retireThread func(int64, string) offset=72 size=8
   hooks *identitypool.hooks offset=80 size=8
 Spec size=56 align=8
   AccountID int64 offset=0 size=8
   K int offset=8 size=8
   InstallationID string offset=16 size=16
-  Policy sdkbridge.RotatePolicy offset=32 size=16
+  Policy identitypool.Policy offset=32 size=16
   Retire func(int64, string) offset=48 size=8
 Registry size=8 align=8
   Pools map[int64]*identitypool.Pool offset=0 size=8

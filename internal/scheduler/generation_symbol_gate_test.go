@@ -147,6 +147,23 @@ var structFieldSpecs = []structFieldSpec{
 	// K 是在途判据的载体。两者职责分离，不合并。
 	{"internal/domain", "Account",
 		[]string{"LifecycleRevision", "IdentityRevision"}, nil, nil, nil},
+	// P5-2b：identitypool.Policy 是**部署策略**（每条线程活几个窗口），不是代际载体。
+	// 它有两条断言而不是一条，因为它们防的是两个方向：
+	//   - want Lo/Hi：策略的语义字段在位，且这两个名字（而不是斜借 SDK 窗口字段的
+	//     拼写）被显式声明为"非代际"——identitypool 在在途扫描面内，`Lo`/`Hi` 这种
+	//     短名若不被声明，任何一处 `.Lo`/`.Hi` 都会被当成"读账号的 C"命中，于是
+	//     **改策略的人**被迫去读门禁；
+	//   - noFields 是闭集的反方向：策略里不许出现任何代际名字。谁给策略加一个
+	//     `LifecycleRevision` / `IdentityRevision` 字段，本表直接红——"策略携带代际"
+	//     这个错误形状不靠评审发现。
+	// 还有一条隐含断言：gateStructShape 只认 *ast.StructType，所以登记这一行同时
+	// 钉住"Policy 是一个真的结构体"——给 identitypool 加 `type Policy = …` 别名会让
+	// "结构体必须存在"当场失败（策略的所有权不能用一个别名假装搬完）。
+	{"internal/identitypool", "Policy",
+		[]string{"Lo", "Hi"},
+		[]string{"LifecycleRevision", "ExpectedRevision", "MaxLifecycleRevision",
+			"IdentityRevision", "Revision"},
+		nil, nil},
 }
 
 // revisionVocabulary 是本门禁的搜索词表：扫描面上出现的**全部**含 "revision"

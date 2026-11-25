@@ -24,13 +24,14 @@ import codexsdk "github.com/is7Qin/codex-sdk"
 //
 // 这是**部署策略**而不是 wire 语义：宿主有权选"线程活多久"，窗口跨度怎么算仍然在 SDK。
 // 值类型可直接比较——resize 靠它判断"要不要换新会话"。
+//
+// 本包只把这个类型当**输入**（NewThreads 的构造参数）：策略的**所有者**是会话池
+// （identitypool.Policy，含默认值），本包不提供默认值、也不替谁选号码——P5-2b 把
+// 唯一的 DefaultPolicy 连同所有权一起搬过去了，所以这里没有第二个可读的默认值。
 type RotatePolicy struct {
 	WMaxLo uint64
 	WMaxHi uint64
 }
-
-// DefaultRotatePolicy 默认策略（每线程 16–48 个窗口，与 SDK 默认一致）。
-func DefaultRotatePolicy() RotatePolicy { return RotatePolicy{WMaxLo: 16, WMaxHi: 48} }
 
 // toSDK 归一成 SDK 策略。唯一转换点。
 func (p RotatePolicy) toSDK() codexsdk.RotatePolicy {

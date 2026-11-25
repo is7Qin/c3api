@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identitypool"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -181,7 +182,7 @@ func withCodexIdentitySlots(n int) codexRespProxyOption {
 // 用途（G6 “取消不推进”的行为观测）：策略 WMax=1 时，**任何**推进都会在一个
 // 窗口内（48–96 轮）把线程退掉；所以“大量取消之后线程与 window 不变”就是
 // “取消不推进”的可观测形式，不需要读会话私有计数器。
-func withCodexRotatePolicy(p sdkbridge.RotatePolicy) codexRespProxyOption {
+func withCodexRotatePolicy(p identitypool.Policy) codexRespProxyOption {
 	return func(_ *domain.Template, _ *domain.Account, schedCfg *scheduler.Config) { schedCfg.RotatePolicy = p }
 }
 

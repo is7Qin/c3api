@@ -72,6 +72,10 @@ var cmdServerInternalImports = []string{
 	wiringModulePath + "/internal/handler/payment",
 	wiringModulePath + "/internal/handler/paymentadmin",
 	wiringModulePath + "/internal/handler/user",
+	// P5-2b：装配点的轮换策略默认值随所有权搬到会话池（identitypool.DefaultPolicy），
+	// 于是装配根多读一个包。这不是新耦合的方向——identitypool 本来就在装配面的
+	// 下游（scheduler 经 Spec 用它），这里只是把"默认值从哪来"从 SDK 桥换成了所有者。
+	wiringModulePath + "/internal/identitypool",
 	wiringModulePath + "/internal/invalidate",
 	wiringModulePath + "/internal/latch",
 	// 装载端口的中立契约：装配点有一行 `var _ loadport.BatchedGroupLoader = repos.Groups`

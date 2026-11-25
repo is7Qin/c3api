@@ -29,15 +29,15 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identitypool"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // sessionThreadKey 会话当前线程键（不解析：只用于"是否换了线程"的比较）。
 func sessionThreadKey(s *identitypool.Session) string { return s.Key() }
 
-// testPolicy 无退休（WMaxHi 0）——池机制测试用（身份演化另测）。
-func testPolicy() sdkbridge.RotatePolicy {
-	return sdkbridge.RotatePolicy{}
+// testPolicy 无退休（Hi 0）——池机制测试用（身份演化另测）。零值语义是契约：
+// "不退休"由零值脊线承担，而不是由一个 Default 常量承担。
+func testPolicy() identitypool.Policy {
+	return identitypool.Policy{}
 }
 
 // retireSpy 记录线程退役调用（「旧线程被摘」的观测面）。
@@ -59,11 +59,11 @@ func (r *retireSpy) snapshot() []string {
 }
 
 // newTestPool 构造容量 k 的池（installation "inst"，账号 7）。
-func newTestPool(k int, p sdkbridge.RotatePolicy) *identitypool.Pool {
+func newTestPool(k int, p identitypool.Policy) *identitypool.Pool {
 	return newTestPoolWith(k, p, nil)
 }
 
-func newTestPoolWith(k int, p sdkbridge.RotatePolicy, retire func(int64, string)) *identitypool.Pool {
+func newTestPoolWith(k int, p identitypool.Policy, retire func(int64, string)) *identitypool.Pool {
 	return identitypool.Resize(nil, identitypool.Spec{
 		AccountID: 7, K: k, InstallationID: "inst", Policy: p, Retire: retire,
 	}, nil)
