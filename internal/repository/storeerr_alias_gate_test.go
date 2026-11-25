@@ -183,6 +183,17 @@ func TestRepositoryAliasesStoreerrSentinels(t *testing.T) {
 	require.Equal(t, "repository: conflict: stale lifecycle_revision", ErrStaleRevision.Error())
 	require.Equal(t, "repository: conflict: stale identity_revision", ErrStaleIdentityRevision.Error())
 
+	// 跨包 errors.Is 链：别名必须仍能判到 **storeerr 的** ErrConflict。
+	//
+	// 为什么必须是跨包：errors.Is(repository.ErrStaleX, repository.ErrConflict) 在
+	// "stale 与它包裹的 conflict 一起换成新实例"时**仍为 true**（自洽重建），没有判别力。
+	// 只有右侧钉在 storeerr 的 canonical 上，"stale 自己包裹一个新建 conflict 实例"
+	// 这类变异才会暴露：派生链从 canonical 断开，errors.Is 落空。
+	require.True(t, errors.Is(ErrStaleRevision, storeerr.ErrConflict),
+		"errors.Is(ErrStaleRevision, storeerr.ErrConflict) 必须成立：别名的 %%w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
+	require.True(t, errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict),
+		"errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict) 必须成立：别名的 %%w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
+
 	// (3) 别名的前提：本包至少有一个文件真的 import 了 storeerr。
 	imported := false
 	for _, f := range files {
