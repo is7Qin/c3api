@@ -195,9 +195,9 @@ func TestRepositoryAliasesStoreerrSentinels(t *testing.T) {
 	// 只有右侧钉在 storeerr 的 canonical 上，"stale 自己包裹一个新建 conflict 实例"
 	// 这类变异才会暴露：派生链从 canonical 断开，errors.Is 落空。
 	require.True(t, errors.Is(ErrStaleRevision, storeerr.ErrConflict),
-		"errors.Is(ErrStaleRevision, storeerr.ErrConflict) 必须成立：别名的 %%w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
+		"errors.Is(ErrStaleRevision, storeerr.ErrConflict) 必须成立：别名的 %w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
 	require.True(t, errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict),
-		"errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict) 必须成立：别名的 %%w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
+		"errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict) 必须成立：别名的 %w 派生链断开了（stale 不再派生自 canonical ErrConflict）")
 
 	// (3) 别名的前提：本包至少有一个文件真的 import 了 storeerr。
 	imported := false
@@ -307,9 +307,9 @@ func TestStoreerrHoldsCanonicalSentinels(t *testing.T) {
 	// 不用 errors.Is(repository.ErrStaleX, repository.ErrConflict) —— "同一份 errors.New
 	// 自洽重建"时它仍为 true，没有判别力。
 	require.True(t, errors.Is(ErrStaleRevision, storeerr.ErrConflict),
-		"errors.Is(ErrStaleRevision, storeerr.ErrConflict) 必须成立：%%w 派生链断了")
+		"errors.Is(ErrStaleRevision, storeerr.ErrConflict) 必须成立：%w 派生链断了")
 	require.True(t, errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict),
-		"errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict) 必须成立：%%w 派生链断了")
+		"errors.Is(ErrStaleIdentityRevision, storeerr.ErrConflict) 必须成立：%w 派生链断了")
 }
 
 // TestStoreerrAliasConsumersFrozen 断言 (a)：包外、非测试生产代码里**真实引用**（AST
@@ -385,7 +385,10 @@ func TestStoreerrAliasConsumersFrozen(t *testing.T) {
 
 	require.Equal(t, want, gotList,
 		"仍在用 repository 旧名（AST 真实引用，非注释）的生产文件集合变了。\n"+
-			"新增引用 ⇒ 拒绝：新代码必须 import %s，而不是继续用 repository 旧名。\n"+
+			"**表外**新文件引用 ⇒ 拒绝：新代码必须 import %s，而不是继续用 repository 旧名。\n"+
+			"⚠ 本事断只判**文件集合**，不判文件内的引用**次数**：在已登记文件里再多写几处\n"+
+			"   旧名，本门禁不会红（这是 spec §2.4.1(a) 的有意取舍——按次数判会随无关编辑漂移，\n"+
+			"   噪音大于收益）。要收紧就靠评审看 diff，不靠这里。\n"+
 			"纯路径重命名/拆分 ⇒ 更新 storeerrAliasConsumersBaseline 并在提交信息里说明。\n"+
 			"减少 ⇒ 好事，同提交把基线收窄（全部归零后按移除条件删别名）。",
 		storeerrImportPath)
@@ -465,6 +468,13 @@ func storeerrGateParseDir(t *testing.T, root, rel string) []*ast.File {
 }
 
 // storeerrFilterBaselineByExistingRoots 只保留"其顶层扫描根当前存在"的基线条目。
+//
+// **为什么不会开洞**（安全性边界，实测确认）：
+// 过滤的粒度是**顶层段**（internal / cmd / pkg / demo），而基线里 11 条全是 internal/**。
+// internal/ 一旦消失，internal/... 的 22 个包直接编译失败，测试根本跑不起来——所以
+// internal/** 的条目**永远不可能**被本函数"过滤掉"来放行违反者。
+// 唯一实际可被剔除的是 demo/seed/main.go（demo/ 被 .gitignore 忽略，worktree 里不存在）。
+// 实测四种情形：无 demo 绿 / 有 demo 绿 / 新增 demo 消费者红 / 删内部根则编译失败。
 //
 // demo/ 被 .gitignore 忽略，因此 worktree 和干净 clone 里没有它；
 // 而主检出 / 带 demo 的 CI 里有。两种环境都必须能过，所以比对前把
