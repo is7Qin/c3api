@@ -84,6 +84,11 @@ var storeerrAliases = []string{
 // 路径迁移 ⇒ 更新本表并在提交信息里说明"纯重命名"；确认是新增引用 ⇒ 拒绝，新代码必须
 // import storeerr 而不是继续用 repository 旧名。
 var storeerrAliasConsumersBaseline = []string{
+	// demo/ 是 .gitignore 的本地目录（.gitignore:32），worktree / 干净 clone 里**没有**它。
+	// 但它一旦存在就会被本门禁扫到（storeerrConsumerRoots 含 "demo"），所以必须登记：
+	// 否则"本地能过、主检出红"——那是最坏的一类门禁（开发者看不见 CI 的失败）。
+	// 实测确认缺陷：把 demo/ 拷进 worktree 后本测试立刻红（actual 多出 demo/seed/main.go）。
+	"demo/seed/main.go",
 	"internal/rulepersist/rule_persist.go",
 	"internal/service/account_usage.go",
 	"internal/service/ext_codex.go",
@@ -371,7 +376,11 @@ func TestStoreerrAliasConsumersFrozen(t *testing.T) {
 	}
 	sort.Strings(gotList)
 
-	want := append([]string(nil), storeerrAliasConsumersBaseline...)
+	// 基线按**当前实际存在的扫描根**过滤：demo/ 是 .gitignore 的本地目录，
+	// worktree / 干净 clone 里没有它。若不过滤，同一份代码会在
+	// "有 demo" 与 "无 demo" 两种环境下要求不同的基线，必有一边恒红。
+	// 过滤只针对"根目录不存在"，不放宽任何存在的文件。
+	want := storeerrFilterBaselineByExistingRoots(t, root, storeerrAliasConsumersBaseline)
 	sort.Strings(want)
 
 	require.Equal(t, want, gotList,
@@ -452,5 +461,33 @@ func storeerrGateParseDir(t *testing.T, root, rel string) []*ast.File {
 		out = append(out, f)
 	}
 	require.NotEmpty(t, out, "扫描面不得为空（目录写错会让本门禁恒绿）：%s", rel)
+	return out
+}
+
+// storeerrFilterBaselineByExistingRoots 只保留"其顶层扫描根当前存在"的基线条目。
+//
+// demo/ 被 .gitignore 忽略，因此 worktree 和干净 clone 里没有它；
+// 而主检出 / 带 demo 的 CI 里有。两种环境都必须能过，所以比对前把
+// "根不存在"的条目从基线里剔除——注意这不是放宽：只要目录存在，
+// 它里面的文件就必须恰好在基线里（多一个就红）。
+func storeerrFilterBaselineByExistingRoots(t *testing.T, root string, baseline []string) []string {
+	t.Helper()
+	roots := strings.Fields(storeerrConsumerRoots)
+	exists := make(map[string]bool, len(roots))
+	for _, r := range roots {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(r))); err == nil {
+			exists[r] = true
+		}
+	}
+	out := make([]string, 0, len(baseline))
+	for _, p := range baseline {
+		top := p
+		if i := strings.Index(p, "/"); i >= 0 {
+			top = p[:i]
+		}
+		if exists[top] {
+			out = append(out, p)
+		}
+	}
 	return out
 }
