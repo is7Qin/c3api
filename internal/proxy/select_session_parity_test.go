@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -60,7 +61,7 @@ func TestSelectSessionParity_threadedFailoverSequence(t *testing.T) {
 	for range 3 {
 		nextSel, nextAttempt, err := p.selectNextWithPlan(&plan)
 		if err != nil {
-			require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
+			require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 			got = append(got, "ERR:exhausted")
 			break
 		}

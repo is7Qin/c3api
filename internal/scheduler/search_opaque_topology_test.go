@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -41,11 +42,11 @@ func TestSearchRouteTopologyPreserved(t *testing.T) {
 
 	// Search 桶不存在：直接 Select(Search) 恒 404，不回退
 	_, err = s.Select(10, domain.FormatOpenAISearch, "gpt-4o")
-	require.ErrorIs(t, err, ErrFormatUnavailable, "移除 Search 桶后 Search 格式不可用，无回退")
+	require.ErrorIs(t, err, api.ErrFormatUnavailable, "移除 Search 桶后 Search 格式不可用，无回退")
 
 	// SelectOpaque(Search) 同样 404（无 Search 桶），证明 topology 未扩增
 	_, err = s.SelectOpaque(10, domain.FormatOpenAISearch, "gpt-4o")
-	require.ErrorIs(t, err, ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrFormatUnavailable)
 
 	// 历史可用性：Search 经 Responses 桶仍可选
 	sel3, err := s.SelectOpaque(10, domain.FormatOpenAIResponses, "gpt-4o")

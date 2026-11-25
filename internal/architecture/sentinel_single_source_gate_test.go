@@ -31,11 +31,11 @@ import (
 //
 //   - canonical 恰好 8 处，右值是 `errors.New(...)`，落点严格等于
 //     sentinelCanonicalTable（internal/identityfence ×3、internal/api ×5）；
-//   - 别名恰好 11 处，右值是**单一**选择器 `X.ErrName`，X 必须按 **import 路径**
+//   - 别名恰好 8 处，右值是**单一**选择器 `X.ErrName`，X 必须按 **import 路径**
 //     解析到该行的 canonical 包（不是按拼写：`fence "…/identityfence"` 同样算，
 //     判据是"值从哪个包来"），且 Sel 与声明的名字同名；落点严格等于
-//     sentinelAliasTable（internal/sdkbridge ×3、internal/scheduler ×3 + ×5）；
-//   - 除这 19 处之外全仓零命中：第三种形状——引用局部变量、字面量、别的构造函数、
+//     sentinelAliasTable（internal/sdkbridge ×3、internal/scheduler ×3）；
+//   - 除这 16 处之外全仓零命中：第三种形状——引用局部变量、字面量、别的构造函数、
 //     只有类型没有右值——必须为 0；
 //   - 防空转：扫到的非测试 .go 文件数不低于 sentinelFileFloor，三个扫描根各自都
 //     扫到了文件，8 个名字全部被找到。
@@ -45,17 +45,16 @@ import (
 //
 // # 为什么值/文案断言不够
 //
-// 现存的等价断言（internal/scheduler/errors_compat_test.go 的 `scheduler.ErrX ==
-// api.ErrX` + 双向 errors.Is + 逐字文案、internal/identityfence/ownership_gate_test.go
-// 的"只许别名 + 转发形状"）全部是**按引用跟随**的：它们写在两个具体位置上，两端指的
+// 现存的等价断言（internal/proxy/error_mapping_test.go 直接拿 api.ErrX 喂数据面映射、
+// internal/identityfence/ownership_gate_test.go 的"只许别名 + 转发形状"）全部是**按引用跟随**的：它们写在两个具体位置上，两端指的
 // 是同一个符号，所以"别处又声明了一份"根本不进视线。更糟的是失效方向恰好是最危险的
 // 那个：第二份声明出现时，只要没人用错那一份，所有等价/文案断言继续绿——而一旦有人
 // 用错，errors.Is 静默失配，代码早就跑偏了，那时才发现已经晚了。
 //
 // 现有那几道门禁还有结构性的盲区：ownership_gate_test.go 只钉 internal/identityfence、
 // internal/scheduler/candidate_identity.go、internal/sdkbridge/failure.go 三个**具体
-// 位置**；errors_compat_test.go 只钉 scheduler ↔ api 这一对；
-// proxy/runtime_sentinel_scope_gate_test.go 只钉"数据面不引用 scheduler.ErrX"。没有
+// 位置**；proxy/runtime_sentinel_scope_gate_test.go 只钉"数据面不引用 scheduler.ErrX"，
+// 且五条运行期哨兵自 P5 收口后 scheduler 侧已无别名、它扫生产代码只剩一致性证据。没有
 // 任何一条覆盖"第四个包又写了一份"——而"别处再声明一份"正是值断言看不见的那一格。
 //
 // `fmt.Errorf("%w", api.ErrNoAvailable)` 是这条路径上最隐蔽的形态：双向 errors.Is 都
@@ -63,31 +62,30 @@ import (
 // 它既不是单一选择器、也不是 errors.New，于是同时让别名计数掉一条、并在"第三种形状"
 // 上报出 file:line。
 //
-// 一句话：值断言证明"这两处相等"，本门禁证明"全仓只有这 19 处"。前者是必要条件，
+// 一句话：值断言证明"这两处相等"，本门禁证明"全仓只有这 16 处"。前者是必要条件，
 // 后者才是单一来源的充分表达。
 //
 // # 三类断言缺一不可（各抓一个不同的失效方向）
 //
-//  1. 落点表（8 canonical / 11 别名）：抓"搬走"与"分裂"。少一处 ⇒ 哨兵被删或搬到了
+//  1. 落点表（8 canonical / 8 别名）：抓"搬走"与"分裂"。少一处 ⇒ 哨兵被删或搬到了
 //     表外；多一处 ⇒ 第二份声明。两者都让「包目录 + 名字」集合与表不等。
 //  2. 形状（canonical = errors.New；别名 = 单一选择器 + 主语解析到该行的 canonical
 //     包 + 同名）：抓"照抄文案的等值副本"。文案一字不差也会红，因为判据是**谁造的
 //     值**，不是字符串；`fmt.Errorf("%w", …)` 这种"errors.Is 成立但值身份变了"的
 //     写法也在这里被挡住。
-//  3. 19 处之外零命中：前两条按形状分桶，而形状之外的声明**从不属于任何一桶**——只
+//  3. 16 处之外零命中：前两条按形状分桶，而形状之外的声明**从不属于任何一桶**——只
 //     数两桶条数会把 `var ErrX error` / `var ErrX = pickOne()` / 表外目录里的
-//     `var ErrX = api.ErrX` 全部静默漏掉。这条把"总数 19"与"第三种形状为 0"分别钉住，
-//     其中 19 是手抄常量而不是 len(表)+len(表)：后者恒真，等于没有断言。
+//     `var ErrX = api.ErrX` 全部静默漏掉。这条把"总数 16"与"第三种形状为 0"分别钉住，
+//     其中 16 是手抄常量而不是 len(表)+len(表)：后者恒真，等于没有断言。
 //
 // # 加一个新哨兵时必须同时改哪张表
 //
 //   - canonical：往 sentinelCanonicalTable 加一行（包目录 + 名字）；
 //   - 每个别名：往 sentinelAliasTable 加一行（包目录 + 名字 + 该行 canonical 包路径）；
-//   - sentinelTotalDecls 加 1；
-//   - 若新哨兵不在现在的 8 个名字里，sentinelNames 也要加——否则扫描器根本不看它。
+//   - sentinelTotalDecls 加 1；//     从"别名"变成"包内 var = api.ErrX"，总数仍是 16；操作恰好相反时它们会被当成第三种形状报出）；
 //
 // 诚实边界：表是常量，有意同时改表与代码的改动在机械上完全合法。门禁的作用是让这类
-// 改动**不可静默**——它必须让 8 / 11 / 19 三个数在 diff 里同时出现，评审看得见理由，
+// 改动**不可静默**——它必须让 8 / 8 / 16 三个数在 diff 里同时出现，评审看得见理由，
 // 而不是不可发生。这与 importgraph_test.go 的 allow 指纹是同一类 tripwire。
 //
 // # 扫描口径
@@ -105,12 +103,12 @@ const (
 	// （internal 695 / cmd 22 / pkg 18）；取 500 ≈ 实测的 68%，留出合包与删文件的
 	// 空间，但不允许扫描面塌掉（遍历被写死成只扫一个根、跳过名单写过头吃掉整棵
 	// internal 子树、模块根定位错位）。真正的防漏是下面三条互补的断言：三个根各自
-	// 扫到文件、8 个名字全部命中、19 处严格相等。
+	// 扫到文件、8 个名字全部命中、16 处严格相等。
 	sentinelFileFloor = 500
 
-	// sentinelTotalDecls = 8 处 canonical + 11 处别名。故意手抄成常量，不写成
+	// sentinelTotalDecls = 8 处 canonical + 8 处别名。故意手抄成常量，不写成
 	// len(sentinelCanonicalTable) + len(sentinelAliasTable)：后者恒真，等于没有断言。
-	sentinelTotalDecls = 19
+	sentinelTotalDecls = 16
 
 	sentinelErrorsImportPath = "errors"
 	sentinelAPIImportPath    = modulePath + "internal/api"
@@ -173,7 +171,7 @@ var sentinelCanonicalTable = []sentinelRow{
 	{dir: "internal/api", name: "ErrAttemptsExhausted"},
 }
 
-// sentinelAliasTable：别名的 11 个落点。右值必须是单一选择器、同名、且主语解析到
+// sentinelAliasTable：别名的 8 个落点。右值必须是单一选择器、同名、且主语解析到
 // pkg 指定的 canonical 包——三者同时成立才算"同一 error 值"。
 var sentinelAliasTable = []sentinelRow{
 	// internal/sdkbridge/failure.go 的三条身份哨兵（P3c 起只许别名）。
@@ -181,12 +179,19 @@ var sentinelAliasTable = []sentinelRow{
 	{dir: "internal/sdkbridge", name: "ErrCandidateFingerprintMismatch", pkg: sentinelFenceImportPath},
 	{dir: "internal/sdkbridge", name: "ErrMissingExpectedRevision", pkg: sentinelFenceImportPath},
 
-	// internal/scheduler/candidate_identity.go 的三条身份哨兵（迁移期兼容层）。
-	{dir: "internal/scheduler", name: "ErrMissingCandidateFingerprint", pkg: sentinelFenceImportPath},
-	{dir: "internal/scheduler", name: "ErrCandidateFingerprintMismatch", pkg: sentinelFenceImportPath},
-	{dir: "internal/scheduler", name: "ErrMissingExpectedRevision", pkg: sentinelFenceImportPath},
+	// internal/scheduler/candidate_identity.go 的三条身份哨兵自 P5 收口起**不再有别名**（迁移期兼容层已删）：
+	// scheduler 包内与数据面一律直接引用 `identityfence.ErrX`。它们再出现包级声明
+	// 就是表外命中（下面的"16 处之外零命中"会当场报出）。
 
-	// internal/scheduler/errors_compat.go 的五条运行期哨兵（P3c I-B 的兼容层）。
+	// 五条运行期哨兵（ErrGroupNotFound 一族）的 canonical 只住在 internal/api。
+	// 下面 5 处是 internal/scheduler 的**包内拼写**（scheduler 是这五条的唯一生产方：
+	// attempt_plan_reservation.go / attempt_plan_exec.go），右值是单一选择器 `api.ErrX`，
+	// 与 api canonical 是同一 error 值。
+	//
+	// 它们**不是**迁移期兼容层：数据面的生产代码与测试已一律直指 `api.ErrX`
+	// （由 internal/proxy/runtime_sentinel_scope_gate_test.go 守）。这 5 处之所以还在，
+	// 是因为 scheduler 包内 45 处调用点用短名；任何**新增**的包级别名都是表外声明，
+	// 本条门禁会当场报出——包括有人把别名加回 internal/sdkbridge 或 internal/proxy。
 	{dir: "internal/scheduler", name: "ErrGroupNotFound", pkg: sentinelAPIImportPath},
 	{dir: "internal/scheduler", name: "ErrFormatUnavailable", pkg: sentinelAPIImportPath},
 	{dir: "internal/scheduler", name: "ErrPlanNotReady", pkg: sentinelAPIImportPath},
@@ -259,8 +264,8 @@ func TestSentinelSingleSource(t *testing.T) {
 			strings.Join(missing, "\n  "))
 	})
 
-	// ③ 别名：恰好 11 处单一选择器，同名，主语解析到该行的 canonical 包。
-	t.Run("别名_恰好11处单一选择器且指向canonical包", func(t *testing.T) {
+	// ③ 别名：恰好 8 处单一选择器，同名，主语解析到该行的 canonical 包。
+	t.Run("别名_恰好8处单一选择器且指向canonical包", func(t *testing.T) {
 		aliases := sentinelByKind(decls, sentinelKindAlias)
 		require.Equalf(t, len(sentinelAliasTable), len(aliases),
 			"别名必须恰好 %d 处（`var ErrX = canonicalPkg.ErrX`），实测 %d 处。\n"+
@@ -291,10 +296,10 @@ func TestSentinelSingleSource(t *testing.T) {
 		}
 	})
 
-	// ④ 19 处之外零命中：总数手抄常量 + 第三种形状为 0。
-	t.Run("19处之外全仓零命中", func(t *testing.T) {
+	// ④ 16 处之外零命中：总数手抄常量 + 第三种形状为 0。
+	t.Run("16处之外全仓零命中", func(t *testing.T) {
 		require.Equalf(t, sentinelTotalDecls, len(decls),
-			"这 8 个名字全仓只许有 %d 处包级声明（8 canonical + 11 别名），实测 %d 处。\n"+
+			"这 8 个名字全仓只许有 %d 处包级声明（8 canonical + 8 别名），实测 %d 处。\n"+
 				"  全部命中：\n%s", sentinelTotalDecls, len(decls), sentinelDescribe(decls))
 
 		var others []string

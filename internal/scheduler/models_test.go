@@ -22,7 +22,7 @@ func TestGroupModels(t *testing.T) {
 	require.NoError(t, re.Reload(context.Background()))
 	s := New(testCfg(), newMemLoader(nil), re, nil, nil, nil, nil)
 	_, ok := s.GroupModels(10)
-	require.False(t, ok, "快照未加载 → false（同 Select 的 ErrGroupNotFound 守卫）")
+	require.False(t, ok, "快照未加载 → false（同 Select 的 api.ErrGroupNotFound 守卫）")
 
 	// 已加载：gpt-4o 跨三格式（chat/responses/images）重复必须去重；空组 20 在
 	// 快照内（无账号组保留空条目）→ 空列表 ok。

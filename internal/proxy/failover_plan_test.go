@@ -11,8 +11,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
@@ -137,18 +139,18 @@ func TestFailoverPlan_AttemptsExhaustedVsNoAvailable(t *testing.T) {
 	// unroutable model — ErrPlanNotReady (503), not ErrFormatUnavailable.
 	// The genuinely-unroutable 404 is locked by scheduler_test.go:456,471,490,534
 	// on compiled schedulers.
-	require.ErrorIs(t, err, scheduler.ErrPlanNotReady)
+	require.ErrorIs(t, err, api.ErrPlanNotReady)
 	// create empty decision plan directly
 	emptyPlan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{})
 	require.NoError(t, err)
 	_, err = emptyPlan.Reserve(func(int64) bool { return true })
-	require.ErrorIs(t, err, scheduler.ErrNoAvailable)
-	require.NotErrorIs(t, err, scheduler.ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrNoAvailable)
+	require.NotErrorIs(t, err, api.ErrAttemptsExhausted)
 	fullPlan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 1}}})
 	require.NoError(t, err)
 	_, err = fullPlan.Reserve(func(int64) bool { return false })
-	require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
-	require.NotErrorIs(t, err, scheduler.ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
+	require.NotErrorIs(t, err, api.ErrNoAvailable)
 }
 
 func TestFailoverPlan_ReservationRejectionDoesNotConsumeDispatch(t *testing.T) {
@@ -262,7 +264,7 @@ func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
 	// still be reservable — no truncation, no false exhaustion.
 	loader := p.sched.Loader().(noopLoader)
 	for _, a := range loader.accs[10][:2] {
-		fp, err := scheduler.CandidateFingerprint(a)
+		fp, err := identityfence.CandidateFingerprint(a)
 		require.NoError(t, err)
 		require.True(t, p.sched.TryLatch(a.ID, fp, a.IdentityRevision))
 	}
@@ -360,7 +362,3 @@ func planIdentityCandidateCount(p scheduler.AttemptPlan) int {
 }
 
 func init() { _ = strings.Contains }
-
-// ensure compile reference to scheduler errors
-var _ = scheduler.ErrAttemptsExhausted
-var _ = scheduler.ErrNoAvailable

@@ -10,6 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
@@ -82,15 +83,15 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp, 1))
-	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
+	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → api.ErrAttemptsExhausted（旧“路由空 → api.ErrNoAvailable”已废止）
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
 	require.True(t, ls.IsLatched(1, fp, 1))
 	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	// C 是**客户端 CAS 令牌**，不是在途围栏：只推进 C 不得清锁存
 	// （四代模型：C 不围栏在途工件；这正是它与 K 职责分离的意义）。
 	m.byGroup[10][0].LifecycleRevision = 2

@@ -27,9 +27,9 @@ import (
 // 让 identityfence 反向 alias scheduler，集合门禁**看不见**。本文件把四件事钉成 AST 断言：
 //
 //	(a) 三个哨兵的 errors.New 与 CandidateFingerprint 的**实现体**必须在本包；
-//	(b) internal/scheduler/candidate_identity.go 里这三个名字只能是 `identityfence.ErrX`
-//	    的赋值，两个函数体只能是单条 `return identityfence.X(...)`（别名必须是**同一
-//	    error 值**，不是 fmt.Errorf 重建——重建会让 errors.Is 判等断裂）；
+//	(b) internal/scheduler/candidate_identity.go 里这三个名字**不得再出现包级声明**
+//	    （P5 收口已删迁移期别名；再出现一条 = 第二份实现回流），两个函数体只能是单条
+//	    `return identityfence.X(...)`（转发必须是同一个 canonical 值来源，不是 fmt.Errorf 重建）；
 //	(c) 该文件内不许出现 errors.New，且任何函数体都不许有第二个语句；
 //	(d) internal/sdkbridge/failure.go 里这三个名字同样只能是 `identityfence.ErrX` 的
 //	    别名，且整包不再自建它们（P3c 前的反方向现状钉死已按 P5-1 v3.3 §G 删除）。
@@ -204,13 +204,16 @@ func TestCanonicalOwnershipLivesHere(t *testing.T) {
 		"CandidateFingerprint 必须 wrap 本包的 ErrMissingCandidateFingerprint（缺身份字段的分类不许退化）")
 }
 
-// TestSchedulerKeepsOnlyAliasesAndForwards 是判据 (b)：scheduler 侧只剩别名 + 单条转发。
+// TestSchedulerKeepsOnlyAliasesAndForwards 是判据 (b)：scheduler 侧只剩**单条转发**，零包级哨兵声明。
 func TestSchedulerKeepsOnlyAliasesAndForwards(t *testing.T) {
 	root := fenceModuleRoot(t)
 	files := fenceParseDir(t, root, "internal/scheduler")
 	target := fenceFileByName(t, root, "internal/scheduler", "candidate_identity.go")
 
-	// 三个名字：恰好一处 ValueSpec，值是 identityfence.<同名>。
+	// 三个名字：**零处**包级 var。P5 收口前这里是"恰好一处 `var ErrX = identityfence.ErrX`"；
+	// 别名层已删，本包与数据面直接引用 `identityfence.ErrX`。为什么不是"删掉断言就完事"：
+	// 反方向的漂移——把哨兵又声明一份到 scheduler（哪怕右值仍是 identityfence）——
+	// 是一层不必要的间接；本条保证它不会静默回流。
 	aliased := map[string]int{}
 	for _, d := range target.Decls {
 		gd, ok := d.(*ast.GenDecl)
@@ -231,17 +234,15 @@ func TestSchedulerKeepsOnlyAliasesAndForwards(t *testing.T) {
 				continue
 			}
 			require.Equal(t, vs.Names[0].Name, sel.Sel.Name,
-				"别名必须指向同名哨兵（%s = identityfence.%s）：换名意味着两枚不同的 error 值",
+				"万一又出现这个赋值，它至少必须指向同名哨兵（%s = identityfence.%s）：换名意味着两枚不同的 error 值",
 				vs.Names[0].Name, vs.Names[0].Name)
 			aliased[vs.Names[0].Name]++
 		}
 	}
-	require.Equal(t, map[string]int{
-		"ErrMissingCandidateFingerprint":  1,
-		"ErrCandidateFingerprintMismatch": 1,
-		"ErrMissingExpectedRevision":      1,
-	}, aliased,
-		"三个哨兵在 scheduler 里必须**恰好各有一次** `var ErrX = identityfence.ErrX`：0 = 名字被搬走或改指；2 = 别名分裂")
+	require.Empty(t, aliased,
+		"这三个哨兵在 scheduler 里必须**零处**包级声明：别名层已随 P5 收口删除（实测 %d 处：%v）。\n"+
+			"哨兵 canonical 只能在 identityfence，本包与数据面请直接写 identityfence.ErrX",
+		len(aliased), aliased)
 
 	// 两个函数：单条 return identityfence.CandidateFingerprint(a)。
 	for _, name := range []string{"candidateFingerprint", "CandidateFingerprint"} {
@@ -351,7 +352,7 @@ func TestSdkbridgeAliasesIdentityfenceSentinels(t *testing.T) {
 				continue
 			}
 			require.Equal(t, vs.Names[0].Name, sel.Sel.Name,
-				"别名必须指向同名哨兵（%s = identityfence.%s）：换名意味着两枚不同的 error 值",
+				"万一又出现这个赋值，它至少必须指向同名哨兵（%s = identityfence.%s）：换名意味着两枚不同的 error 值",
 				vs.Names[0].Name, vs.Names[0].Name)
 			aliased[vs.Names[0].Name]++
 		}

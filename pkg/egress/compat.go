@@ -28,12 +28,33 @@ import "github.com/is7qin/c3api/pkg/egressapi"
 // 这一层存在时要防止的事。同理，`Pool` / `NewPool` / `NewClient` / `CloseClients`
 // **不在这里**——它们是实现，不是值类型，归属本包的 pool.go。
 //
-// 移除条件（可执行；条件未满足前**禁止删除**）：
+// 移除条件（可执行；条件未满足前**禁止删除**）：全仓（除 pkg/egress 自身）
+// 对这六个名字的**真实类型引用为零**。"真实引用"的口径是：
 //
-//	rg -n 'egress\.(Spec|Client|Flavour|FlavourHTTP|FlavourNoCompression|ResourceKey)' --glob '!pkg/egress/**'
+//   - 只算代码：注释（`//` 与 `/* */`）、字符串字面量与 raw string 里出现的拼写**不算**——
+//     注释里写 `egress.Client` 是合法的叙述；
+//   - 只算 `egress.` 这个限定符：`egressapi.` / `*egress.Pool` / 字段名 `Egress` 均不算；
+//   - 算在上面六个名字上；`New` 与实现符号（`Pool` / `NewPool` / `NewClient` /
+//     `CloseClients`）生命周期另有归属，不在本条件内。
 //
-// 无命中时删掉本文件的 type/const/forwarder；`New`（值层构造点）与实现符号的生命
-// 周期另有归属，不在本条件内。
+// **当前实测（基 ec731934）：真实引用 54 处**——`Client` 45 / `Spec` 8 / `ResourceKey` 1；
+// 分布在：internal/sdkbridge 44（其中 20 在用例）、internal/proxy 4（**全在用例**）、
+// internal/domain 3、internal/service 2、internal/api 1。主要集中在 sdkbridge：
+// codex.go / call.go / bps.go 直接拿 `egress.Client` 当适配器类型用。
+// 距离零还差这 54 处（占绝大多数），条件**远未满足**。
+//
+// 为什么把口径写死在“真实引用”而不是直接用 `rg` 的原始计数：原来那条命令把
+// 注释也算进去（原始 70 命中 vs 真实 54），两个方向都会误导：一方面"命中更多所
+// 以更不行"是错的推理；另一方面注释里写 `egress.Client` 是合法文档行为，
+// 按原口径"零命中"永远不可能达到——那条件会永久把本文件锁死。
+//
+// 执行口径参考（计数时排除注释行与字符串；`rg` 本身做不到“排除字符串”，
+// 故需要一次 AST/扁平化处理，而不是一场 `rg | wc -l`）：
+//
+//	rg -n 'egress\.(Spec|Client|Flavour|FlavourHTTP|FlavourNoCompression|ResourceKey)\b' --glob '!pkg/egress/**' -g '*.go'
+//
+// 然后把注释行（以 `//` 开头）与命中位于字符串内的行剔除；剩下为零时删掉本文件的
+// type/const/forwarder。
 type (
 	// Spec 见 pkg/egressapi.Spec（同一类型）。
 	Spec = egressapi.Spec

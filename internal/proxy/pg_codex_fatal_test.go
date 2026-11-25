@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
@@ -123,7 +124,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "重启快照重载后仍摘除")
 	_, err = sched.Select(g.ID, domain.FormatOpenAIResponsesWS, "gpt-4o")
-	require.ErrorIs(t, err, scheduler.ErrNoAvailable, "失效账号不可调度")
+	require.ErrorIs(t, err, api.ErrNoAvailable, "失效账号不可调度")
 
 	// ④ 失效恢复（管理面 fenced 唯一入口）：RecoverAccountCAS 清 failed_at +
 	// last_error 双清（恢复断言）+ 调度恢复 active 重服务

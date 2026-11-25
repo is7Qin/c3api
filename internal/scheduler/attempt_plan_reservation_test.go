@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -115,7 +116,7 @@ func TestSchedulerReserveAttemptUsesClusterBorrowSnapshotOnce(t *testing.T) {
 func TestSchedulerNewAttemptPlanRejectsMissingExactRoute(t *testing.T) {
 	s := newTestScheduler(t, []*domain.Account{acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 1)})
 	_, err := s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "missing"))
-	require.ErrorIs(t, err, ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrFormatUnavailable)
 }
 
 // Compile-lag sentinel: static faces warm but no decision published yet →
@@ -125,10 +126,10 @@ func TestSchedulerNewAttemptPlanPlanNotReady(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestSchedulerStatic(t, []*domain.Account{acc(1, tplx, 1)})
 	_, err := s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "m"))
-	require.ErrorIs(t, err, ErrPlanNotReady)
-	require.NotErrorIs(t, err, ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrPlanNotReady)
+	require.NotErrorIs(t, err, api.ErrFormatUnavailable)
 	_, err = s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(99, string(domain.FormatOpenAIChat), "m"))
-	require.ErrorIs(t, err, ErrGroupNotFound)
+	require.ErrorIs(t, err, api.ErrGroupNotFound)
 
 	// After the first paired publish the same route binds normally, and an
 	// unroutable model keeps ErrFormatUnavailable (404).
@@ -141,7 +142,7 @@ func TestSchedulerNewAttemptPlanPlanNotReady(t *testing.T) {
 	require.Equal(t, int64(1), sel.AccountID)
 	sel.Handle.Release()
 	_, err = s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "missing"))
-	require.ErrorIs(t, err, ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrFormatUnavailable)
 }
 
 // TestReserveAttemptPreservesConcurrentFailAccount 回归：两处写点互不覆盖。

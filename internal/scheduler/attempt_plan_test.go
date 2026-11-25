@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func TestAttemptPlan_preservesRequestIdentityAndFixedStorage(t *testing.T) {
@@ -99,7 +101,7 @@ func TestAttemptPlan_keepsCompleteUniqueTail(t *testing.T) {
 			got = append(got, accountID)
 			return false
 		})
-		if errors.Is(err, ErrAttemptsExhausted) {
+		if errors.Is(err, api.ErrAttemptsExhausted) {
 			break
 		}
 		require.NoError(t, err)
@@ -122,12 +124,12 @@ func TestAttemptPlan_distinguishesNoAvailableFromAttemptsExhausted(t *testing.T)
 	empty := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &RouteDecision{})
 	_, err := empty.Reserve(func(int64) bool { return true })
 
-	require.ErrorIs(t, err, ErrNoAvailable)
-	require.NotErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrNoAvailable)
+	require.NotErrorIs(t, err, api.ErrAttemptsExhausted)
 
 	full := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &RouteDecision{Primary: ccPrimary(1)})
 	_, err = full.Reserve(func(int64) bool { return false })
 
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	require.NotErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
+	require.NotErrorIs(t, err, api.ErrNoAvailable)
 }

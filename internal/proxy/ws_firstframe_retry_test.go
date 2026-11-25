@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
@@ -66,7 +67,7 @@ func TestWSFirstFrameFailureRetriesSecondCandidateBarrier(t *testing.T) {
 	require.Equal(t, int64(2), sel2.AccountID)
 	sel2.HandleOrDetached().Release()
 	_, _, err = s.ReserveAttempt(&plan)
-	require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 }
 
 func TestWSFirstFrameAttemptReturnsCallErrPreserved(t *testing.T) {

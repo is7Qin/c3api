@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func planCandidates(p AttemptPlan) []int64 {
@@ -195,7 +197,7 @@ func TestAttemptPlan_reservationOrdinalAdvancesOnlyOnSuccess(t *testing.T) {
 	dec := RouteDecision{Primary: ccPrimary(1, 2), Explore: ExploreDecision{Ordered: ccExplore(3, 4), Weights: map[int64]int{3: 100, 4: 100}, Cumulative: []uint64{100, 200}, Total: 200, Fallback: fallbackIndexes(1)}, Degraded: ccDegraded(5)}
 	p := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &dec)
 	_, err := p.Reserve(func(int64) bool { return false })
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	p2 := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &dec)
 	a1, err := p2.Reserve(func(id int64) bool { return id == 1 })
 	require.NoError(t, err)
@@ -206,7 +208,7 @@ func TestAttemptPlan_reservationOrdinalAdvancesOnlyOnSuccess(t *testing.T) {
 	require.Equal(t, uint8(2), a2.Ordinal)
 	p3 := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &dec)
 	_, err = p3.Reserve(func(int64) bool { return false })
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 }
 
 func TestExploreHash_fixedCapacityAndNoSortingAtRequestPath(t *testing.T) {
@@ -222,7 +224,7 @@ func TestExploreHash_fixedCapacityAndNoSortingAtRequestPath(t *testing.T) {
 			return false
 		})
 		if err != nil {
-			require.ErrorIs(t, err, ErrAttemptsExhausted)
+			require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 			break
 		}
 	}

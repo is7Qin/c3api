@@ -22,14 +22,14 @@ import (
 type PersistErrorKind uint8
 
 const (
-	// PersistErrMissingRevision 事件缺期望身份代际 K（scheduler.ErrMissingExpectedRevision）：
+	// PersistErrMissingRevision 事件缺期望身份代际 K（identityfence.ErrMissingExpectedRevision）：
 	// 没有来源版本就没有可施加的账号级事实。
 	PersistErrMissingRevision PersistErrorKind = iota + 1
 	// PersistErrMissingFingerprint 事件缺候选身份指纹 I，或账号侧算不出 I
-	// （scheduler.ErrMissingCandidateFingerprint）：判决无法与身份绑定。
+	// （identityfence.ErrMissingCandidateFingerprint）：判决无法与身份绑定。
 	PersistErrMissingFingerprint
 	// PersistErrFingerprintMismatch 事件携带的 I 与账号当前 I 不一致
-	// （scheduler.ErrCandidateFingerprintMismatch）：判决针对的身份已不存在。
+	// （identityfence.ErrCandidateFingerprintMismatch）：判决针对的身份已不存在。
 	PersistErrFingerprintMismatch
 	// PersistErrStaleRevision 落库 CAS 发现 K 已被管理面推进
 	// （repository.ErrStaleIdentityRevision）：陈旧事件，丢弃是正确结果。

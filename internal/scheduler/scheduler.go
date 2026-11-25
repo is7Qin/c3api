@@ -28,8 +28,8 @@ import (
 var (
 	// 三个身份围栏哨兵不在本块：canonical 定义在 internal/identityfence，本包只留
 	// 别名（见 candidate_identity.go 的迁移期兼容层与移除条件）。
-	// 五条运行期选号哨兵同样不在本块：canonical 定义在 internal/api/errors.go，
-	// 本包只留别名（见 errors_compat.go）。
+	// 五条运行期选号哨兵（ErrGroupNotFound 一族）也不在本块，且**本包已不再留别名**：
+	// P5 收口删掉了 errors_compat.go，全仓引用一律直指 internal/api/errors.go。
 	// ErrEgressNotWired 是**装配违例**（不是运行期故障）：账号绑定了出口代理，
 	// 但 Config.Egress 从未注入。装载期由**唯一的出口解析点**（egressClientFor，
 	// egress_port.go）直接报错并保留旧快照——绝不静默退化成直连（那会让"配了

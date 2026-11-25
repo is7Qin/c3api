@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -94,5 +95,5 @@ func TestReserveAttemptRejectsNotReadyCandidate(t *testing.T) {
 	require.NoError(t, err)
 	adm.reject[2] = true
 	_, _, err = s.ReserveAttempt(&plan2)
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 }

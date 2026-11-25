@@ -560,7 +560,6 @@ const (
 	phaseP2   phase = "P2"
 	phaseP3   phase = "P3"
 	phaseP4   phase = "P4"
-	phaseP5   phase = "P5"
 	phaseP6   phase = "P6"
 	phaseKeep phase = "不消除"
 )
@@ -604,7 +603,7 @@ func (l ledger) build() (map[edge]legacyEntry, error) {
 				return fmt.Errorf("%s：legacy %s 在 keep 区，但阶段是 %q", l.name, e, r.phase)
 			}
 			if !keep && !r.phase.validNarrow() {
-				return fmt.Errorf("%s：legacy %s 在债务区，阶段必须是 P2..P6，实际 %q", l.name, e, r.phase)
+				return fmt.Errorf("%s：legacy %s 在债务区，阶段必须是 P2/P3/P4/P6，实际 %q", l.name, e, r.phase)
 			}
 			out[e] = legacyEntry{reason: r.reason, phase: r.phase}
 		}
@@ -631,10 +630,14 @@ func (l ledger) checkCaps() error {
 	return nil
 }
 
-// validNarrow 只认 P2..P6：phaseKeep 必须放进 keep 区，不能混进债务计数。
+// validNarrow 只认 P2/P3/P4/P6：phaseKeep 必须放进 keep 区，不能混进债务计数。
+//
+// P5 已收口（P5 的三条债都清完了）：这个档位不再存在，新增债**不许**再用
+// "P5"——新增债走它自己的阶段。不重命名 P2/P3/P4/P6：改名会污染全部债行的
+// 可读性，而且阶段号是历史指向，不是连续分组。债务条数上限 debtMax 不变（本来就没有 P5 行）。
 func (p phase) validNarrow() bool {
 	switch p {
-	case phaseP2, phaseP3, phaseP4, phaseP5, phaseP6:
+	case phaseP2, phaseP3, phaseP4, phaseP6:
 		return true
 	}
 	return false

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -38,8 +39,8 @@ func TestSelect_compiledRouteReservationFailureReturnsPlanError(t *testing.T) {
 	s.latch.TryAcquire(1, fp, 1)
 
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	require.NotErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
+	require.NotErrorIs(t, err, api.ErrNoAvailable)
 }
 
 // Unknown models fall back to the compiled default bucket (model "").
@@ -191,7 +192,7 @@ func TestReserveAttempt_rejectsPostReleaseReserveAfterDecisionRepublish(t *testi
 
 	// Then: the next reservation is rejected (a second candidate exists, so
 	// only the generation fence can reject here).
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	require.Nil(t, sel2)
 	account, ok := s.View().Account(2)
 	require.True(t, ok)
@@ -220,7 +221,7 @@ func TestReserveAttempt_rejectsPostAbandonReserveAfterDecisionRepublish(t *testi
 	sel2, _, err := s.ReserveAttempt(&plan)
 
 	// Then: the next reservation is rejected.
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	require.Nil(t, sel2)
 }
 

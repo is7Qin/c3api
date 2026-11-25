@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
@@ -82,7 +83,7 @@ func TestFailAccountRemovesFromSelection(t *testing.T) {
 	s.FailAccount(1)
 
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "失效账号不得再被选中")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "失效账号不得再被选中")
 
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)

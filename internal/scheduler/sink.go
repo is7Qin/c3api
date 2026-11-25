@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 )
@@ -79,7 +80,7 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	// 身份指纹, K) 落键，写不出具体指纹就等于写一条永远不会被查询到的记录——
 	// 静默失效比报错更危险。生产事件由 scheduler 的事件构造器恒带指纹。
 	if ev.CandidateFingerprint == "" {
-		return ErrMissingCandidateFingerprint
+		return identityfence.ErrMissingCandidateFingerprint
 	}
 	key := HealthKey{AccountID: ev.AccountID, Identity: ev.CandidateFingerprint, IdentityRevision: ev.ExpectedIdentityRevision}
 	if th.Scope == domain.ThrottleScopeAccount {
@@ -126,11 +127,11 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 // fence（revision/指纹双检查）与内存摘除在 Scheduler.onRuleFailure 内执行。
 func (s *LatchSink) FailAccount(ev rule.Event) error {
 	if ev.ExpectedIdentityRevision <= 0 {
-		return ErrMissingExpectedRevision
+		return identityfence.ErrMissingExpectedRevision
 	}
 	fp := ev.CandidateFingerprint
 	if fp == "" {
-		return ErrMissingCandidateFingerprint
+		return identityfence.ErrMissingCandidateFingerprint
 	}
 	if s.Latch != nil {
 		s.Latch.TryAcquire(ev.AccountID, fp, ev.ExpectedIdentityRevision)

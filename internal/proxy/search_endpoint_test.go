@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -590,7 +591,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 			loader := p.sched.Loader().(noopLoader)
 			for _, a := range loader.accs[10] {
 				if a.ID == 10 {
-					fp, ferr := scheduler.CandidateFingerprint(a)
+					fp, ferr := identityfence.CandidateFingerprint(a)
 					require.NoError(t, ferr)
 					require.True(t, p.sched.TryLatch(10, fp, a.IdentityRevision))
 				}

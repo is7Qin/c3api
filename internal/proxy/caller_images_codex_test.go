@@ -21,6 +21,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -309,7 +310,7 @@ func TestImagesCodexCredPassing(t *testing.T) {
 	latchAccount := func(id int64) {
 		for _, a := range loader.accs[10] {
 			if a.ID == id {
-				fp, err := scheduler.CandidateFingerprint(a)
+				fp, err := identityfence.CandidateFingerprint(a)
 				require.NoError(t, err)
 				require.True(t, p.sched.TryLatch(id, fp, a.IdentityRevision))
 			}

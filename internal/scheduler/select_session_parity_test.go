@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -37,9 +38,9 @@ func driveSession(t *testing.T, s *Scheduler, id AttemptPlanIdentity, route Rout
 		sel, a, err := s.ReserveAttempt(&plan)
 		if err != nil {
 			switch {
-			case errors.Is(err, ErrAttemptsExhausted):
+			case errors.Is(err, api.ErrAttemptsExhausted):
 				out = append(out, "ERR:exhausted")
-			case errors.Is(err, ErrNoAvailable):
+			case errors.Is(err, api.ErrNoAvailable):
 				out = append(out, "ERR:noavailable")
 			default:
 				out = append(out, "ERR:other:"+err.Error())
@@ -136,7 +137,7 @@ func TestSelectSessionParity_anthropicRejectSkip(t *testing.T) {
 	require.Nil(t, a.PreviousAttemptID)
 	sel.Handle.Release()
 	sel2, a2, err := s.ReserveAttempt(&plan)
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	require.Nil(t, sel2)
 	_ = a2
 	t.Logf("GOLDEN anthropicRejectSkip=3|%s|1|req-a1:1|- then exhausted", string(a.Lane))
@@ -249,7 +250,7 @@ func TestSelectSessionParity_exhaustion(t *testing.T) {
 		s.latch.TryAcquire(id, fp, 1)
 	}
 	_, _, err = s.ReserveAttempt(&plan)
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "rejects with candidates present exhaust, never ErrNoAvailable")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "rejects with candidates present exhaust, never api.ErrNoAvailable")
 }
 
 func TestSelectSessionParity_generationFence(t *testing.T) {
@@ -270,7 +271,7 @@ func TestSelectSessionParity_generationFence(t *testing.T) {
 	// Strict after execution started.
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	sel2, _, err := s.ReserveAttempt(&plan)
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	require.Nil(t, sel2)
 	t.Logf("GOLDEN generationFence=tolerate-then-strict")
 }
@@ -309,7 +310,7 @@ func TestSelectSessionParity_maxAttempts(t *testing.T) {
 	for {
 		sel, _, rerr := s2.ReserveAttempt(&p2)
 		if rerr != nil {
-			require.ErrorIs(t, rerr, ErrAttemptsExhausted)
+			require.ErrorIs(t, rerr, api.ErrAttemptsExhausted)
 			break
 		}
 		sel.Handle.Release()

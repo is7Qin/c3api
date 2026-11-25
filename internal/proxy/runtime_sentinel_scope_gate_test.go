@@ -23,13 +23,15 @@ import (
 // 在别名机制下**行为完全等价**，于是它会一直留在那里，直到将来删别名的那天炸开。
 // 静态拼写是这种漂移唯一的观测面。
 //
-// 与 `internal/scheduler/errors_compat_test.go` 的分工：那边钉"别名是同一 error 值"
-// （值身份），这边钉"生产代码不靠别名活着"（拼写面）。两条合起来才是 §D 的终态：
-// proxy 全部指 api.*，scheduler 只留 `var ErrX = api.ErrX`。
+// P5 收口后这条门禁的唯一作用就是**防回退**：scheduler 侧的别名层（errors_compat.go）
+// 已删，"alias 值相同所以行为等价"这条退路不存在了，任何人把某个返回点/判定点改回
+// `scheduler.ErrX` 都会直接编译失败。门禁仍在，是为了让"又想加一层别名"的改动在
+// diff 里显形。
 //
 // 扫描面 = 本目录非测试 .go（与 datapath/credential 门禁同源，见 proxySourceFiles）；
-// 测试文件不在扫描面内：`error_mapping_test.go` / `failover_plan_test.go` 用旧拼写
-// 喂映射函数是**允许**的（别名 ⇒ 同一值，语义等价），它们也是别名还要留着的理由。
+// 测试文件不在扫描面内，但它们也不再需要豁免：`error_mapping_test.go` /
+// `failover_plan_test.go` 自 P5 收口起同样只写 `api.ErrX`，与生产代码同一拼写
+// （见 error_mapping_test.go 的 TestSelectErrorMapping_*：直接拿 api 哨兵喂映射函数）。
 const runtimeSentinelAPISitesFloor = 18
 
 // runtimeSentinelNames 是 I-B 的五条哨兵（api.* 与 scheduler.* 同名）。

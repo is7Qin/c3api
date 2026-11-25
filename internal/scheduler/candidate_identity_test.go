@@ -11,6 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityfence"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
@@ -53,9 +54,9 @@ func TestRulePersistRejectsStaleOrMismatchedFailureIdentity(t *testing.T) {
 		event rule.Event
 		want  error
 	}{
-		{name: "missing identity", event: rule.Event{AccountID: 1, ExpectedIdentityRevision: 1}, want: ErrMissingCandidateFingerprint},
-		{name: "mismatched identity", event: rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp + "x"}, want: ErrCandidateFingerprintMismatch},
-		{name: "missing expected identity revision", event: rule.Event{AccountID: 1, CandidateFingerprint: fp}, want: ErrMissingExpectedRevision},
+		{name: "missing identity", event: rule.Event{AccountID: 1, ExpectedIdentityRevision: 1}, want: identityfence.ErrMissingCandidateFingerprint},
+		{name: "mismatched identity", event: rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp + "x"}, want: identityfence.ErrCandidateFingerprintMismatch},
+		{name: "missing expected identity revision", event: rule.Event{AccountID: 1, CandidateFingerprint: fp}, want: identityfence.ErrMissingExpectedRevision},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := persist(context.Background(), rule.PersistItem{Event: tc.event, Then: domain.RuleThen{FailAccount: true}})

@@ -129,7 +129,7 @@ func TestReleaseFreesSessionBeforeConcurrencyDecrement(t *testing.T) {
 			for range 2000 {
 				sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 				if err != nil {
-					continue // 门禁满（预期 ErrNoAvailable）
+					continue // 门禁满（预期 api.ErrNoAvailable）
 				}
 				atomic.AddInt64(&successes, 1)
 				if h := sel.Handle.(*selection); h.session == nil || !inPool[h.session] {

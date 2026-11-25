@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -22,7 +23,7 @@ func walkAll(t *testing.T, identity AttemptPlanIdentity, decision *RouteDecision
 	for {
 		a, err := plan.Reserve(func(int64) bool { return true })
 		if err != nil {
-			require.ErrorIs(t, err, ErrAttemptsExhausted)
+			require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 			break
 		}
 		ids = append(ids, a.AccountID)
@@ -307,7 +308,7 @@ func TestExploreShare_affinityPreservesLanes(t *testing.T) {
 	for {
 		a, err := plan.Reserve(func(int64) bool { return true })
 		if err != nil {
-			require.ErrorIs(t, err, ErrAttemptsExhausted)
+			require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 			break
 		}
 		seq = append(seq, a.AccountID)

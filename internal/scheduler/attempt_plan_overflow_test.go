@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func reserveAll(t *testing.T, p *AttemptPlan, accept func(int64) bool) ([]int64, error) {
@@ -17,7 +19,7 @@ func reserveAll(t *testing.T, p *AttemptPlan, accept func(int64) bool) ([]int64,
 			return accept(id)
 		})
 		if err != nil {
-			if errors.Is(err, ErrAttemptsExhausted) || errors.Is(err, ErrNoAvailable) {
+			if errors.Is(err, api.ErrAttemptsExhausted) || errors.Is(err, api.ErrNoAvailable) {
 				return got, err
 			}
 			require.NoError(t, err)
@@ -49,8 +51,8 @@ func TestAttemptPlan_overflowTailFullyScannedBeforeExhaustion(t *testing.T) {
 		Degraded: ccDegraded(13, 14),
 	})
 	got, err := reserveAll(t, &p, func(int64) bool { return false })
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	require.NotErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
+	require.NotErrorIs(t, err, api.ErrNoAvailable)
 	want := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
 	require.Equal(t, want, got)
 }

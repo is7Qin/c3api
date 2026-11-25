@@ -8,29 +8,29 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func TestSelectErrorMapping_AttemptsExhaustedDistinct(t *testing.T) {
-	require.Equal(t, http.StatusTooManyRequests, statusFor(scheduler.ErrAttemptsExhausted))
-	require.NotEqual(t, "group not found", selectErrorMessage(scheduler.ErrAttemptsExhausted))
-	require.Equal(t, "no available account", selectErrorMessage(scheduler.ErrAttemptsExhausted))
+	require.Equal(t, http.StatusTooManyRequests, statusFor(api.ErrAttemptsExhausted))
+	require.NotEqual(t, "group not found", selectErrorMessage(api.ErrAttemptsExhausted))
+	require.Equal(t, "no available account", selectErrorMessage(api.ErrAttemptsExhausted))
 
-	require.Equal(t, http.StatusTooManyRequests, statusFor(scheduler.ErrNoAvailable))
-	require.Equal(t, "no available account", selectErrorMessage(scheduler.ErrNoAvailable))
+	require.Equal(t, http.StatusTooManyRequests, statusFor(api.ErrNoAvailable))
+	require.Equal(t, "no available account", selectErrorMessage(api.ErrNoAvailable))
 
-	require.Equal(t, http.StatusNotFound, statusFor(scheduler.ErrGroupNotFound))
-	require.Equal(t, "group not found", selectErrorMessage(scheduler.ErrGroupNotFound))
+	require.Equal(t, http.StatusNotFound, statusFor(api.ErrGroupNotFound))
+	require.Equal(t, "group not found", selectErrorMessage(api.ErrGroupNotFound))
 
-	require.Equal(t, http.StatusNotFound, statusFor(scheduler.ErrFormatUnavailable))
-	require.Equal(t, "no account supports this request format", selectErrorMessage(scheduler.ErrFormatUnavailable))
+	require.Equal(t, http.StatusNotFound, statusFor(api.ErrFormatUnavailable))
+	require.Equal(t, "no account supports this request format", selectErrorMessage(api.ErrFormatUnavailable))
 
-	require.Equal(t, http.StatusServiceUnavailable, statusFor(scheduler.ErrPlanNotReady))
-	require.Equal(t, "routing plan not ready", selectErrorMessage(scheduler.ErrPlanNotReady))
+	require.Equal(t, http.StatusServiceUnavailable, statusFor(api.ErrPlanNotReady))
+	require.Equal(t, "routing plan not ready", selectErrorMessage(api.ErrPlanNotReady))
 }
 
 func TestHandleSelectErrorAttemptsExhaustedRESTSearchWS(t *testing.T) {
-	for _, err := range []error{scheduler.ErrAttemptsExhausted, scheduler.ErrNoAvailable} {
+	for _, err := range []error{api.ErrAttemptsExhausted, api.ErrNoAvailable} {
 		rec := httptest.NewRecorder()
 		p := &Proxy{}
 		p.handleSelectError(rec, err)
@@ -39,14 +39,14 @@ func TestHandleSelectErrorAttemptsExhaustedRESTSearchWS(t *testing.T) {
 		require.Contains(t, rec.Body.String(), "no available account")
 		require.NotContains(t, rec.Body.String(), "group not found")
 	}
-	for _, err := range []error{scheduler.ErrGroupNotFound} {
+	for _, err := range []error{api.ErrGroupNotFound} {
 		rec := httptest.NewRecorder()
 		p := &Proxy{}
 		p.handleSelectError(rec, err)
 		require.Equal(t, http.StatusNotFound, rec.Code)
 		require.Contains(t, rec.Body.String(), "group not found")
 	}
-	for _, err := range []error{scheduler.ErrPlanNotReady} {
+	for _, err := range []error{api.ErrPlanNotReady} {
 		rec := httptest.NewRecorder()
 		p := &Proxy{}
 		p.handleSelectError(rec, err)

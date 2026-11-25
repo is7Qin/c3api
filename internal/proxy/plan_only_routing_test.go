@@ -43,7 +43,7 @@ func TestSelectWithPlan_NoCompiledDecision_FailsClosedWithTypedError(t *testing.
 
 	sel, plan, _, err := p.selectWithPlan(10, domain.FormatAnthropic, "claude-x",
 		scheduler.AttemptPlanIdentity{RequestID: "req-noplan", UserID: 1})
-	require.ErrorIs(t, err, scheduler.ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrFormatUnavailable)
 	require.Nil(t, sel, "no selection may be produced without a compiled plan")
 	// the session is a stack value — the error path yields its zero value.
 	require.Equal(t, scheduler.AttemptPlan{}, plan)
@@ -114,7 +114,7 @@ func TestSelectNextWithPlan_PlanlessHasNoLane(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 
 	sel, _, err := p.selectNextWithPlan(nil)
-	require.ErrorIs(t, err, scheduler.ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrNoAvailable)
 	require.Nil(t, sel, "a plan-less failover step must never select")
 }
 

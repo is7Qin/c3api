@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -112,7 +113,7 @@ func TestEmptyCredentialTypeIsUndispatchable(t *testing.T) {
 	require.NotEmpty(t, dec.Explore.Ordered, "它确实进了候选表")
 
 	_, err := s.Select(10, domain.FormatOpenAIResponses, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted,
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted,
 		"但候选指纹为空 ⇒ 预留恒拒：空类型今天拿不到 Selection（放宽这条会红）")
 }
 
@@ -127,7 +128,7 @@ func TestBPSWithoutProfileIsUnroutable(t *testing.T) {
 
 	_, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 	require.Error(t, err, "缺 profile 摘要的 BPS 账号不得被选中")
-	require.ErrorIs(t, err, ErrNoAvailable, "拒绝的形状是「无可用账号」，不是静默放行")
+	require.ErrorIs(t, err, api.ErrNoAvailable, "拒绝的形状是「无可用账号」，不是静默放行")
 
 	// 正例对照：同一账号补上 profile 即可路由（否则上面的 error 可能是别的原因）。
 	fixed := bpsAccWith(2, 4, &domain.AccountExt{

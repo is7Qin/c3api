@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
@@ -193,7 +194,7 @@ func TestSelectFormatHardFilter(t *testing.T) {
 	m2 := newMemLoader(map[int64][]*domain.Account{10: {acc(1, chat, 4)}})
 	s2 := newSched(t, m2)
 	_, err = s2.Select(10, domain.FormatOpenAIResponses, "gpt-4o")
-	require.ErrorIs(t, err, ErrFormatUnavailable)
+	require.ErrorIs(t, err, api.ErrFormatUnavailable)
 }
 
 // TestSelectCredentialTypeFromTemplate 钉死：Selection.CredentialType 只来自
@@ -239,7 +240,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	sel1, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 	sel1.Handle.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err, "available after release")
@@ -249,7 +250,7 @@ func TestSelectUnknownGroup(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{})
 	s := newSched(t, m)
 	_, err := s.Select(99, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrGroupNotFound)
+	require.ErrorIs(t, err, api.ErrGroupNotFound)
 }
 
 // TestSelectNilStoreNoPanic 快照未加载（首刷失败）时 Select 优雅失败而非 panic。
@@ -257,7 +258,7 @@ func TestSelectNilStoreNoPanic(t *testing.T) {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	s := New(testCfg(), newMemLoader(nil), re, nil, nil, nil, nil) // 不 reload：模拟首刷失败
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrGroupNotFound)
+	require.ErrorIs(t, err, api.ErrGroupNotFound)
 }
 
 func TestInvalidateGroupReloads(t *testing.T) {
@@ -470,7 +471,7 @@ func TestSelectWhitelistHitMiss(t *testing.T) {
 	require.Equal(t, int64(1), sel.AccountID)
 	sel.Handle.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "claude-3-5-sonnet-20241022")
-	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404")
+	require.ErrorIs(t, err, api.ErrFormatUnavailable, "白名单外模型 → 404")
 }
 
 // TestSelectFormatModelsOnlyBoundary Models=[] + FormatModels={chat:[gpt-4o]}
@@ -485,7 +486,7 @@ func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 		{ID: 1, TemplateID: 1, Template: tplFm, UpstreamKey: "k1", Enabled: true, MaxConcurrency: 1000, LifecycleRevision: 1},
 	})
 	_, err := s.Select(10, domain.FormatAnthropic, "claude-3-5-sonnet-20241022")
-	require.ErrorIs(t, err, ErrFormatUnavailable, "FormatModels-only 账号在未列模型格式上不建路由 → 404")
+	require.ErrorIs(t, err, api.ErrFormatUnavailable, "FormatModels-only 账号在未列模型格式上不建路由 → 404")
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
@@ -504,7 +505,7 @@ func TestSelectFormatModelsEmptyList(t *testing.T) {
 	})
 	for _, m := range []string{"gpt-4o", "unknown-model-xyz"} {
 		_, err := s.Select(10, domain.FormatOpenAIChat, m)
-		require.ErrorIs(t, err, ErrFormatUnavailable, "空列表格式（覆盖但空）→ 全 404")
+		require.ErrorIs(t, err, api.ErrFormatUnavailable, "空列表格式（覆盖但空）→ 全 404")
 	}
 }
 
@@ -524,7 +525,7 @@ func TestSelectMappingKeyWhitelist(t *testing.T) {
 	require.Equal(t, "deepseek-chat", sel.Model)
 	sel.Handle.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "deepseek-chat")
-	require.ErrorIs(t, err, ErrFormatUnavailable, "映射目标（上游模型名）不复查")
+	require.ErrorIs(t, err, api.ErrFormatUnavailable, "映射目标（上游模型名）不复查")
 }
 
 // TestSelectFullModelTier2Fallback 全模型账号（模型空间空）→ 默认桶兜底转发。
@@ -548,7 +549,7 @@ func TestSelectDefaultBucketExcludesWhitelist(t *testing.T) {
 		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Enabled: true, MaxConcurrency: 1000, LifecycleRevision: 1},
 	})
 	_, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
-	require.ErrorIs(t, err, ErrFormatUnavailable, "默认桶不含白名单账号 → 未知模型 404")
+	require.ErrorIs(t, err, api.ErrFormatUnavailable, "默认桶不含白名单账号 → 未知模型 404")
 }
 
 // TestSelectMixedGroupWhitelistFullModel 混合组：A 白名单 ["gpt-4o"] + B 全模型——
@@ -615,7 +616,7 @@ func TestSelectConcurrentCASRace(t *testing.T) {
 			case r.err == nil:
 				okCount++
 				winner = r.sel
-			case errors.Is(r.err, ErrNoAvailable) || errors.Is(r.err, ErrAttemptsExhausted):
+			case errors.Is(r.err, api.ErrNoAvailable) || errors.Is(r.err, api.ErrAttemptsExhausted):
 				failCount++
 			default:
 				t.Fatalf("iter %d: unexpected error: %v", i, r.err)
@@ -679,7 +680,7 @@ func TestMultiGroupSharedInstance(t *testing.T) {
 	require.Equal(t, int64(2), ri.Concurrency, "共享实例：跨组计数合并，不得分裂")
 
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "共享实例：真实槽位满")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "共享实例：真实槽位满")
 
 	sel1.Handle.Release()
 	sel2.Handle.Release()
@@ -718,7 +719,7 @@ func TestInvalidateGroupMultiGroupShared(t *testing.T) {
 	ri, _ := s.Runtime(1)
 	require.Equal(t, int64(1), ri.Concurrency, "经其它组路由命中新实例（新上限 1）")
 	_, err = s.Select(11, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "新实例真实槽位满")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "新实例真实槽位满")
 	sel1.Handle.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "Release 经 byID 命中新实例")
@@ -967,7 +968,7 @@ func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "max_concurrency=1 → 第二个请求假满")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "max_concurrency=1 → 第二个请求假满")
 	sel.Handle.Release()
 }
 

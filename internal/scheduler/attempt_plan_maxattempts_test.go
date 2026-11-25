@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/api"
 )
 
 func TestAttemptPlan_maxAttemptsBoundExhaustsDistinctly(t *testing.T) {
@@ -18,8 +20,8 @@ func TestAttemptPlan_maxAttemptsBoundExhaustsDistinctly(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), a2.Ordinal)
 	_, err = p.Reserve(func(int64) bool { return true })
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	require.NotErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
+	require.NotErrorIs(t, err, api.ErrNoAvailable)
 }
 
 func TestAttemptPlan_maxAttemptsNormalization(t *testing.T) {
@@ -30,7 +32,7 @@ func TestAttemptPlan_maxAttemptsNormalization(t *testing.T) {
 	for {
 		_, err := full.Reserve(func(int64) bool { return true })
 		if err != nil {
-			require.ErrorIs(t, err, ErrAttemptsExhausted)
+			require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 			break
 		}
 		n++
@@ -69,7 +71,7 @@ func TestAttemptPlan_abandonedReservationRefundsBudget(t *testing.T) {
 	require.Equal(t, uint8(1), a2.Ordinal, "the refunded slot is reused, not a second attempt")
 	require.Equal(t, "req:1", a2.AttemptID)
 	_, err = p.Reserve(func(int64) bool { return true })
-	require.ErrorIs(t, err, ErrAttemptsExhausted, "the bound dispatch still consumes the single slot")
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted, "the bound dispatch still consumes the single slot")
 }
 
 func TestAttemptPlan_previousLinkageSurvivesReserveAndAbandon(t *testing.T) {
@@ -102,5 +104,5 @@ func TestAttemptPlan_rejectsDoNotConsumeAttemptBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), a2.Ordinal)
 	_, err = p.Reserve(func(int64) bool { return true })
-	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.ErrorIs(t, err, api.ErrAttemptsExhausted)
 }
