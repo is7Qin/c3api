@@ -9,8 +9,9 @@
 
 ## 职责 / 入口
 
-- `spec.go`：`New(scheme, host, port, user, pass)`——规格的唯一构造点，含**归一化**
-  （scheme 小写、host 去 IPv6 方括号；`[::1]` 与 `::1` 必须同摘要）。
+- **规格构造点在 `pkg/egressapi.New`**（含归一化：scheme 小写、host 去 IPv6 方括号；
+  `[::1]` 与 `::1` 必须同摘要）。归一化定义的就是 `Spec.Key` 的语义，故与 `Spec` 同居。
+  本包 `compat.go` 只为既有调用方保留同名一行转发；**新调用点直接写 `egressapi.New`**。
 - `pool.go`：`Pool` 是**进程级持久**的出口 client 注册表。
   - `NewPool(base)`：base 为直连底座（生产 = main 里与 aiclient Factory 同一个
     client）；构造期一次由 base 派生关闭自动压缩的底座（`codexClientOf`）。
@@ -21,7 +22,7 @@
     **不进注册表**——探测这类非快照期动作专用，用完由调用方 `CloseIdleConnections`；
     代理 URL 与 `For` 共用 `proxyURL`（唯一实现点）。注意与
     `egressapi.NewClient(spec, slots)`（装配出口**句柄**）不是同一件事。
-- `compat.go`：值类型的别名 + `ResourceKey` 一行转发。只许转发，不许在这里加逻辑。
+- `compat.go`：值类型的别名 + `ResourceKey` / `New` 一行转发。只许转发，不许在这里加逻辑。
 
 ## 不变量
 

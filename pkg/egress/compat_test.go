@@ -2,6 +2,10 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
+// 本文件测的是**兼容转发入口**的公开契约：`egress.New` 已是一行转发到
+// `pkg/egressapi.New`（canonical 定义在那里，归一化也随 `Spec.Key` 归了那边）。
+// 保留这组用例的理由不是"再测一遍 egressapi"，而是钉住**转发没有改变语义**：
+// 既有调用方仍经 `egress.New` 造规格，它必须与直接调 `egressapi.New` 逐字等价。
 package egress_test
 
 import (

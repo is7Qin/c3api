@@ -12,7 +12,7 @@ package domain
 // 于是这里只放**值**：谁保留哪些资源键、哪个账号的资源作废、批次代号——不放任何
 // "哪个账号算活跃""直连要不要保留"的策略，那类判断留在配置权威里。
 
-// EgressResourceKey 一个出口资源的键：出口规格的决策摘要（`egress.Spec.Key()`）。
+// EgressResourceKey 一个出口资源的键：出口规格的决策摘要（`egressapi.Spec.Key()`）。
 // 直连是零值——"直连也是一条出口"，由**配置权威**显式列入保留集，不是表的特例。
 type EgressResourceKey [16]byte
 

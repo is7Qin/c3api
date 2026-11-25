@@ -2,6 +2,15 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
+// Package egress 是出口代理的**实现层**：进程级 client 注册表（Pool）、一次性出口
+// client（NewClient）、代理 URL 装配（proxyURL）与 transport 派生（cloneTransport /
+// codexClientOf）。
+//
+// 值类型与规格构造点不在本包：`Spec` / `Client` / `Flavour` / `ResourceKey` 的
+// canonical 定义与 `New` 都在 pkg/egressapi——路由核心只该依赖"出口是什么"，不该依赖
+// "出口怎么被建出来"，而归一化定义的就是"什么算同一条线"（`Spec.Key` 的语义）。本包
+// 为既有调用方保留同名**别名**与构造点**转发**（本文件），别名不是终态，移除条件
+// 写在下面。
 package egress
 
 import "github.com/is7qin/c3api/pkg/egressapi"
@@ -34,8 +43,9 @@ import "github.com/is7qin/c3api/pkg/egressapi"
 //   - 只算代码：注释（`//` 与 `/* */`）、字符串字面量与 raw string 里出现的拼写**不算**——
 //     注释里写 `egress.Client` 是合法的叙述；
 //   - 只算 `egress.` 这个限定符：`egressapi.` / `*egress.Pool` / 字段名 `Egress` 均不算；
-//   - 算在上面六个名字上；`New` 与实现符号（`Pool` / `NewPool` / `NewClient` /
-//     `CloseClients`）生命周期另有归属，不在本条件内。
+//   - 算在上面六个名字上；实现符号（`Pool` / `NewPool` / `NewClient` /
+//     `CloseClients`）生命周期另有归属，不在本条件内；`New` 的转发与别名同生共死
+//     ——归一化已随 `Spec.Key` 归 `egressapi`，这里只为既有调用方留一个同名入口。
 //
 // **当前实测（基 ec731934）：真实引用 54 处**——`Client` 45 / `Spec` 8 / `ResourceKey` 1；
 // 分布在：internal/sdkbridge 44（其中 20 在用例）、internal/proxy 4（**全在用例**）、
@@ -78,3 +88,16 @@ const (
 
 // ResourceKey 见 pkg/egressapi.ResourceKey（一行转发；内联后与直接调用同价）。
 func ResourceKey(c *Client) [16]byte { return egressapi.ResourceKey(c) }
+
+// New 见 pkg/egressapi.New（一行转发）：归一化（scheme 小写、host 去 IPv6 方括号）
+// 定义的是 `Spec.Key` 的语义，所以它与 `Spec` 在同一个包。
+//
+// 性能口径（只写实测得到的）：编译器可内联本转发，`-gcflags=-m=2` 报
+// `can inline New with cost 65`；bench 实测 allocs/op 与 B/op 与直接调用
+// `egressapi.New` 一致（均 0 B/op、0 allocs/op）。ns/op 含噪声，bench **测不出**
+// 内联与否的差别，故不据此声称"同价"。
+//
+// 新增调用点应直接写 `egressapi.New`——本函数只为既有调用方留名。
+func New(scheme, host string, port int, user, pass string) Spec {
+	return egressapi.New(scheme, host, port, user, pass)
+}

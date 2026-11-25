@@ -103,7 +103,7 @@ func TestMapModel(t *testing.T) {
 }
 
 // TestProxyEgressSpec 下沉后的出口规格派生：nil = 零值（直连），字段原样进
-// egress.New 的规范化。
+// egressapi.New 的规范化。
 func TestProxyEgressSpec(t *testing.T) {
 	var nilProxy *domain.Proxy
 	var zero domain.Proxy
@@ -116,6 +116,18 @@ func TestProxyEgressSpec(t *testing.T) {
 	require.Equal(t, 3128, spec.Port)
 	require.Equal(t, "u", spec.Username)
 	require.Equal(t, "p", spec.Password)
+}
+
+// TestProxyEgressSpecIPv6 方括号归一发生在 EgressSpec 内部（经 egressapi.New），
+// 调用点不得各自拼 scheme/host。Host 断言是真锤子：绕过 New 直造 Spec{Host: p.Host}
+// 时 Key/Addr 仍会自己归一，只有 Host 能抓住。
+func TestProxyEgressSpecIPv6(t *testing.T) {
+	bracketed := &domain.Proxy{Scheme: domain.ProxySchemeHTTP, Host: "[::1]", Port: 3128}
+	bare := &domain.Proxy{Scheme: domain.ProxySchemeHTTP, Host: "::1", Port: 3128}
+	require.Equal(t, bare.EgressSpec().Key(), bracketed.EgressSpec().Key())
+	require.Equal(t, "[::1]:3128", bare.EgressSpec().Addr())
+	require.Equal(t, "::1", bare.EgressSpec().Host, "方括号必须在 EgressSpec 内部去掉")
+	require.Equal(t, "::1", bracketed.EgressSpec().Host)
 }
 
 // TestProbeContentConstants account-probe-content 的硬上限/默认值/固定文案是

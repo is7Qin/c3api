@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"net"
 	"strconv"
+	"strings"
 )
 
 // Spec 是一条出口代理的**连接规格值**（spec-proxy-pool §2 协议矩阵 / §4.2）。
@@ -25,7 +26,7 @@ import (
 //
 // 零值 = 直连。字段全部导出，但**构造必须经归一化**（scheme 归一为小写、host 去掉
 // IPv6 方括号）：`[::1]` 与 `::1` 若各得一个摘要，静态键会抖动、在途计划白白作废。
-// 归一化点在实现侧（pkg/egress.New），不在本包复制一份——类型搬了、构造点没搬。
+// 归一化的唯一入口就是本文件的 New——归一化与 Key 的稳定性是同一件事，必须同一处。
 type Spec struct {
 	// Scheme ∈ socks5 / socks5h / http / https（白名单校验在写面）。**存小写**：
 	// 只做大小写归一，不做 socks5h → socks5 的改写（二者在本项目语义相同，
@@ -81,4 +82,22 @@ func (s Spec) String() string {
 		return "direct"
 	}
 	return s.Scheme + "://" + s.Addr()
+}
+
+// New 装配规格——**唯一的构造点**：scheme 归一为小写、host 去掉 IPv6 方括号。
+// 规范化必须是构造点的事，不是调用点的事：调用方对同一条线的不同写法必须得到同一个
+// 摘要（否则 `[::1]` 与 `::1` 各自抖动静态键、在途计划被白白作废）。
+//
+// 为什么在 egressapi 而不在 pkg/egress：归一化定义的是 `Spec.Key` 的语义（什么算
+// "同一条线"），而 Key 与 Spec 都在本包。把它留在实现包会让"读规格"的一方为了造
+// 一个值而 import 整个连接池实现——`internal/domain` 正是这么被拴在 `pkg/egress` 上的。
+// 本包仍然不碰连接：建池、代理 URL 装配、transport 派生都留在 pkg/egress。
+func New(scheme, host string, port int, user, pass string) Spec {
+	return Spec{
+		Scheme:   strings.ToLower(scheme),
+		Host:     strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"),
+		Port:     port,
+		Username: user,
+		Password: pass,
+	}
 }

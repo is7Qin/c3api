@@ -17,9 +17,10 @@ P5-3-A 把出口的**值类型**从 `pkg/egress`（实现层）搬到这里，�
 ## 职责 / 入口
 
 - `spec.go`：`Spec`（scheme/host/port/认证，零值 = 直连）、`Key()` 决策摘要、
-  `Addr()`、`String()`（脱敏）。**规范化不在本包**：唯一构造点是 `pkg/egress.New`
-  （scheme 小写、host 去 IPv6 方括号）——它的归一化与 `Key()` 的稳定性是同一件事，
-  搬它属于 `pkg/egress` 整体收缩那一步。
+  `Addr()`、`String()`（脱敏）、`New`（**规格的唯一构造点**，含归一化：scheme 小写、
+  host 去 IPv6 方括号）。归一化定义的就是 `Key()` 的语义（什么算"同一条线"），所以
+  它与 `Key()` 同居本包——读规格的一方不必为了造一个值而 import 连接池实现。
+  归一化不等于校验：scheme 白名单与端口范围是写面的事。
 - `flavour.go`：`Flavour` 闭集 + `FlavourHTTP` / `FlavourNoCompression` / `NumFlavours`。
   数组下标必须是**具名常量**（内联后与读字段同价，见设计 §2）。
 - `client.go`：`Client{Spec, clients[NumFlavours]}` + `NewClient` + `HTTP()` /
@@ -38,7 +39,7 @@ P5-3-A 把出口的**值类型**从 `pkg/egress`（实现层）搬到这里，�
   出口池**时那个"没有底座"的直连出口（两个口味都是 `http.DefaultClient`，与删掉的
   `egress.NewPool(nil).Direct()` 逐项同形），它不是代理出口的派生路径。
 - 零值 `Client` = 直连，全部读取面对 nil 安全（`CloseIdle` 对 nil 接收者也安全）。
-- 本包的类型被 `pkg/egress` 用**类型别名**转出（兼容层，见
+- 本包的类型被 `pkg/egress` 用**类型别名**转出、`New` 被一行转发（兼容层，见
   `pkg/egress/compat.go` 的移除条件）；别名是同一类型，不是包装。
 
 ## 验证

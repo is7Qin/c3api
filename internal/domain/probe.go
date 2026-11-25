@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
-	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/egressapi"
 )
 
 // account-model-test（单账号单模型探测）的共享数据形状与硬上限。探测本身是
@@ -162,7 +162,7 @@ type ProbeSpec struct {
 	// CodexAccountID codex 账号标识（ChatGPT-Account-ID 头；空 = 不发）。
 	CodexAccountID string
 	// Egress 已由 service 按 fail-closed 规则解析的出口规格（零值 = 直连）。
-	Egress egress.Spec
+	Egress egressapi.Spec
 	// Input 已 trim、已按字节校验的自定输入（缺省值由 service 填好；prober 不再
 	// 取默认值，避免第二份默认表）。
 	Input string

@@ -257,7 +257,10 @@ var allowRules = []allowRule{
 
 	// 纯类型层：只依赖凭据模型。
 	{from: "internal/credential"},
-	{from: "internal/domain", to: []string{"internal/credential"}},
+	// pkg/egressapi 是出口值类型与归一化（Spec / Key / New）的**中立叶子包**：domain
+	// 的 Proxy.EgressSpec 要造一个规格值，凭此不再 import 实现层 pkg/egress（账本
+	// 原有的那条 P3 债因此消失）。方向固定：egressapi 只 import stdlib，绝不反向。
+	{from: "internal/domain", to: []string{"internal/credential", "pkg/egressapi"}},
 
 	// 生成代码：只允许自引用。ent 模型 / schema 复用 domain 枚举属于 Codegen 边界
 	// 尚未抽离的债务，登记在 legacy(P3)；绝不把整棵生成代码树做成永久豁免。
@@ -466,10 +469,16 @@ const (
 	//   硬规则），也没有新增 all: true。指纹钉的是 allowRules + leafRule 的规范化
 	//   序列化，不含账本，所以"删债"不该动它；反过来，若这里被迫改指纹，就说明
 	//   有人在删债的同时动了矩阵——那正是本常量存在的理由。
-	// 前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，本单仍为此值）
+	// 债 s1-a-class 变更（1 条新增 allow 边，仍是 to: 白名单，没有新增 all: true）：
+	//   internal/domain 的 to 加 pkg/egressapi。**格局与 P5-3-B 相反，必须说清**：
+	//   本单确实同时动了矩阵（不是"删债时偷动矩阵"），原因是 domain 的
+	//   Proxy.EgressSpec 要造出口规格值，而归一化 New 已随 Spec 归入 egressapi。
+	//   新增这条边换来的是账本里 domain → pkg/egress 那条 P3 债的**消失**：
+	//   依赖从实现层（连接池/transport 装配）降到了只含 stdlib 的中立叶子包。
+	// 前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d"
+	allowMatrixFingerprint = "d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -645,12 +654,11 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 17,
+	debtMax: 16,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
 		{"internal/ent/schema", "internal/domain", "手写 schema 字段直接用 domain 枚举；P3 归入中立类型后，schema 只依赖 ent 自带类型", phaseP3},
-		{"internal/domain", "pkg/egress", "domain.Proxy.EgressSpec 持有 pkg/egress 的类型；P3 把纯类型下沉到中立包", phaseP3},
 		{"internal/handler", "internal/repository", "handler 直读 repository（模板/订单/账号列表）；P4 存储接口化后改走 service 端口", phaseP4},
 		{"internal/handler/paymentadmin", "internal/repository", "支付管理 handler 直读 repository；P4 后走 service 端口", phaseP4},
 		{"internal/handler/user", "internal/repository", "用户端 handler 直读 repository（订单/钥匙/兑换）；P4 后走 service 端口", phaseP4},
