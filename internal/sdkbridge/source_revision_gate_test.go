@@ -19,7 +19,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 // oauthCredWithRev 带来源 K 的 oauth 凭据（生产里由 Selection.Credential 给出）。
@@ -68,7 +68,7 @@ func TestCodexFatalAfterIdentitySwapDoesNotDisableAccount(t *testing.T) {
 // TestHandleFailureDoesNotDisableBeforeCASCommits 顺序判据：内存/锁存动作必须
 // **晚于** CAS 成功。CAS 恒定失败（stale）时不得留下"已摘除但库里没失效"的状态。
 func TestHandleFailureDoesNotDisableBeforeCASCommits(t *testing.T) {
-	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 3), casErr: repository.ErrStaleIdentityRevision}
+	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 3), casErr: storeerr.ErrStaleIdentityRevision}
 	failer := &retryFakeFailer{}
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
@@ -187,7 +187,7 @@ func TestRotationWritebackCarriesSourceRevision(t *testing.T) {
 // 属于**陈旧事件**：不 panic（否则 SDK 会重试到 CallbackDeliveryError 并摘账号）、
 // 不回写快照、不反过来禁用账号。
 func TestRotationFencedByStorageDoesNotDisableAccount(t *testing.T) {
-	store := &fakeRotationStore{err: repository.ErrStaleIdentityRevision}
+	store := &fakeRotationStore{err: storeerr.ErrStaleIdentityRevision}
 	handler := &recordingHandler{}
 	invals := 0
 	a := NewCodex(handler.add, testEgressPool(nil), nil, RotationDeps{

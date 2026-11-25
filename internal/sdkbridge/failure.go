@@ -17,7 +17,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/identityfence"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -233,7 +233,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, event CredentialFailur
 			}
 			err = cs.FailAccountCAS(ctx, accountID, expectedRev, domain.FailureSourceSDK, time.Now(), reason)
 			if err != nil {
-				if errors.Is(err, repository.ErrStaleIdentityRevision) {
+				if errors.Is(err, storeerr.ErrStaleIdentityRevision) {
 					// CAS 被拒 = 身份已授权变更（旧判决作废）。此时**什么都没做**：
 					// 内存/锁存动作尚未执行，无需回滚，也不得反过来清掉新身份的
 					// 锁存（新身份本来就该可选）。
@@ -282,7 +282,7 @@ func isTransientFailure(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, repository.ErrStaleIdentityRevision) || errors.Is(err, ErrStaleFailureRevision) || errors.Is(err, identityfence.ErrCandidateFingerprintMismatch) || errors.Is(err, identityfence.ErrMissingCandidateFingerprint) || errors.Is(err, identityfence.ErrMissingExpectedRevision) || errors.Is(err, ErrMissingCredentialDiscriminator) {
+	if errors.Is(err, storeerr.ErrStaleIdentityRevision) || errors.Is(err, ErrStaleFailureRevision) || errors.Is(err, identityfence.ErrCandidateFingerprintMismatch) || errors.Is(err, identityfence.ErrMissingCandidateFingerprint) || errors.Is(err, identityfence.ErrMissingExpectedRevision) || errors.Is(err, ErrMissingCredentialDiscriminator) {
 		return false
 	}
 	return true

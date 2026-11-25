@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -171,11 +171,23 @@ func compileRules(in []domain.Rule) ([]compiledRule, error) {
 	return out, nil
 }
 
+// ruleStore 消费者定义的窄接口：只含本包真正调用的 3 个方法。
+//
+// 为什么不继续用 repository.RuleStore（6 方法）：本包只调 ListRules /
+// CountRules / CreateRule，宽接口把 UpdateRule/DeleteRule/DeleteRulesBatch 也拉进
+// 契约，还逼 rule 为几次 errors.Is 而 import 整个存储实现层。Go 的结构化类型
+// 让 repository.RuleStore 自动满足它，无需任何显式实现声明。
+type ruleStore interface {
+	ListRules(ctx context.Context, enabled *bool) ([]domain.Rule, error)
+	CreateRule(ctx context.Context, r domain.Rule) (int64, error)
+	CountRules(ctx context.Context) (int64, error)
+}
+
 // RuleEngine 规则引擎：加载 enabled 规则（priority 升序）、逐规则首中匹配、
 // 窗口计数维护与 worker 消费循环（Name/Start/Close 见 worker.go）。
 type RuleEngine struct {
 	cfg   Config
-	store repository.RuleStore
+	store ruleStore
 	log   *logx.Logger
 
 	ch      chan Event
@@ -221,7 +233,7 @@ type RuleEngine struct {
 // New 只建结构（不加载规则——由 Reload 显式完成）。sink/persist 经构造
 // 一次性注入（nil = 沿用跳过语义）：装配后不可变，无 Set* 回填——构造环
 // 已结构性消除（latch/hub 先行，见 cmd/server/main.go 装配序）。
-func New(cfg Config, store repository.RuleStore, log *logx.Logger, sink HealthSink, persist PersistFunc) *RuleEngine {
+func New(cfg Config, store ruleStore, log *logx.Logger, sink HealthSink, persist PersistFunc) *RuleEngine {
 	q := cfg.EventQueueSize
 	if q <= 0 {
 		q = 4096
@@ -406,7 +418,7 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 	}
 	for _, s := range seeds {
 		if _, err := e.store.CreateRule(ctx, s); err != nil {
-			if errors.Is(err, repository.ErrConflict) {
+			if errors.Is(err, storeerr.ErrConflict) {
 				continue // 并发实例已插同名/同 priority 种子（R2）：跳过，并集收敛
 			}
 			return fmt.Errorf("create seed rule %s: %w", s.Name, err)

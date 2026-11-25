@@ -13,7 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 // RED tests with barriers/no sleeps, require-only.
@@ -130,7 +130,7 @@ func (f *holStore) FailAccountCAS(_ context.Context, id int64, expected int64, _
 		return fmt.Errorf("not found")
 	}
 	if a.IdentityRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
+		return fmt.Errorf("%w: stale", storeerr.ErrStaleIdentityRevision)
 	}
 	a.LifecycleRevision++
 	return nil

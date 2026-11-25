@@ -272,8 +272,12 @@ var allowRules = []allowRule{
 	// / ExtCredentialMismatch）住在中立叶子包里，repository 作为**实现方**引用契约。
 	// 方向是"实现 → 契约"：loadport 只依赖 domain + credential，绝不反向 import 本包，
 	// 故这条边不构成环。这是本单新增的第 1 条 allow 边。
+	//
+	// R1-a 起多一条 internal/storeerr：4 枚存储错误哨兵的 canonical 搬到叶子包，
+	// 本包保留同值别名（var ErrX = storeerr.ErrX）。同属"实现 → 契约"方向，storeerr
+	// 只依赖 stdlib，结构上不可能反向 import 本包。
 	{from: "internal/repository", to: []string{
-		"internal/domain", "internal/credential", "internal/ent", "internal/loadport",
+		"internal/domain", "internal/credential", "internal/ent", "internal/loadport", "internal/storeerr",
 	}},
 
 	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
@@ -352,8 +356,11 @@ var allowRules = []allowRule{
 	// 被 isTransientFailure 判成"可重试"），而是 canonical 的变量别名（同一 error 值）。
 	// 方向是"执行面实现 → 叶子契约"：identityfence 只 import domain，既不成环，也不会把
 	// repository/scheduler 带进来。
+	//
+	// R1-a：internal/storeerr 同理——存储错误哨兵的 canonical 放在叶子包，本包只判
+	// errors.Is。这条边替掉了原来的 sdkbridge → repository（见账本已删除的那条债）。
 	{from: "internal/sdkbridge", to: []string{
-		"internal/domain", "internal/credential", "internal/identityfence", "internal/worker",
+		"internal/domain", "internal/credential", "internal/identityfence", "internal/storeerr", "internal/worker",
 		"pkg/egress", "pkg/logx",
 	}},
 
@@ -403,7 +410,9 @@ var allowRules = []allowRule{
 
 	{from: "internal/protoconv", to: []string{"internal/domain", "pkg/sserelay"}},
 	{from: "internal/quality", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
-	{from: "internal/rule", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
+	// R1-a：规则引擎不再 import repository（窄接口 ruleStore 定义在包内，repository.RuleStore
+	// 结构上自动满足），只引用 internal/storeerr 的 ErrConflict 哨兵。
+	{from: "internal/rule", to: []string{"internal/domain", "internal/storeerr", "internal/worker", "pkg/logx"}},
 	{from: "internal/settingssnap", to: []string{"internal/domain", "pkg/logx"}},
 	{from: "internal/supplier", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
 	{from: "internal/usage", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
@@ -420,6 +429,11 @@ var allowRules = []allowRule{
 	{from: "internal/db/migrate/gen/cmd", to: []string{"internal/db/migrate/gen"}},
 	{from: "internal/db/migrate/gen", to: []string{"internal/db/migrate/catalog", "internal/ent/migrate"}},
 	{from: "internal/db/migrate/catalog"},
+
+	// 存储错误哨兵的 canonical 叶子包（R1-a）：只依赖 stdlib，零内部边。
+	// 裸规则是**正面要求**——TestImportGraphPolicyCoversPackages 按包枚举，
+	// 缺显式层级声明即红；leafRule.to 不含它，消费方必须各自显式列出。
+	{from: "internal/storeerr"},
 	{from: "internal/db/migrate", to: []string{"internal/db/migrate/"}},
 
 	{from: "internal/snapshot"},
@@ -499,11 +513,22 @@ const (
 	//   后两条换来的是账本里 server/auth → handler/httpface 两条 P6 债的**消失**：
 	//   边从「寄生在 handler 子树里」变成「顶层中立包 + 显式白名单」。搬包不是删依赖，
 	//   所以指纹必变；反过来若这里不动指纹，门禁就说不出这条边从哪来。
+	// 债 r1a-storeerr 变更（3 条 to: 白名单加宽 + 1 条新增裸叶子规则，没有新增 all: true）：
+	//   4 枚存储错误哨兵的 canonical 搬到新叶子包 internal/storeerr（只依赖 stdlib），
+	//   repository 保留同值别名。矩阵改动如下：
+	//   1. repository 的 to 加 internal/storeerr（实现 → 哨兵契约；别名主语）
+	//   2. rule 的 to 加 internal/storeerr（规则引擎判 ErrConflict）
+	//   3. sdkbridge 的 to 加 internal/storeerr（失效链判 ErrStaleIdentityRevision）
+	//   4. 新增裸规则 internal/storeerr（TestImportGraphPolicyCoversPackages 按包枚举，
+	//      leafRule.to 不含它，消费方必须显式列出 ⇒ 缺裸规则即红）
+	//   换来的是账本里 rule → repository 与 sdkbridge → repository 两条 P4 债的**消失**
+	//   （debtMax 14 → 12）。注意：这两条边消失是**真删边**（rule 改窄接口、sdkbridge
+	//   只曾用哨兵），不是把边改名绕开账本。
 	// 前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "7a2d87c2f82c63ae56f2a03607a0b76c5b9b673b2bf3c0cac4b9a77b0405b7ca"
+	allowMatrixFingerprint = "ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -679,7 +704,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 14,
+	debtMax: 12,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -690,8 +715,6 @@ var productionLedger = ledger{
 		{"internal/quality", "internal/repository", "quality 的质量/流量落库直接用 repository；P4 存储接口化", phaseP4},
 		{"internal/repository", "internal/billing", "repository 反向依赖 billing 的账务类型；P4 把账务读写抽成端口", phaseP4},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
-		{"internal/rule", "internal/repository", "rule 引擎直接落库；P4 存储接口化", phaseP4},
-		{"internal/sdkbridge", "internal/repository", "sdkbridge 直接写 repository（用量/状态）；P4 存储接口化", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},
 		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},
 		{"internal/handler", "internal/server", "只为 server.UserIDFromContext 一个 context 访问器而反向依赖传输壳；P1 零生产改动无法即消，P3 把该访问器移到 auth/api-meta 后本边消失", phaseP3},

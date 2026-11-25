@@ -13,7 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 // Test doubles for failure handling.
@@ -65,7 +65,7 @@ func (f *retryFakeStore) FailAccountCAS(_ context.Context, id int64, expected in
 		return fmt.Errorf("not found")
 	}
 	if a.IdentityRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
+		return fmt.Errorf("%w: stale", storeerr.ErrStaleIdentityRevision)
 	}
 	a.LifecycleRevision++
 	f.callCount++
@@ -271,7 +271,7 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
-		failSeq:  []error{repository.ErrStaleIdentityRevision},
+		failSeq:  []error{storeerr.ErrStaleIdentityRevision},
 	}
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}

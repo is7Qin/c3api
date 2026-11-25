@@ -11,7 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 )
 
 type fakeLatch2 struct {
@@ -67,7 +67,7 @@ func (f *fakeCASStore2) FailAccountCAS(_ context.Context, id int64, expected int
 		return fmt.Errorf("not found")
 	}
 	if a.IdentityRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
+		return fmt.Errorf("%w: stale", storeerr.ErrStaleIdentityRevision)
 	}
 	a.LifecycleRevision++
 	return nil
@@ -102,7 +102,7 @@ func TestSDKFailStaleRevisionFence(t *testing.T) {
 	store := &fakeCASStore2{
 		accounts: map[int64]*domain.Account{1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 5, IdentityRevision: 5, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}}},
 	}
-	store.casErr = repository.ErrStaleIdentityRevision
+	store.casErr = storeerr.ErrStaleIdentityRevision
 	latch := newFakeLatch2()
 	latch.m[1] = "k1"
 	failer := &fakeFailer2{}

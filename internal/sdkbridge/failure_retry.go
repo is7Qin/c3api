@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -275,7 +275,7 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 		}
 		return false
 	}
-	if errors.Is(err, repository.ErrStaleIdentityRevision) {
+	if errors.Is(err, storeerr.ErrStaleIdentityRevision) {
 		if fresh, ferr := cs.GetAccount(ctx, task.accountID); ferr == nil && fresh.IdentityRevision > task.identityRevision && task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
 		}
