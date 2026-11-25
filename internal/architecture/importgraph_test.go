@@ -359,23 +359,36 @@ var allowRules = []allowRule{
 
 	// HTTP 控制器：自己的子包 + 控制器层，不允许直接摸 repository/scheduler，
 	// 也不允许反向依赖传输壳 server（那是一条 P3 债务，见账本）。
+	//
+	// `internal/httpface` 是显式边：httpface 从 handler 子树搬到顶层后，
+	// `internal/handler/` 这个**子树前缀**不再匹配它。本包与 handler/user、
+	// handler/paymentadmin 三处都在写错误响应，边是真的，不是删债时顺带放宽。
 	{from: "internal/handler", to: []string{
 		"internal/handler/", "internal/domain", "internal/credential",
-		"internal/service", "internal/auth", "pkg/logx",
+		"internal/service", "internal/auth", "internal/httpface", "pkg/logx",
 	}},
 
 	// 传输壳：只依赖 domain 与两个 pkg 原语。
-	{from: "internal/server", to: []string{"internal/domain", "pkg/logx", "pkg/sserelay"}},
+	//
+	// `internal/httpface` 同样是显式边：middleware/schema_gate 要写错误信封，
+	// 与 auth 那条同一理由（httpface 已下沉到顶层，不再是 handler 子包）。
+	{from: "internal/server", to: []string{"internal/domain", "internal/httpface", "pkg/logx", "pkg/sserelay"}},
 
 	// 测试支撑：允许 db + repository。
 	{from: "internal/testsupport", to: []string{"internal/db", "internal/repository", "internal/testsupport/"}},
 
 	// 以下为支撑/叶子包：逐包声明，避免任何包悄悄拿到 repository/scheduler。
-	{from: "internal/auth", to: []string{"internal/domain"}},
+	// internal/httpface：auth 中间件直接写错误信封（这条边原先寄生在 handler 子树里）。
+	{from: "internal/auth", to: []string{"internal/domain", "internal/httpface"}},
 	{from: "internal/billing", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
 	{from: "internal/config", to: []string{"internal/domain"}},
 	{from: "internal/continuation", to: []string{"internal/domain"}},
 	{from: "internal/discovery", to: []string{"internal/worker", "pkg/logx"}},
+	// HTTP 报文面收敛点（本单从 handler 子包搬到顶层）：错误信封 + JSON
+	// 写出 + 分页/统计窗口参数解析。它是**显式声明的叶子层**，不是"没写规则所以落
+	// leafRule"：两个内部依赖都是叶子（domain 值类型、service/errors 哨兵与线缆载体），
+	// 而 leafRule 不含 service/errors。
+	{from: "internal/httpface", to: []string{"internal/domain", "internal/service/errors"}},
 	{from: "internal/invalidate", to: []string{"internal/worker", "pkg/logx"}},
 	{from: "internal/latch", to: []string{"internal/rule"}},
 	{from: "internal/notification", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
@@ -475,10 +488,22 @@ const (
 	//   Proxy.EgressSpec 要造出口规格值，而归一化 New 已随 Spec 归入 egressapi。
 	//   新增这条边换来的是账本里 domain → pkg/egress 那条 P3 债的**消失**：
 	//   依赖从实现层（连接池/transport 装配）降到了只含 stdlib 的中立叶子包。
-	// 前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
+	// 债 r3-httpface 变更（4 条新增 allow 改动，全部to: 白名单，没有新增 all: true）：
+	//   httpface 从 handler 子树搬到顶层 internal/httpface（纯搬包，零逻辑改动）。
+	//   1. 新规则 internal/httpface → {domain, service/errors}（显式声明的叶子层，
+	//      不是靠 leafRule 默认放行：leafRule 不含 service/errors）；
+	//   2. internal/handler 的 to 加 internal/httpface（`internal/handler/` 是子树
+	//      前缀，搬走后不再匹配；本包与 handler/user、handler/paymentadmin 三处都在用）；
+	//   3. internal/server 的 to 加 internal/httpface（middleware/schema_gate 写错误信封）；
+	//   4. internal/auth 的 to 加 internal/httpface（中间件写错误信封）。
+	//   后两条换来的是账本里 server/auth → handler/httpface 两条 P6 债的**消失**：
+	//   边从「寄生在 handler 子树里」变成「顶层中立包 + 显式白名单」。搬包不是删依赖，
+	//   所以指纹必变；反过来若这里不动指纹，门禁就说不出这条边从哪来。
+	// 前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
+	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3"
+	allowMatrixFingerprint = "7a2d87c2f82c63ae56f2a03607a0b76c5b9b673b2bf3c0cac4b9a77b0405b7ca"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -654,7 +679,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 16,
+	debtMax: 14,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -671,8 +696,6 @@ var productionLedger = ledger{
 		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},
 		{"internal/handler", "internal/server", "只为 server.UserIDFromContext 一个 context 访问器而反向依赖传输壳；P1 零生产改动无法即消，P3 把该访问器移到 auth/api-meta 后本边消失", phaseP3},
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
-		{"internal/server", "internal/handler/httpface", "server 用 httpface 的错误响应类型；P6 把 httpface 移出 handler 子包", phaseP6},
-		{"internal/auth", "internal/handler/httpface", "接口包寄生：auth 中间件直接用 httpface 的错误体；P6 移出后消除", phaseP6},
 	},
 	keep: []legacyRow{
 		{"internal/db/migrate/gen", "internal/repository", "迁移 DDL 生成器（go:generate）必须读取 repository 的 baseline DDL 与 hook 排除项；它是离线工具链、不是运行期包，结构上永不可能消除", phaseKeep},

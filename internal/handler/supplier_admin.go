@@ -14,7 +14,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // fundsActorFrom 读取资金操作者（管理面鉴权路径注入：platform_admin JWT 与管理 key

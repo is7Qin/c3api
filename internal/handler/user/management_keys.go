@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // toAPIManagementKey 管理 key 领域对象 → 用户面契约类型（明文长期回显——与客户端

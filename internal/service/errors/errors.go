@@ -59,11 +59,11 @@ func (emailExistsError) Unwrap() error { return ErrConflict }
 // §4.4(c) 的机读字段（httpface 用 errors.As 取值，**禁字符串嗅探**）。
 //
 // **位置**：本类型必须同时对生产方（internal/service）与序列化方
-// （internal/handler/httpface）可见，而 httpface **不能** import
-// internal/service：service → internal/auth → handler/httpface 已成环
-// （internal/auth/middleware.go 用 httpface 写错误响应）。故载体落在本叶子包，
-// service 以类型别名 re-export（与 ErrXxx 哨兵同一手法、同一理由），调用点仍
-// 写 service.StatsWindowError；这是位置选择，不是第二套类型。
+// （internal/httpface）可见，而 httpface **不能** import internal/service：
+// service → internal/auth → httpface 已成环（internal/auth/middleware.go 用
+// httpface 写错误响应）。故载体落在本叶子包，service 以类型别名 re-export
+// （与 ErrXxx 哨兵同一手法、同一理由），调用点仍写 service.StatsWindowError；
+// 这是位置选择，不是第二套类型。
 type StatsWindowError struct {
 	domain.StatsWindowError
 }

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // schema 启动门的 HTTP 面（spec §2.5/§2.6）。两个出口，一个判据：

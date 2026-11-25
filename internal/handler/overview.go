@@ -11,7 +11,7 @@ import (
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 

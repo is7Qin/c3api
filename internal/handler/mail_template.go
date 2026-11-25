@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // GetMailTemplates 邮件模板列表（缺行自动回退内置默认）。

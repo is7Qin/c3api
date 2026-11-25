@@ -10,7 +10,7 @@ package handler
 //     判定回传的 Exec；**/overview 无回显头**（可证它永不 WindowShifted，§4.5）；
 //   - A14(handler 级) 400 机读字段：window_too_long / window_invalid 走**真实
 //     端点**断言（两者都是 clock 无关判定）；coverage 系列的序列化在
-//     internal/handler/httpface 用合成载体钉死（避免墙钟）。
+//     internal/httpface 用合成载体钉死（避免墙钟）。
 //   - A16' capabilities：投影/形状/解耦三件事（金标准数字见
 //     internal/domain/statsplan_test.go——本包内刻意不写死那三个数字，
 //     由 A16'② 的零命中审计钉死）。

@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // 我的临时额度（/api/user/temp-balances，spec 2026-08-15）：仅有效额度（未过期且

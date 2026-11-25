@@ -9,7 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // customPagesConfigInvalid 配置损坏时的固定错误文案（spec 2026-11-16 §4.4）。

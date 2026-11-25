@@ -7,7 +7,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 func (h *AdminAPI) PostMailChannelTest(w http.ResponseWriter, r *http.Request) {

@@ -13,7 +13,8 @@
 cmd/server/       # 组合根：main.go 全部装配顺序；dispatcher(NOTIFY→invalidate)；auth_sync worker；go:embed dist
 internal/
   proxy/          # 热路径：guardPipeline→failoverLoop→caller_*；不变量：零 DB、零每请求锁
-  handler/        # /api/admin(oapi-codegen 生成路由) + /api/user(JWT) + httpface(错误写出收敛)
+  handler/        # /api/admin(oapi-codegen 生成路由) + /api/user(JWT)
+  httpface/       # HTTP 报文面收敛点：错误写出+严格解码+分页窗口参数（叶子包，三方共用）
   service/        # 业务逻辑；errors 叶子包=8 哨兵错误；publish/reload 用 WithoutCancel；探测准入+唯一期限
   probe/          # 单账号单模型探测执行：纯执行已准入 ctx；origin 锁定+不跟随重定向+2 MiB 上限+固定分类；文本/images/search 200-only 安全预览（只读）
   repository/     # pgx+ent 数据访问；日分区引导(usage_logs/err_logs/usage_stats)

@@ -7,7 +7,7 @@ package user
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 func (h *UserAPI) GetUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {

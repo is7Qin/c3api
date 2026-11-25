@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // GET /api/admin/users-top 实时在途并发排行（spec 2026-08-14）：读门禁快照在途

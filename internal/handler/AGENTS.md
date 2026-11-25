@@ -11,7 +11,7 @@
 - `handler.go` 的 `AdminAPI` 把生成接口转发到 `service.Service`；业务规则、
   哨兵错误、准入/期限全部在 service。用户面在 `user/`，供应商面在 `supplier/`；
   本包不含 `/v1`（在 `internal/proxy`）。
-- 错误写出统一走 `internal/handler/httpface`：`WriteServiceErr` 是 service
+- 错误写出统一走 `internal/httpface`：`WriteServiceErr` 是 service
   哨兵→HTTP 状态的唯一映射；未知错误一律 500 `internal error`（不回显内部细节）。
 - 严格解码：管理面请求体默认 `httpface.Decode`（`DisallowUnknownFields` +
   trailing-data 检查 + 1 MiB 上限）。探测端点
@@ -36,5 +36,5 @@
 
 ```bash
 go generate ./internal/handler/
-go test ./internal/handler/ ./internal/handler/httpface/ -count=1
+go test ./internal/handler/ ./internal/httpface/ -count=1
 ```

@@ -2,12 +2,19 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package httpface 管理面/用户面 HTTP 边界：响应书写（WriteJSON/WriteErr/
-// WriteServiceErr，service 错误→HTTP 状态映射表唯一一份）+ 请求参数边界
-// （ClampLimit——两面包共享的分页上限钳制）。
+// Package httpface 是 HTTP 响应面的**收敛点**：错误体、JSON 写出、分页/统计窗口
+// 参数解析。管理面（internal/handler）、用户面（handler/user）、传输壳
+// （internal/server）与 auth 中间件共用这一份。
 //
-// 依赖仅 internal/service/errors 叶子包（零内部依赖），不反向依赖
-// handler/service/auth/server 任何上层包——依赖图无环。
+// 边界（必须守）：
+//   - 只放「HTTP 报文层的形状与序列化」，不放业务语义；
+//   - 不新增对 internal/handler、internal/service、internal/repository 的依赖；
+//   - 新依赖必须依然是叶子级（domain / service/errors）。
+//
+// 历史：本包原住在 handler 子树下，是纯位置错误（server/auth 因此要在架构账本里
+// 登记 P6 债）。搬到顶层是纯搬包、零逻辑改动；代价是 allow 矩阵多了三条显式
+// 白名单（handler/server/auth 各一条）——依赖还在，只是从「寄生在 handler
+// 子树里」变成了「顶层中立包 + 显式边」。
 package httpface
 
 import (

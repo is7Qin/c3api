@@ -7,7 +7,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // GetAdminSettings 全部设置（默认值 + DB 覆盖；ServerInterface）。

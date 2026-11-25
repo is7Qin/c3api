@@ -7,7 +7,7 @@ package user
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // GetUserFeatures 功能开关。控制台据此决定是否展示供应商与支付网关的入口和页面；

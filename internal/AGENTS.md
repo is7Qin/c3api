@@ -9,7 +9,8 @@
 | `ent/` | **生成物**。手写 schema 在 `ent/schema/*.go`（19 实体）；usage_logs/err_logs/usage_stats 三表被 migrate hook 排除，DDL 归 PartitionRepo 管 |
 | `repository/` | Repository 门面实现 service.Store；`WithTx`(txDriver) 让 ent 构建器与裸 SQL 同事务；OpenPG 自动补 `lock_timeout=5s`、MaxConnLifetime=30m |
 | `proxy/` | /v1/* 网关热路径（见根 CODE MAP） |
-| `handler/` | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)；`httpface/`=错误写出叶子包。**没有 v1 子包——/v1 在 proxy** |
+| `handler/` | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)。**没有 v1 子包——/v1 在 proxy** |
+| `httpface/` | HTTP 报文面收敛点：错误信封/JSON 写出 + 分页与统计窗口参数解析。叶子级（只依赖 `domain` 与 `service/errors`），由 handler、server、auth 三方共用 |
 | `service/` | 一资源一文件；`errors/` 叶子包 8 哨兵；探测准入（4 执行+16 等待）与唯一 30s 期限在本层 |
 | `probe/` | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
 | 领域件：`billing` `scheduler` `domain` `rule` `usage` `protoconv` `sdkbridge` `pricing` `notify` `server` `auth` `invalidate` `credential` `config` `snapshot` `worker` | 各自职责见上表与包内 AGENTS.md |

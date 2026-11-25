@@ -15,8 +15,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/handler/supplier"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // supplierUIDFrom 取已验证 JWT 的 user_id（门控后必存在）。

@@ -1,7 +1,7 @@
-# internal/handler/httpface — HTTP 书写与请求参数叶子包
+# internal/httpface — HTTP 书写与请求参数叶子包
 
 > 根 `AGENTS.md` 覆盖项目级约定；`internal/AGENTS.md` 是分层地图。本文件只讲
-> 管理面/用户面共享的 HTTP 边界原语。
+> 管理面/用户面/传输壳共用的 HTTP 边界原语。
 
 ## 职责 / 入口
 
@@ -20,7 +20,11 @@
 ## 不变量
 
 - 只依赖 `internal/domain` 与 `internal/service/errors` 叶子包；不反向依赖
-  handler/service/auth/server（依赖图无环）。
+  handler/service/auth/server（依赖图无环）。**这是职责护栏，不是巧合**：本包是
+  三方共用的收敛点，一旦引入业务语义就会变成第二个 `service`。
+- 依赖边在 `internal/architecture` 的 allow 矩阵里是显式白名单（`internal/httpface`
+  → `{domain, service/errors}`；handler/server/auth 各有一条到本包的边），新增
+  依赖会直接红门禁，须先过评审才能改矩阵与指纹。
 - `Decode`/`DecodeLimit` 必须保留未知字段与 trailing-data 拒绝；不得改成宽松
   解码。上限是**字节**（`http.MaxBytesReader`）。
 - 未命中哨兵的 service 错误一律 500 `internal error`，不泄露内部细节。
@@ -29,6 +33,6 @@
 ## 验证
 
 ```bash
-go test ./internal/handler/httpface/ -count=1
-go test ./internal/handler/httpface/ -run TestDecodeLimit -count=1
+go test ./internal/httpface/ -count=1
+go test ./internal/httpface/ -run TestDecodeLimit -count=1
 ```

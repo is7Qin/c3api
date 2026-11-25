@@ -17,7 +17,7 @@ package user
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/httpface"
 )
 
 // GetUserPaymentMethods 可售方式列表（ServerInterface）。
