@@ -6,13 +6,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 // routingQualityFactColumnDefs 是单一分片事实表 S1 的列定义事实源：身份列
@@ -105,7 +105,11 @@ var routingFlowFactIndexDDLs = []string{
 // （tx.Commit 返回 nil 正确），而超期拒绝意味着该分钟的链已被保留策略丢弃，
 // 是数据丢失。故必须显式返回本哨兵，调用方不得照抄静默形状——否则合法迟到
 // 实例的链会无痕消失（判据 B5）。
-var ErrRoutingSnapshotBeyondRetention = errors.New("routing flow snapshot beyond observation retention")
+//
+// R1-b：canonical 定义搬到 internal/qualitymodel（quality 域的数据 + 该域错误
+// 分类契约），本包保留**同值别名**。必须是同值别名而非新 errors.New：调用方在
+// repository 与 qualitymodel 两侧混用 errors.Is / == 都必须成立。
+var ErrRoutingSnapshotBeyondRetention = qualitymodel.ErrRoutingSnapshotBeyondRetention
 
 var routingFlowSnapshotStateDDL = `CREATE TABLE IF NOT EXISTS routing_flow_snapshot_state (
 	terminal_minute timestamptz NOT NULL,
@@ -226,51 +230,35 @@ func (r *PartitionRepo) RoutingFactPartitionStats(ctx context.Context) (RoutingF
 	return out, nil
 }
 
-type RoutingQualityRow struct {
-	IdentityVersion      int16
-	RouteClassID         domain.RouteClassIDVal
-	QualityClassID       domain.QualityClassIDVal
-	CandidateFingerprint domain.CandidateFingerprintVal
-	InstanceSrc          string
-	BucketMinute         time.Time
-	AbsoluteSequence     int64
-	Attempts             int64
-	Successes            int64
-	Count429             int64
-	CountOrdinary4xx     int64
-	Count5xx             int64
-	CountNetwork         int64
-	TTFTN                int64
-	TTFTSumLogQ32        int64
-	TTFTSumSqLogQ32      int64
-	TTFTHist             []int64
-	InputTokens          int64
-	OutputTokens         int64
-	CacheReadTokens      int64
-	CacheCreateTokens    int64
-	Calls                int64
-	Images               int64
+// RoutingQualityRow / RoutingFlowRow 是 quality 域行契约的**类型别名**（R1-b）。
+//
+// 为什么必须是别名（带 `=`）而不是新定义：internal/quality 生产这些行、本包落库
+// 消费它们，两侧必须是**同一个类型**，否则跨包传值要转换、同一性断言全部失真。
+// canonical 住在 internal/qualitymodel（只依赖 domain + stdlib），方向是实现 → 契约。
+//
+// 本包 100+ 处内部使用与两个包外测试消费方（proxy / cmd/server）因此零改动。
+type (
+	RoutingQualityRow = qualitymodel.RoutingQualityRow
+	RoutingFlowRow    = qualitymodel.RoutingFlowRow
+)
+
+// 编译期同一性断言（R1-b §5.5 R1）：若任一别名写少了 `=`（变成新定义类型），
+// 下面的双向赋值立刻编译失败。必须放在**非测试**代码里，才能在每次 go build
+// 时生效——只写在 _test.go 里会被"测试没跑到"放过。
+func assertRowIdentity() {
+	var q qualitymodel.RoutingQualityRow
+	var r RoutingQualityRow
+	q = r
+	r = q
+	var f qualitymodel.RoutingFlowRow
+	var g RoutingFlowRow
+	f = g
+	g = f
+	_, _, _, _ = q, r, f, g
 }
 
-type RoutingFlowRow struct {
-	IdentityVersion   int16
-	RouteClassID      domain.RouteClassIDVal
-	TerminalMinute    time.Time
-	Ordinal           int16
-	Lane              string
-	AccountID         int64
-	PreviousAccountID *int64
-	PreviousOutcome   string
-	TransitionReason  string
-	Outcome           string
-	IsTerminal        bool
-	// Generation 是单事件代际（写面输入口径）：同边多代际输入由
-	// UpsertFlowSnapshot 按新键折叠为 min_generation 后落库。
-	Generation       int64
-	InstanceSrc      string
-	AbsoluteSequence int64
-	ChainCount       int64
-}
+// 呼一次只为占位，保持断言不被"未使用"删除；函数体编译期即校验可赋值性。
+var _ = assertRowIdentity
 
 func advisoryLockKey(parts ...string) int64 {
 	h := sha256.New()
@@ -324,6 +312,14 @@ func qualityUpsertSQL(table, conflictCols string) string {
 // routingQualityFactUpsertSQL 是质量域唯一写入缝（身份键列序同
 // routing_quality_fact_uniq）。
 var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id")
+
+// QualityUpsertSQLForTest 把未导出的 qualityUpsertSQL 暴露给外部测试包，使
+// 「SQL 列清单 ↔ 落库行字段」的对齐断言能跑在**不依赖 PG** 的普通 go test 里
+// （spec §5.4：*_pg_test.go 在无 TEST_DATABASE_URL 时全部 SKIP，不构成防线）。
+// 生产代码不调用它。
+func QualityUpsertSQLForTest(table, conflictCols string) string {
+	return qualityUpsertSQL(table, conflictCols)
+}
 
 // UpsertQualityRow 逐行写入质量事实表（S1）：累计绝对量 upsert + 行级序号
 // 守卫（WHERE EXCLUDED.absolute_sequence > …），旧序号静默 no-op（幂等重放）。

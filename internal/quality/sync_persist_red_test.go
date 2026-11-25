@@ -9,12 +9,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 type typedFakePG struct {
 	mu      sync.Mutex
-	quality []repository.RoutingQualityRow
+	quality []qualitymodel.RoutingQualityRow
 	failAll error
 	rowErr  map[string]error
 	calls   int
@@ -24,7 +24,7 @@ func newTypedFakePG() *typedFakePG {
 	return &typedFakePG{rowErr: make(map[string]error)}
 }
 
-func (f *typedFakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *typedFakePG) UpsertQualityRow(_ context.Context, row qualitymodel.RoutingQualityRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -45,7 +45,7 @@ func (f *typedFakePG) UpsertQualityRow(_ context.Context, row repository.Routing
 	return nil
 }
 
-func (f *typedFakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, terminalMinute time.Time, _ int16, seq int64, rows []repository.RoutingFlowRow) error {
+func (f *typedFakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, terminalMinute time.Time, _ int16, seq int64, rows []qualitymodel.RoutingFlowRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -18,19 +18,19 @@ import (
 // 不参与本用例。
 type retentionRejectingPG struct{}
 
-func (retentionRejectingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
+func (retentionRejectingPG) UpsertQualityRow(context.Context, qualitymodel.RoutingQualityRow) error {
 	return nil
 }
 
-func (retentionRejectingPG) UpsertFlowSnapshot(context.Context, string, time.Time, int16, int64, []repository.RoutingFlowRow) error {
-	return repository.ErrRoutingSnapshotBeyondRetention
+func (retentionRejectingPG) UpsertFlowSnapshot(context.Context, string, time.Time, int16, int64, []qualitymodel.RoutingFlowRow) error {
+	return qualitymodel.ErrRoutingSnapshotBeyondRetention
 }
 
 // B5（可观测面）：超出观测保留期的快照被拒后必须**可观测地丢弃**，不得照抄
 // "旧序号静默 no-op"的形状（那是幂等，正确；超期是数据丢失）。
 //
 // 三处可观测面各断言一次：
-//  1. 专用哨兵 repository.ErrRoutingSnapshotBeyondRetention（PG 侧用例断言）
+//  1. 专用哨兵 qualitymodel.ErrRoutingSnapshotBeyondRetention（PG 侧用例断言）
 //  2. Warn 日志（带 minute + instance_src）
 //  3. 进程丢弃计数 quality.RoutingLateSnapshotDropped()
 //
@@ -54,7 +54,7 @@ func TestQualitySync_LateSnapshotBeyondRetentionIsObservableDrop(t *testing.T) {
 
 	w := NewSyncWorker(rec, rdb, retentionRejectingPG{}, SyncConfig{InstanceSrc: "src-late-drop", BatchSize: 10}, logger, nil)
 	w.SetClock(func() time.Time { return fixed })
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []qualitymodel.RoutingFlowRow{{
 		IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary",
 		AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3,
 	}}))

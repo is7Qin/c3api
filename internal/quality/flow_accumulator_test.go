@@ -19,13 +19,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 	"github.com/is7qin/c3api/internal/worker"
 )
 
 // redFlowRow builds a distinct flow edge identity per account: fingerprint is
 // derived from the account so preloaded retained identities stay distinct.
-func redFlowRow(minute time.Time, account int64) repository.RoutingFlowRow {
+func redFlowRow(minute time.Time, account int64) qualitymodel.RoutingFlowRow {
 	row := flowTestRow(minute, 1, account, "success", true)
 	return row
 }
@@ -40,11 +40,11 @@ type redFlowBlockingPG struct {
 	once    sync.Once
 }
 
-func (f *redFlowBlockingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowBlockingPG) UpsertQualityRow(context.Context, qualitymodel.RoutingQualityRow) error {
 	return nil
 }
 
-func (f *redFlowBlockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []repository.RoutingFlowRow) error {
+func (f *redFlowBlockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []qualitymodel.RoutingFlowRow) error {
 	f.once.Do(func() { close(f.entered) })
 	select {
 	case <-f.release:
@@ -74,9 +74,9 @@ func TestRed_FlowAccumulatorDuplicateMergeBytesScaleWithIncomingOnly(t *testing.
 		rec, err := NewRecorder(50000)
 		require.NoError(t, err)
 		for i := range retained {
-			require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{redFlowRow(fixed, int64(i))}))
+			require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []qualitymodel.RoutingFlowRow{redFlowRow(fixed, int64(i))}))
 		}
-		dup := make([]repository.RoutingFlowRow, 0, 8)
+		dup := make([]qualitymodel.RoutingFlowRow, 0, 8)
 		for i := range 8 {
 			dup = append(dup, redFlowRow(fixed, int64(i)))
 		}
@@ -109,7 +109,7 @@ func TestRed_FlowOwnerRetainsCumulativeAfterPGSuccess(t *testing.T) {
 	w.SetClock(func() time.Time { return fixed })
 
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	w.doPG(context.Background())
 	fm, ok := rec.FlowOwner().lookup(m)
 	require.True(t, ok, "owner must retain the cumulative minute after PG success")
@@ -133,7 +133,7 @@ func TestRed_FlowInFlightPGStateCannotBeDisplaced(t *testing.T) {
 	w.SetClock(func() time.Time { return fixed })
 
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -144,7 +144,7 @@ func TestRed_FlowInFlightPGStateCannotBeDisplaced(t *testing.T) {
 	require.True(t, ok, "in-flight PG minute must remain owner-visible")
 	// pressure eviction is deleted (no-eviction exactness) — the new
 	// minute is admitted beside the leased one, displacing nothing.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m+60, []repository.RoutingFlowRow{ownerTestRow(22)}),
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m+60, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}),
 		"a new minute is admitted without displacing the in-flight minute")
 	_, ok = rec.FlowOwner().lookup(m + 60)
 	require.True(t, ok)
@@ -248,7 +248,7 @@ func TestRed_FlowSyncCloseLoopDoneTimeoutSealsLaterSubmissionResidual(t *testing
 	w := NewSyncWorker(rec, c, pg, SyncConfig{InstanceSrc: "red-flow-loopdone", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	liveCtx := t.Context()
 	require.NoError(t, w.Start(liveCtx))
 	redFlowWait(t, entered, "sync loop Redis publish")
@@ -325,7 +325,7 @@ func TestRed_FlowSnapshotAckClean(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	snap, tok, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	require.Len(t, snap.FlowRows(), 1)
@@ -345,10 +345,10 @@ func TestRed_FlowSnapshotRaceStaysDirty(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	_, tok1, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(22)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}))
 	require.True(t, owner.ackPG(tok1), "ack settles the lease even when newer merges exist")
 	require.NotEmpty(t, owner.pgCandidateMinutes(), "post-snapshot merge keeps the minute dirty")
 	snap2, tok2, ok := owner.snapshotForPG(m)
@@ -369,7 +369,7 @@ func TestRed_FlowNoAckRetryIdentical(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)}))
 	snap1, tok1, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
@@ -392,7 +392,7 @@ func TestRed_FlowRepoMutationLeavesOwnerUnchanged(t *testing.T) {
 	prev := int64(7)
 	row := ownerTestRow(11)
 	row.PreviousAccountID = &prev
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{row}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{row}))
 	snap, tok, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	mut := snap.FlowRows()
@@ -421,7 +421,7 @@ func TestRed_FlowCandidatesOldestFirst(t *testing.T) {
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	base := fixed.Truncate(time.Minute).Unix()
 	for _, m := range []int64{base + 120, base, base + 60} {
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(m)}))
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(m)}))
 	}
 	require.Equal(t, []int64{base, base + 60, base + 120}, owner.pgCandidateMinutes())
 }
@@ -435,11 +435,11 @@ func TestRed_FlowLeaseEvictionPressure(t *testing.T) {
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m1 := fixed.Truncate(time.Minute).Unix()
 	m2 := m1 + 60
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m1, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m1, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	_, tok1, ok := owner.snapshotForPG(m1)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}),
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}),
 		"newcomer is admitted beside the leased minute")
 	_, ok = rec.FlowMinute(m1)
 	require.True(t, ok, "leased minute is never displaced")
@@ -449,7 +449,7 @@ func TestRed_FlowLeaseEvictionPressure(t *testing.T) {
 	require.Equal(t, before.EdgeRowsAccepted+1, mid.EdgeRowsAccepted, "admitted newcomer folds exactly")
 	require.Equal(t, before.EdgeRowsDropped, mid.EdgeRowsDropped)
 	require.True(t, owner.releasePG(tok1))
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}))
 	_, ok = rec.FlowMinute(m1)
 	require.True(t, ok, "released minute stays retained — no eviction exists to displace it")
 	_, ok = rec.FlowMinute(m2)
@@ -466,7 +466,7 @@ func TestRed_FlowStaleLeaseIDNoop(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	_, tok1, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	require.True(t, owner.releasePG(tok1), "release without mutation retires the lease identity")
@@ -480,10 +480,10 @@ func TestRed_FlowStaleLeaseIDNoop(t *testing.T) {
 	// no eviction exists — the minute is retained and merges; the
 	// stale token stays dead by lease identity alone (no incarnation needed).
 	m2 := m + 60
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}))
 	_, ok = rec.FlowMinute(m)
 	require.True(t, ok, "unleased minute stays retained without eviction")
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(33)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(33)}))
 	require.False(t, owner.ackPG(tok2), "stale token cannot ack beside a newer lease")
 	require.False(t, owner.releasePG(tok2), "stale token cannot release beside a newer lease")
 	fm, ok := rec.FlowMinute(m)
@@ -501,14 +501,14 @@ func TestRed_FlowAckReleaseExactOnce(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
 	m := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	_, tok1, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	require.True(t, owner.ackPG(tok1))
 	require.False(t, owner.ackPG(tok1), "no double ack")
 	require.False(t, owner.releasePG(tok1), "no release after ack")
 
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(12)}))
 	_, tok2, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
 	require.True(t, owner.releasePG(tok2))
@@ -688,7 +688,7 @@ func TestRed_FlowSubmissionCountersAroundSeal(t *testing.T) {
 // reclassification. Admission stays total; the horizon gates eviction
 // eligibility only.
 
-func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.RoutingFlowRow) (*Recorder, *FlowOwner, *SyncWorker, *fakePG, int64) {
+func redFlowPersistedMinute(t *testing.T, now time.Time, rows []qualitymodel.RoutingFlowRow) (*Recorder, *FlowOwner, *SyncWorker, *fakePG, int64) {
 	t.Helper()
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
@@ -718,7 +718,7 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 // from reclassify-the-victim to retain-everything.
 func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12), ownerTestRow(13)})
+	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []qualitymodel.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12), ownerTestRow(13)})
 	// Submit successor — same rows through the request walk.
 	foldRows(t, owner, m, ownerTestRow(14), ownerTestRow(15))
 	_, ok := rec.FlowMinute(m)
@@ -729,7 +729,7 @@ func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 	// The persisted minute stays retained without any clock advance; the
 	// newcomer is admitted beside it — nothing reclassifies, nothing evicts.
 	m2 := m + 60
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(21)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(21)}))
 	_, ok = rec.FlowMinute(m)
 	require.True(t, ok, "post-cutoff persisted minute stays retained without eviction")
 	_, ok = rec.FlowMinute(m2)
@@ -746,7 +746,7 @@ func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 	_, ok = rec.FlowMinute(m3)
 	require.True(t, ok)
 	preSecond := owner.SnapshotStats()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m3+60, []repository.RoutingFlowRow{ownerTestRow(41)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m3+60, []qualitymodel.RoutingFlowRow{ownerTestRow(41)}))
 	_, ok = rec.FlowMinute(m3)
 	require.True(t, ok, "never-persisted minute stays retained without eviction")
 	postSecond := owner.SnapshotStats()
@@ -760,10 +760,10 @@ func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 // to admit-beside-retained.
 func TestRed_FlowPersistedSurvivesEviction(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11)})
+	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []qualitymodel.RoutingFlowRow{ownerTestRow(11)})
 	m2 := fixed.Add(time.Minute).Truncate(time.Minute).Unix()
 	before := owner.SnapshotStats()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}),
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}),
 		"newcomer admitted beside the retained baseline")
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok, "clean persisted minute stays retained")
@@ -781,13 +781,13 @@ func TestRed_FlowPersistedSurvivesEviction(t *testing.T) {
 // to admit-and-conserve.
 func TestRed_FlowDirtyPersistedProtectedBeforeCutoff(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
+	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []qualitymodel.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
 	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(13))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	m2 := fixed.Add(time.Minute).Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}),
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []qualitymodel.RoutingFlowRow{ownerTestRow(22)}),
 		"newcomer admitted beside dirty history")
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -803,10 +803,10 @@ func TestRed_FlowDirtyPersistedProtectedBeforeCutoff(t *testing.T) {
 // admit-all-and-conserve.
 func TestRed_FlowPersistedHistoryProtected(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
+	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []qualitymodel.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
 	for i := int64(1); i <= 3; i++ {
 		mn := fixed.Add(time.Duration(i) * time.Minute).Truncate(time.Minute).Unix()
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), mn, []repository.RoutingFlowRow{ownerTestRow(100 + i)}))
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), mn, []qualitymodel.RoutingFlowRow{ownerTestRow(100 + i)}))
 	}
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok, "clean persisted history stays retained")
@@ -827,7 +827,7 @@ func TestRed_FlowRedisCandidatesOldestFirst(t *testing.T) {
 	base := fixed.Truncate(time.Minute).Unix()
 	cur := base + 120
 	for _, m := range []int64{cur, base, base + 60} {
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(m)}))
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(m)}))
 	}
 	require.Equal(t, []int64{base, base + 60, cur}, owner.redisCandidateMinutes(cur))
 	require.Equal(t, []int64{base, base + 60}, owner.redisCandidateMinutes(base+60), "future minutes stay unpublished")
@@ -848,9 +848,9 @@ func TestRed_FlowRedisOneLivePayload(t *testing.T) {
 	w.SetClock(func() time.Time { return fixed })
 	base := fixed.Truncate(time.Minute).Unix()
 	for _, m := range []int64{base - 120, base - 60, base} {
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(m), ownerTestRow(m + 1)}))
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(m), ownerTestRow(m + 1)}))
 	}
-	beforeRows := make(map[int64][]repository.RoutingFlowRow)
+	beforeRows := make(map[int64][]qualitymodel.RoutingFlowRow)
 	for _, m := range []int64{base - 120, base - 60, base} {
 		fm, ok := rec.FlowMinute(m)
 		require.True(t, ok)
@@ -884,15 +884,15 @@ func TestRed_FlowRedisOneLivePayload(t *testing.T) {
 type redFlowRetainingPG struct {
 	inner   *fakePG
 	mu      sync.Mutex
-	held    [][]repository.RoutingFlowRow
+	held    [][]qualitymodel.RoutingFlowRow
 	minutes []int64
 }
 
-func (f *redFlowRetainingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowRetainingPG) UpsertQualityRow(context.Context, qualitymodel.RoutingQualityRow) error {
 	return nil
 }
 
-func (f *redFlowRetainingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []repository.RoutingFlowRow) error {
+func (f *redFlowRetainingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []qualitymodel.RoutingFlowRow) error {
 	f.mu.Lock()
 	f.held = append(f.held, rows)
 	f.minutes = append(f.minutes, terminalMinute.Unix())
@@ -917,7 +917,7 @@ func TestRed_FlowPayloadLifetimeSingleLive(t *testing.T) {
 	base := fixed.Truncate(time.Minute).Unix()
 	minutes := []int64{base, base + 60, base + 120}
 	for _, m := range minutes {
-		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(1000 + m)}))
+		require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(1000 + m)}))
 	}
 	w.doPG(context.Background())
 	pg.mu.Lock()
@@ -976,7 +976,7 @@ func TestRed_FlowPreviousAccountOwnershipBoundaries(t *testing.T) {
 
 	// Repo mutating its payload (accounts and pointees) must not reach the
 	// owner or the retry payload.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(12)}))
 	w.doPG(context.Background())
 	fm3, ok := rec.FlowMinute(m)
 	require.True(t, ok, "repo mutation leaves the owner unchanged")
@@ -995,11 +995,11 @@ type redFlowMutatingPG struct {
 	inner *fakePG
 }
 
-func (f *redFlowMutatingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowMutatingPG) UpsertQualityRow(context.Context, qualitymodel.RoutingQualityRow) error {
 	return nil
 }
 
-func (f *redFlowMutatingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []repository.RoutingFlowRow) error {
+func (f *redFlowMutatingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, v int16, seq int64, rows []qualitymodel.RoutingFlowRow) error {
 	for i := range rows {
 		rows[i].AccountID = -rows[i].AccountID
 		rows[i].ChainCount = 999999
@@ -1079,7 +1079,7 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 	require.Equal(t, int64(1), sealedStats.ResidualRows)
 }
 
-func mustFlowRows(t *testing.T, rec *Recorder, minute int64) []repository.RoutingFlowRow {
+func mustFlowRows(t *testing.T, rec *Recorder, minute int64) []qualitymodel.RoutingFlowRow {
 	t.Helper()
 	fm, ok := rec.FlowMinute(minute)
 	require.True(t, ok)
@@ -1093,14 +1093,14 @@ func mustFlowRows(t *testing.T, rec *Recorder, minute int64) []repository.Routin
 // live writer.)
 func TestRed_FlowPostSealRowFoldStaysResidual(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(11)}))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
 	owner.sealPG()
 
 	// Post-seal rows fold residual: retained cumulatively, never dirty.
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{ownerTestRow(12)}))
 
 	after := owner.SnapshotStats()
 	require.Empty(t, owner.pgCandidateMinutes(), "post-seal fold must create no PG-open dirty state")
@@ -1137,8 +1137,8 @@ func TestRed_FlowPruneRetainsSequenceFencing(t *testing.T) {
 	key := "red-flow-seqfence:" + fixed.UTC().Truncate(time.Minute).String()
 
 	// Cycle 1: persist A at durable sequence 1.
-	rowA := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
+	rowA := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowA}))
 	w.doPG(context.Background())
 	pg.mu.Lock()
 	require.Equal(t, int64(1), pg.seqs[key])
@@ -1147,13 +1147,13 @@ func TestRed_FlowPruneRetainsSequenceFencing(t *testing.T) {
 	// Advance beyond cutoff and prune via a young-minute cycle.
 	clk = fixed.Add(30 * time.Minute)
 	mYoung := clk.Truncate(time.Minute).Unix()
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), mYoung, []repository.RoutingFlowRow{ownerTestRow(99)}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), mYoung, []qualitymodel.RoutingFlowRow{ownerTestRow(99)}))
 	w.doPG(context.Background())
 
 	// Mutate the old minute and flush: the repository must receive a greater
 	// sequence carrying the full cumulative replacement.
-	rowC := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
-	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowC}))
+	rowC := qualitymodel.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []qualitymodel.RoutingFlowRow{rowC}))
 	w.doPG(context.Background())
 	pg.mu.Lock()
 	defer pg.mu.Unlock()

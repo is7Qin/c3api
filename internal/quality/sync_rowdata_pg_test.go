@@ -10,19 +10,19 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 type pgRowFake struct {
 	calls   int
-	quality []repository.RoutingQualityRow
+	quality []qualitymodel.RoutingQualityRow
 	rowErr  map[string]error
 	failAll error
 }
 
 func newPgRowFake() *pgRowFake { return &pgRowFake{rowErr: make(map[string]error)} }
 
-func (f *pgRowFake) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *pgRowFake) UpsertQualityRow(_ context.Context, row qualitymodel.RoutingQualityRow) error {
 	f.calls++
 	if f.failAll != nil {
 		return f.failAll
@@ -35,7 +35,7 @@ func (f *pgRowFake) UpsertQualityRow(_ context.Context, row repository.RoutingQu
 	return nil
 }
 
-func (f *pgRowFake) UpsertFlowSnapshot(_ context.Context, _ string, _ time.Time, _ int16, _ int64, _ []repository.RoutingFlowRow) error {
+func (f *pgRowFake) UpsertFlowSnapshot(_ context.Context, _ string, _ time.Time, _ int16, _ int64, _ []qualitymodel.RoutingFlowRow) error {
 	return nil
 }
 

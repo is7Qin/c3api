@@ -276,8 +276,14 @@ var allowRules = []allowRule{
 	// R1-a 起多一条 internal/storeerr：4 枚存储错误哨兵的 canonical 搬到叶子包，
 	// 本包保留同值别名（var ErrX = storeerr.ErrX）。同属"实现 → 契约"方向，storeerr
 	// 只依赖 stdlib，结构上不可能反向 import 本包。
+	//
+	// R1-b 起多一条 internal/qualitymodel：quality 域行契约（RoutingQualityRow /
+	// RoutingFlowRow）与保留期哨兵的 canonical 搬过去，本包保留类型别名
+	// （type X = qualitymodel.X） + 哨兵同值别名。同属"实现 → 契约"方向，
+	// qualitymodel 只依赖 domain，结构上不可能反向 import 本包。
 	{from: "internal/repository", to: []string{
 		"internal/domain", "internal/credential", "internal/ent", "internal/loadport", "internal/storeerr",
+		"internal/qualitymodel",
 	}},
 
 	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
@@ -409,7 +415,11 @@ var allowRules = []allowRule{
 	}},
 
 	{from: "internal/protoconv", to: []string{"internal/domain", "pkg/sserelay"}},
-	{from: "internal/quality", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
+	// R1-b：quality 不再 import repository（只交换行形状与保留期哨兵，三者都住在
+	// internal/qualitymodel）。原先登记在账本里的 quality → repository 债因此消失，
+	// 改为显式 allow 这条**窄**边："生产方 → 行契约"，与 repository → qualitymodel
+	// 同为"实现 → 契约"方向，两侧都只依赖 domain，不可能成环。
+	{from: "internal/quality", to: []string{"internal/domain", "internal/qualitymodel", "internal/worker", "pkg/logx"}},
 	// R1-a：规则引擎不再 import repository（窄接口 ruleStore 定义在包内，repository.RuleStore
 	// 结构上自动满足），只引用 internal/storeerr 的 ErrConflict 哨兵。
 	{from: "internal/rule", to: []string{"internal/domain", "internal/storeerr", "internal/worker", "pkg/logx"}},
@@ -434,6 +444,13 @@ var allowRules = []allowRule{
 	// 裸规则是**正面要求**——TestImportGraphPolicyCoversPackages 按包枚举，
 	// 缺显式层级声明即红；leafRule.to 不含它，消费方必须各自显式列出。
 	{from: "internal/storeerr"},
+
+	// quality 域行契约（R1-b）：显式声明的叶子层，**只允许 domain**。
+	// 裸规则{from: "internal/qualitymodel"} 是正面要求（TestImportGraphPolicyCoversPackages
+	// 按包枚举，缺显式层级声明即红），但它不含 to ⇒ 落到 leafRule 时 domain 虽被放行，
+	// 也会连带放行 credential/worker/pkg —— 契约包不该有这些。所以这里写成窄边
+	// {domain}，与 internal/config、internal/continuation 同口径。
+	{from: "internal/qualitymodel", to: []string{"internal/domain"}},
 	{from: "internal/db/migrate", to: []string{"internal/db/migrate/"}},
 
 	{from: "internal/snapshot"},
@@ -524,11 +541,24 @@ const (
 	//   换来的是账本里 rule → repository 与 sdkbridge → repository 两条 P4 债的**消失**
 	//   （debtMax 14 → 12）。注意：这两条边消失是**真删边**（rule 改窄接口、sdkbridge
 	//   只曾用哨兵），不是把边改名绕开账本。
-	// 前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
+	// 债 r1b-qualitymodel 变更（2 条 to: 白名单加宽 + 1 条新增显式叶子规则，没有新增 all: true）：
+	//   quality 的采样/卷载只用到 repository 的 3 个符号（2 个纯数据 struct + 1 枚保留期
+	//   哨兵），它们的 canonical 搬到新叶子包 internal/qualitymodel（只依赖 domain），
+	//   repository 保留类型别名与哨兵同值别名。矩阵改动如下：
+	//   1. repository 的 to 加 internal/qualitymodel（实现 → 行契约；别名主语）
+	//   2. quality 的 to 加 internal/qualitymodel（生产方 → 行契约）
+	//   3. 新增显式叶子规则 internal/qualitymodel → {domain}（TestImportGraphPolicyCoversPackages
+	//      按包枚举，缺显式层级声明即红；且刻意写成窄边而不是裸规则 —— 裸规则落 leafRule
+	//      会连带放行 credential/worker/pkg，契约包不该有这些）
+	//   换来的是账本里 quality → repository 那条 P4 债的**消失**（debtMax 12 → 11）。
+	//   注意：这条边消失是**真删边**（quality 改指行契约，不再碰存储实现），不是把边
+	//   改名绕开账本 —— D1/D2 两条结构性判据独立复核了闭包里已无 repository。
+	// 前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
+	// 再前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5"
+	allowMatrixFingerprint = "0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -704,7 +734,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 12,
+	debtMax: 11,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
@@ -712,7 +742,6 @@ var productionLedger = ledger{
 		{"internal/handler", "internal/repository", "handler 直读 repository（模板/订单/账号列表）；P4 存储接口化后改走 service 端口", phaseP4},
 		{"internal/handler/paymentadmin", "internal/repository", "支付管理 handler 直读 repository；P4 后走 service 端口", phaseP4},
 		{"internal/handler/user", "internal/repository", "用户端 handler 直读 repository（订单/钥匙/兑换）；P4 后走 service 端口", phaseP4},
-		{"internal/quality", "internal/repository", "quality 的质量/流量落库直接用 repository；P4 存储接口化", phaseP4},
 		{"internal/repository", "internal/billing", "repository 反向依赖 billing 的账务类型；P4 把账务读写抽成端口", phaseP4},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},

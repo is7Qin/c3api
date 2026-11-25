@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func flowTestRoute(seed byte) domain.RouteClassIDVal {
@@ -20,8 +20,8 @@ func flowTestRoute(seed byte) domain.RouteClassIDVal {
 	return v
 }
 
-func flowTestRow(minute time.Time, ordinal int16, accountID int64, outcome string, terminal bool) repository.RoutingFlowRow {
-	return repository.RoutingFlowRow{
+func flowTestRow(minute time.Time, ordinal int16, accountID int64, outcome string, terminal bool) qualitymodel.RoutingFlowRow {
+	return qualitymodel.RoutingFlowRow{
 		IdentityVersion:  int16(domain.RoutingIdentityVersion),
 		RouteClassID:     flowTestRoute(1),
 		TerminalMinute:   minute,
@@ -40,10 +40,10 @@ func TestRecorder_FlowSameMinuteIdenticalEdgesSumChainCount(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	minute := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	}))
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	}))
 	fm, ok := r.FlowMinute(minute.Unix())
@@ -57,11 +57,11 @@ func TestRecorder_FlowSameMinuteDistinctEdgesStayDistinct(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	minute := time.Date(2026, 8, 31, 10, 5, 0, 0, time.UTC)
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "429", false),
 		flowTestRow(minute, 2, 20, "success", true),
 	}))
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 30, "5xx", true),
 	}))
 	fm, ok := r.FlowMinute(minute.Unix())
@@ -80,7 +80,7 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	minute := time.Date(2026, 8, 31, 10, 10, 0, 0, time.UTC)
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	}))
 	// the live charge accrues at the tick-owned fold, not at ingestion —
@@ -92,7 +92,7 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 	// liveCharge is the minute charge plus identity charges: one retained
 	// identity costs exactly one minute charge plus one identity charge.
 	require.Equal(t, int64(EstimatedFlowMinuteBytes+EstimatedFlowRowBytes), r.PendingBytes())
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 20, "success", true),
 	}))
 	require.Equal(t, 1, r.MinuteBucketCount(), "same-minute merge must not open a new bucket")
@@ -102,7 +102,7 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 		"a distinct identity adds exactly one identity charge")
 	// A duplicate same-minute merge folds in place and adds no new identity
 	// charge.
-	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	}))
 	require.Equal(t, 1, r.MinuteBucketCount(), "duplicate merge must not open a new bucket")
@@ -132,7 +132,7 @@ func TestRecorder_FlowConcurrentSameMinuteRequestsAreConserved(t *testing.T) {
 			if i%3 == 0 {
 				outcome = "429"
 			}
-			_ = foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
+			_ = foldConsumerRows(r.FlowOwner(), minute.Unix(), []qualitymodel.RoutingFlowRow{
 				flowTestRow(minute, 1, accountID, outcome, true),
 			})
 		}(i)

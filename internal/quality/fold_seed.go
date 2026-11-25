@@ -10,7 +10,7 @@ import (
 	"errors"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 // foldSeed is the unexported per-edge input shared by the request walk
@@ -93,7 +93,7 @@ func makeFact(seed foldSeed, bucket int64) (attemptFact, error) {
 // an unspecified (zero) count folds one event — a row exists, so it carries
 // at least one. Identity outside the codebooks or version drift is a
 // programming error, never a silent widening.
-func rowToSeed(row repository.RoutingFlowRow) (foldSeed, int64, error) {
+func rowToSeed(row qualitymodel.RoutingFlowRow) (foldSeed, int64, error) {
 	delta := max(row.ChainCount, 1)
 	if row.Ordinal < 1 || row.Ordinal > foldMaxOrdinal {
 		return foldSeed{}, 0, errors.New("fold: ordinal out of bounds")

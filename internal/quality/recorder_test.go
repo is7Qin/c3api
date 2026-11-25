@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/qualitymodel"
 )
 
 func fp(seed byte) [32]byte {
@@ -304,7 +304,7 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	// the flow lane carries live consumer rows. Five distinct minutes fold
 	// and drain into five retained shells.
 	for i := range 5 {
-		require.NoError(t, foldConsumerRows(r.FlowOwner(), int64(2000+i), []repository.RoutingFlowRow{ownerTestRow(int64(i + 1))}))
+		require.NoError(t, foldConsumerRows(r.FlowOwner(), int64(2000+i), []qualitymodel.RoutingFlowRow{ownerTestRow(int64(i + 1))}))
 		_, ok := r.FlowMinute(int64(2000 + i))
 		require.True(t, ok)
 	}
