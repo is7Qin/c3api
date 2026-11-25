@@ -50,9 +50,13 @@ func TestRoutingSnapshotBeyondRetentionSentinelIsShared(t *testing.T) {
 		qualitymodel.ErrRoutingSnapshotBeyondRetention.Error())
 }
 
-// TestRowsCarryNoRepositoryDependency 只是文档性的形状断言：两个行类型在无人
-// 构造时也必须可零值使用（避免将来有人把它们改成带构造约束的类型）。
-func TestRowsCarryNoRepositoryDependency(t *testing.T) {
+// TestRowsAreZeroValueUsable 是文档性的形状断言：两个行类型在无人构造时
+// 也必须可零值使用（避免将来有人把它们改成带构造约束的类型）。
+//
+// ⚠ 本测试**不**检查依赖（它看不到 import 面）："qualitymodel 不依赖
+// repository" 由 architecture 门禁的建立边守。旧名 TestRowsCarryNoRepositoryDependency
+// 名不副实，已改。
+func TestRowsAreZeroValueUsable(t *testing.T) {
 	var q qualitymodel.RoutingQualityRow
 	require.Zero(t, q.Attempts)
 	require.True(t, q.BucketMinute.Equal(time.Time{}))

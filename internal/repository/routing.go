@@ -257,7 +257,9 @@ func assertRowIdentity() {
 	_, _, _, _ = q, r, f, g
 }
 
-// 呼一次只为占位，保持断言不被"未使用"删除；函数体编译期即校验可赋值性。
+// assertRowIdentity 是否被调用不影响断言生效：**函数体本身**每次 go build
+// 都会做类型检查。保留 `var _` 只是为了让它不被当成死代码删掉，
+// **不**承担断言（实测：删掉本行、再把别名去掉 `=`，依然在 build 期报错）。
 var _ = assertRowIdentity
 
 func advisoryLockKey(parts ...string) int64 {
@@ -313,11 +315,14 @@ func qualityUpsertSQL(table, conflictCols string) string {
 // routing_quality_fact_uniq）。
 var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id")
 
-// QualityUpsertSQLForTest 把未导出的 qualityUpsertSQL 暴露给外部测试包，使
-// 「SQL 列清单 ↔ 落库行字段」的对齐断言能跑在**不依赖 PG** 的普通 go test 里
-// （spec §5.4：*_pg_test.go 在未配置测试库时全部 SKIP，不构成防线）。
-// 生产代码不调用它。
-func QualityUpsertSQLForTest(table, conflictCols string) string {
+// QualityUpsertSQL 展示质量域的 upsert 语句文本（列清单 + 占位符）。
+//
+// 为何要导出：「SQL 列清单 ↔ 落库行字段」的对齐断言必须跑在**不依赖 PG**
+// 的普通 go test 里（spec §5.4：*_pg_test.go 在未配置测试库时全部 SKIP）。
+// 它是一份**只读展示**，不是可随意删除的测试能手：删它会让那条防线失效，
+// 所以不带 ForTest 后缀——名字不该暗示“可以随手删”。
+// 生产路径不调用它（生产走 routingQualityFactUpsertSQL 预编译好的那份）。
+func QualityUpsertSQL(table, conflictCols string) string {
 	return qualityUpsertSQL(table, conflictCols)
 }
 

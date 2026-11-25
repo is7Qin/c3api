@@ -6,6 +6,7 @@ package repository_test
 
 import (
 	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ var qualityRowSQLAliases = map[string]string{
 // 编译失败（显式 row.FieldName），但 **SQL 文案**与字段名之间的错位编译器看不见。
 func TestQualityUpsertSQLColumnsMatchRowFields(t *testing.T) {
 	const table = "routing_quality_fact"
-	sqlText := repository.QualityUpsertSQLForTest(table, "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id")
+	sqlText := repository.QualityUpsertSQL(table, "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id")
 
 	// 只取 INSERT 段的列清单：`INSERT INTO <table> (a, b, ...)`。
 	re := regexp.MustCompile(`(?s)INSERT INTO ` + table + ` \(([^)]*)\)`)
@@ -73,12 +74,24 @@ func TestQualityUpsertSQLColumnsMatchRowFields(t *testing.T) {
 	// updated_at 不在行里：由 now() 生成（写面单调，不许调用方回填）。
 	rowCols = append(rowCols, "updated_at")
 
-	require.ElementsMatch(t, rowCols, sqlCols,
-		"qualityUpsertSQL 的列清单必须与 RoutingQualityRow 的字段一一对应（字段名是契约，顺序不是）")
+	// ⚠ 必须比**序列**，不能用 ElementsMatch（集合比）：
+	// UpsertQualityRow 的 args 是按**位置**绑定的（routing.go:341）。
+	// 若 SQL 列清单里对调两列（如 attempts ↔ successes）而 args 不动，
+	// 集合比对依然全绿，但落库数据已经错位——而唯一能发现它的
+	// routing_pg_test 在无测试库时是 SKIP 的（实测）。
+	require.Equal(t, rowCols, sqlCols,
+		"qualityUpsertSQL 的列清单必须与 RoutingQualityRow 的字段**同序且一一对应**："+
+			"args 按位置绑定，序列错位会静默写错列")
 
-	// VALUES 的占位符个数 = 列数 − updated_at（now() 不占位）。
-	require.Len(t, regexp.MustCompile(`\$\d+`).FindAllString(sqlText, -1), len(sqlCols)-1,
+	// VALUES 的占位符必须是 $1..$N 连续且个数 = 列数 − updated_at（now() 不占位）。
+	// 只数个数不够：$1,$2,$3 写成 $1,$3,$2 也会让绑定错位。
+	placeholders := regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(sqlText, -1)
+	require.Len(t, placeholders, len(sqlCols)-1,
 		"占位符个数必须等于需要绑定的列数（updated_at 用 now()）")
+	for i, ph := range placeholders {
+		require.Equal(t, strconv.Itoa(i+1), ph[1],
+			"占位符必须按 $1..$N 顺序出现：第 %d 个占位符应为 $%d，实为 %s", i+1, i+1, ph[1])
+	}
 
 	// 别名表只许写真正的例外：拼错了（映射到不存在的列）这里会红。
 	for field := range qualityRowSQLAliases {
@@ -91,8 +104,6 @@ func TestQualityUpsertSQLColumnsMatchRowFields(t *testing.T) {
 	}
 }
 
-// TestRoutingFlowRowStillReachableFromQualitymodel 是一次轻量回归：R1-b 之后
-// 行契约对两侧都可见（quality 生产、repository 落库），且字段名未变。
 func TestRoutingFlowRowStillReachableFromQualitymodel(t *testing.T) {
 	row := repository.RoutingFlowRow{
 		RouteClassID:      domain.RouteClassIDVal{},
