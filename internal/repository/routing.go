@@ -315,7 +315,7 @@ var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "rout
 
 // QualityUpsertSQLForTest 把未导出的 qualityUpsertSQL 暴露给外部测试包，使
 // 「SQL 列清单 ↔ 落库行字段」的对齐断言能跑在**不依赖 PG** 的普通 go test 里
-// （spec §5.4：*_pg_test.go 在无 TEST_DATABASE_URL 时全部 SKIP，不构成防线）。
+// （spec §5.4：*_pg_test.go 在未配置测试库时全部 SKIP，不构成防线）。
 // 生产代码不调用它。
 func QualityUpsertSQLForTest(table, conflictCols string) string {
 	return qualityUpsertSQL(table, conflictCols)

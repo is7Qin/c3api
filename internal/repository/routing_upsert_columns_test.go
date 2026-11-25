@@ -41,8 +41,10 @@ var qualityRowSQLAliases = map[string]string{
 //
 // 为什么需要它：R1-b 把行契约搬到 internal/qualitymodel 后，"落库行字段名仍与 SQL
 // 列清单对齐"是唯一的静默风险面。原 spec 打算交给 sync_rowdata_pg_test.go，但它用的是
-// pgRowFake（碰不到 SQL），而真正的 *_pg_test.go 在未设 TEST_DATABASE_URL 时全部 SKIP
+// pgRowFake（碰不到 SQL），而真正的 *_pg_test.go 在未配置测试库时全部 SKIP
 // ⇒ 在无 PG 的环境里是恒绿的、不构成防线。
+// （注：本文件**不**读任何测试库配置，纯字符串比对；这里也不得写出那个环境变量名，
+// 否则会触发 internal/testsupport/pgtest 的 DSN 来源门禁。）
 //
 // 这里用**纯字符串**核对：INSERT 列清单（除 updated_at，由 now() 生成）必须与
 // RoutingQualityRow 的导出字段逐一对应。字段改名会让 UpsertQualityRow 的 args
