@@ -116,45 +116,16 @@ func TestRepositoryAliasesStoreerrSentinels(t *testing.T) {
 	root := storeerrGateModuleRoot(t)
 	files := storeerrGateParseDir(t, root, storeerrAliasScanDir)
 
-	// 逐名收集包级声明：名字 -> 该名字以 storeerr 主语出现的次数。
-	// 不只看 `var X = ...` 形态：任何以这 4 个名字声明的包级 var 都算本包自持。
+	// 逐名收集包级声明：名字 -> 该名字被占用 / 以 storeerr 主语出现的次数。
 	declared := map[string]int{}
 	aliased := map[string]int{}
 	for _, f := range files {
-		// 主语按 import 路径解析，不按字面量猜：本包若把 storeerr 改别名 import，
-		// 字面量 `id.Name == "storeerr"` 会误判成"没别名"。
-		local := storeerrAliasLocalName(t, f)
-		for _, d := range f.Decls {
-			gd, ok := d.(*ast.GenDecl)
-			if !ok || gd.Tok != token.VAR {
-				continue
-			}
-			for _, sp := range gd.Specs {
-				vs, ok := sp.(*ast.ValueSpec)
-				if !ok || len(vs.Names) != 1 {
-					continue
-				}
-				name := vs.Names[0].Name
-				if !isStoreerrAliasName(name) {
-					continue
-				}
-				declared[name]++
-				if len(vs.Values) != 1 {
-					continue
-				}
-				sel, ok := vs.Values[0].(*ast.SelectorExpr)
-				if !ok {
-					continue
-				}
-				id, ok := sel.X.(*ast.Ident)
-				if !ok || id.Name != local {
-					continue
-				}
-				require.Equal(t, name, sel.Sel.Name,
-					"万一又出现别名，它至少必须指向同名哨兵（%s = storeerr.%s）：换名意味着两枚不同的 error 值",
-					name, name)
-				aliased[name]++
-			}
+		d, a := storeerrCollectDecls(t, f, storeerrAliasLocalName(t, f))
+		for k, v := range d {
+			declared[k] += v
+		}
+		for k, v := range a {
+			aliased[k] += v
 		}
 	}
 
@@ -500,4 +471,90 @@ func storeerrFilterBaselineByExistingRoots(t *testing.T, root string, baseline [
 		}
 	}
 	return out
+}
+
+// storeerrCollectDecls 从单个文件收集哨兵名的占用情况。
+//
+// declared：这 4 个名字在本文件被包级声明的次数（不论 VAR 还是 TYPE）；
+// aliased：其中**恰好**写成 `= storeerr.ErrX`（主语按 import 路径解析、且同名）的次数。
+//
+// ⚠ 为什么必须同时看 TYPE（B2）：只扫 `token.VAR` 时，“把别名改成类型声明”
+// 的假搬家在本门禁里完全不可见（实测：改成 TYPE 后门禁仍绿）。
+// 类型声明同样抢占了名字本身，包外用户拿到的依然不是 canonical 那枚值。
+func storeerrCollectDecls(t *testing.T, f *ast.File, local string) (declared, aliased map[string]int) {
+	t.Helper()
+	declared = map[string]int{}
+	aliased = map[string]int{}
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || !isStoreerrDeclTok(gd.Tok) {
+			continue
+		}
+		for _, sp := range gd.Specs {
+			switch spec := sp.(type) {
+			case *ast.TypeSpec:
+				// `type ErrX = ...` 是 *ast.TypeSpec 而不是 ValueSpec：它同样抢占了
+				// 哨兵名，但定义的是**类型**，不可能是同值别名 ⇒ 只计 declared。
+				if isStoreerrAliasName(spec.Name.Name) {
+					declared[spec.Name.Name]++
+				}
+			case *ast.ValueSpec:
+				if len(spec.Names) != 1 {
+					continue
+				}
+				name := spec.Names[0].Name
+				if !isStoreerrAliasName(name) {
+					continue
+				}
+				declared[name]++
+				if len(spec.Values) != 1 {
+					continue
+				}
+				sel, ok := spec.Values[0].(*ast.SelectorExpr)
+				if !ok {
+					continue
+				}
+				id, ok := sel.X.(*ast.Ident)
+				if !ok || id.Name != local {
+					continue
+				}
+				require.Equal(t, name, sel.Sel.Name,
+					"万一又出现别名，它至少必须指向同名哨兵（%s = storeerr.%s）：换名意味着两枚不同的 error 值",
+					name, name)
+				aliased[name]++
+			}
+		}
+	}
+	return declared, aliased
+}
+
+// isStoreerrDeclTok 审判哪些 GenDecl 形态会“抢占”一个包级名字。
+//
+// VAR 是变量，TYPE 是类型——两者都会让包外用户拿到不同的东西，
+// 因此都在本门禁的监视范围内。CONST 不算：哨兵是 error 值，
+// Go 常量只能是基本类型，无法承载 error。
+func isStoreerrDeclTok(t token.Token) bool {
+	return t == token.VAR || t == token.TYPE
+}
+
+// TestStoreerrGateSeesTypeDeclarations 是 B2 的回归测试。
+//
+// 直接喂一段 TYPE 形态的源码给判定规则，要求它被计入 declared：
+// 只要有一天有人把 `isStoreerrDeclTok` 改回只认 VAR，本测试就红。
+func TestStoreerrGateSeesTypeDeclarations(t *testing.T) {
+	const src = `package repository
+
+var ErrNotFound = storeerr.ErrNotFound
+type ErrConflict = storeerr.ErrConflict
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "synthetic.go", src, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	declared, aliased := storeerrCollectDecls(t, f, "storeerr")
+
+	require.Equal(t, map[string]int{"ErrNotFound": 1, "ErrConflict": 1}, declared,
+		"VAR 与 TYPE 两种形态都抢占了哨兵名，都必须计入 declared；只计 VAR 就是 B2 的缺口")
+	require.Equal(t, map[string]int{"ErrNotFound": 1}, aliased,
+		"TYPE 声明不能算同值别名（它定义的是类型，不是 error 值）")
 }
