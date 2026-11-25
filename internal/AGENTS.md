@@ -2,17 +2,17 @@
 
 > 根 AGENTS.md 覆盖项目级约定/命令；本文件只讲 internal 各包职责与接线。深度主题见 `.omo/memory/topics/`。
 
-## 包职责一览（文件数）
+## 包职责一览
 
-| 包 | 数 | 职责 |
-|---|---|---|
-| `ent/` | 164 | **生成物**。手写 schema 在 `ent/schema/*.go`（19 实体）；usage_logs/err_logs/usage_stats 三表被 migrate hook 排除，DDL 归 PartitionRepo 管 |
-| `repository/` | 70 | Repository 门面实现 service.Store；`WithTx`(txDriver) 让 ent 构建器与裸 SQL 同事务；OpenPG 自动补 `lock_timeout=5s`、MaxConnLifetime=30m |
-| `proxy/` | 69 | /v1/* 网关热路径（见根 CODE MAP） |
-| `handler/` | 69 | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)；`httpface/`=错误写出叶子包。**没有 v1 子包——/v1 在 proxy** |
-| `service/` | 52 | 一资源一文件；`errors/` 叶子包 8 哨兵；探测准入（4 执行+16 等待）与唯一 30s 期限在本层 |
-| `probe/` | 5 | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
-| billing(14) scheduler(13) domain(15) rule(12) usage(10) protoconv(8) sdkbridge(9) pricing(8) notify(7) server(4) auth(4) invalidate(4) credential(2) config(2) snapshot(2) worker(2) | | 领域件 |
+| 包 | 职责 |
+|---|---|
+| `ent/` | **生成物**。手写 schema 在 `ent/schema/*.go`（19 实体）；usage_logs/err_logs/usage_stats 三表被 migrate hook 排除，DDL 归 PartitionRepo 管 |
+| `repository/` | Repository 门面实现 service.Store；`WithTx`(txDriver) 让 ent 构建器与裸 SQL 同事务；OpenPG 自动补 `lock_timeout=5s`、MaxConnLifetime=30m |
+| `proxy/` | /v1/* 网关热路径（见根 CODE MAP） |
+| `handler/` | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)；`httpface/`=错误写出叶子包。**没有 v1 子包——/v1 在 proxy** |
+| `service/` | 一资源一文件；`errors/` 叶子包 8 哨兵；探测准入（4 执行+16 等待）与唯一 30s 期限在本层 |
+| `probe/` | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
+| 领域件：`billing` `scheduler` `domain` `rule` `usage` `protoconv` `sdkbridge` `pricing` `notify` `server` `auth` `invalidate` `credential` `config` `snapshot` `worker` | 各自职责见上表与包内 AGENTS.md |
 
 ## BPS 接入边界
 
