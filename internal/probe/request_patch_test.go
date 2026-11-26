@@ -67,6 +67,22 @@ func customProbeSpec(format domain.RequestFormat) domain.ProbeSpec {
 	return spec
 }
 
+// dirtyProbePatch 构造保存期本应拒绝、只可能来自手工改库的格式层 patch：
+// x.999999999 超出 sjson 数组 padding 上限 ⇒ 运行期 splice 必然失败（残余失败）。
+func dirtyProbePatch() *domain.RequestPatch {
+	return &domain.RequestPatch{
+		Headers: map[string]string{"X-Patch-Header": "applied"},
+		Formats: map[domain.UpstreamPathKey]domain.FormatPatch{
+			domain.UpstreamPathChat: {
+				Set: map[string]json.RawMessage{
+					"x.999999999":   json.RawMessage("1"),
+					"secret_marker": json.RawMessage("\"must-not-leak\""),
+				},
+			},
+		},
+	}
+}
+
 // probeCapture 捕获一次上游请求（自定义 RoundTripper 收到的最终 wire 形态）。
 type probeCapture struct {
 	host        string
@@ -329,31 +345,19 @@ func TestProbeRequestPatchBodySemantics(t *testing.T) {
 	})
 
 	t.Run("multipart_structurally_skipped", func(t *testing.T) {
-		// 直接对 probeBodyPatch 断言：multipart（非 JSON 容器）原样返回 ——
-		// 设计性跳过，不是失败（也不 WARN）。
+		// 直接对唯一 body 入口 applyBodyPatch 断言：multipart（非 JSON 容器）
+		// 原样返回 —— 设计性跳过，不是失败（也不触观测回调）。
 		patch := mustProbePatch(t, "{\"formats\":{\"openai-images.edits\":{\"set\":{\"prompt\":\"patched\"}}}}")
 		spec := contentImageSpec(domain.ProbeImageModeEdits, "data:image/png;base64,"+b64(pngBytes(16)))
 		spec.Upstream = probePatchUpstream(t, patch)
 		multipartBody := []byte("--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nm\r\n--b--\r\n")
-		got := probeBodyPatch(spec, domain.UpstreamPathImagesEdits, multipartBody)
+		got := (&Prober{}).applyBodyPatch(spec, domain.UpstreamPathImagesEdits, multipartBody)
 		require.True(t, bytes.Equal(multipartBody, got), "非 JSON 容器必须原样返回（结构性跳过）")
 	})
 
 	t.Run("dirty_residual_failure_forwards_original", func(t *testing.T) {
-		// 手工构造脏 patch：x.999999999 超出 sjson 数组 padding 上限，运行期执行失败
-		// （保存期本应 400）。语义：裸透传 + 不中止 + 头装饰独立生效。
-		patch := &domain.RequestPatch{
-			Headers: map[string]string{"X-Patch-Header": "applied"},
-			Formats: map[domain.UpstreamPathKey]domain.FormatPatch{
-				domain.UpstreamPathChat: {
-					Set: map[string]json.RawMessage{
-						"x.999999999":   json.RawMessage("1"),
-						"secret_marker": json.RawMessage("\"must-not-leak\""),
-					},
-				},
-			},
-		}
-		res, cap := runChat(t, probePatchUpstream(t, patch))
+		// 手工构造脏 patch（保存期本应 400）。语义：裸透传 + 不中止 + 头装饰独立生效。
+		res, cap := runChat(t, probePatchUpstream(t, dirtyProbePatch()))
 		require.True(t, res.Success, "残余失败不得中止/改变探测结论：error=%s", res.Error)
 		require.Equal(t, "applied", cap.header.Get("X-Patch-Header"), "头装饰与 body 失败相互独立")
 		want := staticPayload(domain.FormatOpenAIChat, "up-model", domain.ProbeDefaultInputText)
@@ -362,10 +366,91 @@ func TestProbeRequestPatchBodySemantics(t *testing.T) {
 	})
 }
 
+// TestProbeRequestPatchResidualWarn 残余失败的可观测 seam（spec §7.4/§8）：probe
+// 包不写日志，组合根注入的 PatchWarn 回调是唯一观测面。本用例注入 fake 回调，
+// 断言「回调恰 1 次 + 参数 = template_id/出站格式键 + 触发条件精确」：
+//   - JSON 但 sjson 残余失败 ⇒ 1 次回调，探测不中止、body 裸透传；
+//   - 成功应用 / 非 JSON 容器（images edits multipart）/ 无配置 ⇒ 0 回调；
+//   - nil 回调（默认构造）⇒ 静默、不 panic（零行为变化）。
+func TestProbeRequestPatchResidualWarn(t *testing.T) {
+	var (
+		calls  int
+		gotID  int64
+		gotKey domain.UpstreamPathKey
+	)
+	warn := func(templateID int64, format domain.UpstreamPathKey) {
+		calls++
+		gotID, gotKey = templateID, format
+	}
+
+	t.Run("residual_failure_warns_once_with_template_and_key", func(t *testing.T) {
+		calls, gotID, gotKey = 0, 0, ""
+		spec := customProbeSpec(domain.FormatOpenAIChat)
+		spec.TemplateID = 424242
+		spec.Upstream = probePatchUpstream(t, dirtyProbePatch())
+		var cap probeCapture
+		res := newTestProberWithOptions(t, captureProbeCall(&cap, http.StatusOK, probeRequestPatchSuccessBody(domain.FormatOpenAIChat)), Options{PatchWarn: warn}).
+			Probe(context.Background(), spec)
+		require.True(t, res.Success, "残余失败不得中止/改变探测结论：error=%s", res.Error)
+		require.Equal(t, 1, calls, "残余失败必须恰好回调一次（一请求一事实，不放大）")
+		require.Equal(t, int64(424242), gotID, "回调参数必须带当次探测的 template_id")
+		require.Equal(t, domain.UpstreamPathChat, gotKey, "回调参数必须带该出站格式的键（与 URL 路径同一把）")
+		want := staticPayload(domain.FormatOpenAIChat, "up-model", domain.ProbeDefaultInputText)
+		require.True(t, bytes.Equal(want, cap.body), "残余失败 ⇒ 裸透传（body 逐字节不变）")
+	})
+
+	t.Run("successful_patch_does_not_warn", func(t *testing.T) {
+		calls = 0
+		spec := customProbeSpec(domain.FormatOpenAIChat)
+		spec.Upstream = probePatchUpstream(t, mustProbePatch(t, `{"formats":{"openai-chat":{"set":{"patched":"yes"}}}}`))
+		var cap probeCapture
+		res := newTestProberWithOptions(t, captureProbeCall(&cap, http.StatusOK, probeRequestPatchSuccessBody(domain.FormatOpenAIChat)), Options{PatchWarn: warn}).
+			Probe(context.Background(), spec)
+		require.True(t, res.Success)
+		require.Zero(t, calls, "成功应用不得触观测回调（成功路径零日志/零回调）")
+	})
+
+	t.Run("non_json_structural_skip_does_not_warn", func(t *testing.T) {
+		calls = 0
+		patch := mustProbePatch(t, `{"formats":{"openai-images.edits":{"set":{"prompt":"patched"}}}}`)
+		spec := contentImageSpec(domain.ProbeImageModeEdits, "data:image/png;base64,"+b64(pngBytes(16)))
+		spec.Upstream = probePatchUpstream(t, patch)
+		multipartBody := []byte("--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nm\r\n--b--\r\n")
+		got := (&Prober{patchWarn: warn}).applyBodyPatch(spec, domain.UpstreamPathImagesEdits, multipartBody)
+		require.True(t, bytes.Equal(multipartBody, got), "非 JSON 容器原样返回")
+		require.Zero(t, calls, "结构性跳过不是失败：不得触观测回调")
+	})
+
+	t.Run("no_config_does_not_warn", func(t *testing.T) {
+		calls = 0
+		body := []byte(`{"model":"gpt-4o","messages":[]}`)
+		got := (&Prober{patchWarn: warn}).applyBodyPatch(domain.ProbeSpec{}, domain.UpstreamPathChat, body)
+		require.True(t, &got[0] == &body[0], "无配置必须原 slice")
+		require.Zero(t, calls, "无配置路径不得触观测回调（零分配/零分支）")
+	})
+
+	t.Run("nil_warn_silent_no_panic", func(t *testing.T) {
+		spec := customProbeSpec(domain.FormatOpenAIChat)
+		spec.Upstream = probePatchUpstream(t, dirtyProbePatch())
+		// 默认构造（无 Options）⇒ nil 回调：残余失败静默裸透传。
+		var cap probeCapture
+		res := newTestProber(t, captureProbeCall(&cap, http.StatusOK, probeRequestPatchSuccessBody(domain.FormatOpenAIChat))).
+			Probe(context.Background(), spec)
+		require.True(t, res.Success, "nil 回调不得 panic/中止：error=%s", res.Error)
+		// 手写零值 Prober（nil receiver 形态）同样 nil 安全。
+		got := (&Prober{}).applyBodyPatch(spec, domain.UpstreamPathChat, []byte("not-json"))
+		require.Equal(t, []byte("not-json"), got, "nil 回调 + 非 JSON：原 slice")
+	})
+}
+
 // TestProbeRequestPatchHelpersAllocs 无配置零分配硬断言 + 有配置每 probe 至多 1 枚
 // 闭包（spec §7.1/§7.3 的成本契约；热路径无日志、无锁、无全局查询）。
 func TestProbeRequestPatchHelpersAllocs(t *testing.T) {
 	body := []byte("{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")
+	// 生产形态：构造期已注入回调（request_patch 残余失败 seam）。无配置/无失败
+	// 路径必须仍然零分配、不触回调——注入的 func 只是被读一次的字段。
+	noopWarn := func(int64, domain.UpstreamPathKey) {}
+	warned := &Prober{patchWarn: noopWarn}
 
 	// 1) 无配置：装饰器 nil + body 原 slice，0 分配。
 	allocs := testing.AllocsPerRun(100, func() {
@@ -373,7 +458,7 @@ func TestProbeRequestPatchHelpersAllocs(t *testing.T) {
 		if dec := probeHeaderDecorator(spec, domain.UpstreamPathChat); dec != nil {
 			t.Fatalf("无配置必须返回 nil 装饰器")
 		}
-		if got := probeBodyPatch(spec, domain.UpstreamPathChat, body); &got[0] != &body[0] {
+		if got := warned.applyBodyPatch(spec, domain.UpstreamPathChat, body); &got[0] != &body[0] {
 			t.Fatalf("无配置必须返回原 slice")
 		}
 	})
@@ -383,7 +468,7 @@ func TestProbeRequestPatchHelpersAllocs(t *testing.T) {
 	otherFormat := customProbeSpec(domain.FormatOpenAIChat)
 	otherFormat.Upstream = probePatchUpstream(t, mustProbePatch(t, "{\"formats\":{\"openai-responses\":{\"set\":{\"model\":\"x\"}}}}"))
 	allocs = testing.AllocsPerRun(100, func() {
-		if got := probeBodyPatch(otherFormat, domain.UpstreamPathChat, body); &got[0] != &body[0] {
+		if got := warned.applyBodyPatch(otherFormat, domain.UpstreamPathChat, body); &got[0] != &body[0] {
 			t.Fatalf("本格式无 patch 键 ⇒ 原 slice")
 		}
 	})

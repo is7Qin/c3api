@@ -32,9 +32,16 @@ import (
 
 func newTestProber(t *testing.T, base http.RoundTripper) *Prober {
 	t.Helper()
+	return newTestProberWithOptions(t, base)
+}
+
+// newTestProberWithOptions 构造带构造期可选项的探测执行器（如注入 fake
+// PatchWarn 回调，验证残余失败可观测 seam 而不写日志）。
+func newTestProberWithOptions(t *testing.T, base http.RoundTripper, opts ...Options) *Prober {
+	t.Helper()
 	hc := &http.Client{Transport: base}
 	factory := aiclient.NewFactory(hc, aiclient.Config{})
-	return New(factory, egress.NewPool(hc))
+	return New(factory, egress.NewPool(hc), opts...)
 }
 
 func waitSignal(t *testing.T, ch <-chan struct{}, what string) {

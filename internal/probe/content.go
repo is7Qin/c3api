@@ -180,8 +180,8 @@ func (p *Prober) probeStaticImages(ctx context.Context, spec domain.ProbeSpec) d
 
 	// request_patch（spec §7.3）：key 已按 ImageMode 选好（与 URL 路径同源）；
 	// generations 的 JSON 合成体照常 patch，edits 的 multipart 体在唯一执行器里
-	// 按非 JSON 结构性跳过（只注入头，不 WARN）。
-	payload = probeBodyPatch(spec, key, payload)
+	// 按非 JSON 结构性跳过（只注入头、不触回调）。
+	payload = p.applyBodyPatch(spec, key, payload)
 	decorate := probeHeaderDecorator(spec, key)
 	resp, callErr := p.factory.ImagesRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, contentType, payload, nil, hc, decorate)
 	return imagesRawResult(ctx, resp, callErr)
@@ -239,7 +239,7 @@ func (p *Prober) probeStaticSearch(ctx context.Context, spec domain.ProbeSpec) d
 	}
 	// request_patch（spec §7.3）：search 的合成 JSON 体照常应用 body patch；
 	// key 与 URL 路径同源（openai-search）。
-	payload := probeBodyPatch(spec, key, searchProbePayload(spec.UpstreamModel, spec.Input))
+	payload := p.applyBodyPatch(spec, key, searchProbePayload(spec.UpstreamModel, spec.Input))
 	decorate := probeHeaderDecorator(spec, key)
 	resp, callErr := p.factory.SearchRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential,
 		payload, nil, hc, decorate)

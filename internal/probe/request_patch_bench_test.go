@@ -44,7 +44,7 @@ func BenchmarkProbeRequestPatchNoConfig(b *testing.B) {
 		if probeHeaderDecorator(spec, domain.UpstreamPathChat) != nil {
 			b.Fatal("无配置必须 nil")
 		}
-		if got := probeBodyPatch(spec, domain.UpstreamPathChat, body); len(got) != len(body) {
+		if got := (&Prober{}).applyBodyPatch(spec, domain.UpstreamPathChat, body); len(got) != len(body) {
 			b.Fatal("无配置必须原样返回")
 		}
 	}
@@ -72,7 +72,7 @@ func BenchmarkProbeRequestPatchConfiguredBody(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(body)))
 	for i := 0; i < b.N; i++ {
-		if got := probeBodyPatch(spec, domain.UpstreamPathChat, body); len(got) == 0 {
+		if got := (&Prober{}).applyBodyPatch(spec, domain.UpstreamPathChat, body); len(got) == 0 {
 			b.Fatal("patch 后 body 为空")
 		}
 	}

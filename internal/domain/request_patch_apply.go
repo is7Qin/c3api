@@ -25,7 +25,8 @@ import (
 //     delete 与 set 中时 set 胜（delete 先做，set 后覆盖）；
 //   - JSON 合法但 sjson 执行失败（保存期已拦 → 残余只可能是脏库值/极端组合）：
 //     **原 body 整体返回 + error**（不返回半应用结果）。调用方据此裸透传 +
-//     限频 WARN（proxy 侧），**不中止请求**。
+//     限频 WARN（三面共用同一实现：HTTP/WS 直接调用，probe 面经注入回调），
+//     **不中止请求**。
 //
 // 字节保真：set 的值走 sjson.SetRawBytes（不经 interface{} / float64），大整数
 // 与嵌套值逐字保留；delete/set 的路径排序保证同一配置在不同 map 迭代序下产出

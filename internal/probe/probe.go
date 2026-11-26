@@ -6,7 +6,8 @@
 // 出口与模板规则向上游发一条最小请求，返回「模型是否可用 + 延迟 + 失败原因」。
 //
 // 只读诊断观测：不落库、不计费、不改账号状态、不进调度/规则/失败统计。请求体
-// 与 query 不携带 URL/host/路径——出站目标只能是 service 组装进来的已存储配置；
+// 与 query 不携带 URL/host/路径——出站目标只能是 service 组装进来的已存储配置
+// （request_patch 残余失败的可观测性经构造期注入的回调交给组合根，本包不写日志）；
 // 本包负责 origin 锁定（scheme + hostname + 规范化端口）、不跟随重定向与响应体
 // 硬上限（2 MiB）；结果只含固定分类文案与有限公开错误码，不含任何上游自由文本
 // （安全由分类白名单 + 有限错误码结构性保证，不做凭据子串替换）。
@@ -46,15 +47,37 @@ const (
 // Prober 是探测执行器：aiclient Factory（静态族原始请求）+ 出口池（账号出口）。
 // 准入（4 执行 + 16 等待）与 30s 总期限由 service 拥有；本包只执行调用方
 // 已经准入、带期限的 ctx。日志由 service 统一记一条（本包不写日志）。
+//
+// patchWarn 是构造期注入的可选观测回调（request_patch body 残余失败）：本包只
+// 调用注入的 func，不 import logx、不写日志——spec §7.4/§8 的 probe 面可观测语义
+// 由组合根注入的、与 HTTP/WS 面同一份实现承担。
 type Prober struct {
 	factory *aiclient.Factory
 	pool    *egress.Pool
+	// patchWarn 为 nil = 不告警（零分支；默认行为）。
+	patchWarn func(templateID int64, format domain.UpstreamPathKey)
+}
+
+// Options 是 Prober 的构造期可选项（零值 = 生产默认）：与 sdkbridge.NewCodex 同款
+// 「全部构造期依赖一次给齐、没有事后回填」的形态。
+type Options struct {
+	// PatchWarn 是 request_patch body sjson 残余失败的可选告警回调（spec §7.4/§8）。
+	// 组合根（cmd/server）注入 proxy.PatchWarnFunc(log)——即 HTTP/WS 面同一个固定
+	// 文案限频 WARN 实现、同一张 template_id+format 限频表；probe 面因此与生产面
+	// 同一套可观测语义，而本包仍不写日志、零新增架构边。nil = 不告警。
+	PatchWarn func(templateID int64, format domain.UpstreamPathKey)
 }
 
 // New 构造探测执行器。nil factory 或 nil pool 不 panic——Probe 返回失败结论
-// （装配错误在 service/main 显形）。
-func New(factory *aiclient.Factory, pool *egress.Pool) *Prober {
-	return &Prober{factory: factory, pool: pool}
+// （装配错误在 service/main 显形）。可选观测回调经 opts 在构造期一次注入。
+func New(factory *aiclient.Factory, pool *egress.Pool, opts ...Options) *Prober {
+	p := &Prober{factory: factory, pool: pool}
+	for _, o := range opts {
+		if o.PatchWarn != nil {
+			p.patchWarn = o.PatchWarn
+		}
+	}
+	return p
 }
 
 // Probe 执行一次探测，直接使用调用方 ctx 的期限（不再自带超时/信号量）。
@@ -135,7 +158,7 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	// payload 合成之后、出网之前；头装饰器在 aiclient 网关头之后（aiclient 保证
 	// 后写覆盖）。key 同时用于 URL 路径与 patch 格式层（同一把键）；{api_key} 用
 	// spec.Credential 原始裸 key。无配置 ⇒ nil 装饰器 / 原 slice（零分配）。
-	payload := probeBodyPatch(spec, key, staticPayload(spec.Format, spec.UpstreamModel, spec.Input))
+	payload := p.applyBodyPatch(spec, key, staticPayload(spec.Format, spec.UpstreamModel, spec.Input))
 	decorate := probeHeaderDecorator(spec, key)
 
 	var (

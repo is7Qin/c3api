@@ -31,6 +31,7 @@ import (
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -140,18 +141,8 @@ func TestRequestPatchResidualFailureWarnOnce(t *testing.T) {
 	logOut := filepath.Join(dir, "warn.log")
 
 	up, capture := newPatchUpstream(t, http.StatusOK, `{"id":"c1"}`)
-	// 手工构造脏 patch：x.999999999 超出 sjson 数组 padding 上限，运行期执行失败
-	// （保存期本应 400——这里模拟手工改库绕过写面）。
-	dirty := &domain.RequestPatch{
-		Headers: map[string]string{"X-Patch-Header": "applied"},
-		Formats: map[domain.UpstreamPathKey]domain.FormatPatch{
-			domain.UpstreamPathChat: {
-				Set: map[string]json.RawMessage{"x.999999999": json.RawMessage(`1`), "secret_marker": json.RawMessage(`"must-not-leak"`)},
-			},
-		},
-	}
 	tpl := customPatchTpl(t, 990001, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, "")
-	tpl.Upstream = domain.NewTemplateUpstream(nil, dirty)
+	tpl.Upstream = domain.NewTemplateUpstream(nil, dirtyChatPatch())
 	p := newPatchProxy(t, tpl, nil, nil, &captureLogStore{}, logOut, nil)
 
 	body := []byte(`{"model":"gpt-4o","messages":[],"temperature":0.2}`)
@@ -169,12 +160,132 @@ func TestRequestPatchResidualFailureWarnOnce(t *testing.T) {
 	data, err := os.ReadFile(logOut)
 	require.NoError(t, err)
 	logText := string(data)
-	require.Equal(t, 1, strings.Count(logText, "request patch body apply failed"),
+	require.Equal(t, 1, strings.Count(logText, wantPatchWarnMessage),
 		"限频 WARN：同一 template+format 一分钟内只一条")
-	require.Contains(t, logText, "request patch body apply failed")
+	require.Contains(t, logText, wantPatchWarnMessage, "固定文案逐字（日志面契约）")
 	for _, leak := range []string{"999999999", "must-not-leak", "secret_marker", string(body)} {
 		require.NotContains(t, logText, leak, "WARN 不得打印 path/value/body")
 	}
+}
+
+// dirtyChatPatch 手工构造保存期本应拒绝、只可能来自手工改库的 chat 格式层
+// patch：x.999999999 超出 sjson 数组 padding 上限 ⇒ 运行期 splice 必然失败。
+func dirtyChatPatch() *domain.RequestPatch {
+	return &domain.RequestPatch{
+		Headers: map[string]string{"X-Patch-Header": "applied"},
+		Formats: map[domain.UpstreamPathKey]domain.FormatPatch{
+			domain.UpstreamPathChat: {
+				Set: map[string]json.RawMessage{
+					"x.999999999":   json.RawMessage("1"),
+					"secret_marker": json.RawMessage("\"must-not-leak\""),
+				},
+			},
+		},
+	}
+}
+
+// newPatchWarnLogger 返回写 warn 级 JSON 行的临时文件 logger；Close 由 t.Cleanup
+// 保证（Windows 上打开的文件句柄会让临时目录删不掉）。
+func newPatchWarnLogger(t *testing.T) (*logx.Logger, string) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "warn.log")
+	logger, err := logx.New("warn", out)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
+	return logger, out
+}
+
+// warnLogRecords 读取日志文件并按 JSON 行解析（日志行键集/字段契约断言用）。
+func warnLogRecords(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var recs []map[string]any
+	for _, ln := range strings.Split(string(raw), "\n") {
+		if ln == "" {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal([]byte(ln), &rec), "每行必须是完整 JSON：%s", ln)
+		recs = append(recs, rec)
+	}
+	return recs
+}
+
+// wantPatchWarnMessage 是日志面固定文案的**字面量**断言源：故意不从生产常量
+// bodyPatchWarnMessage 取（否则改生产文案时测试会跟着绿——断言不能拿被测常量自证）。
+const wantPatchWarnMessage = "request patch body apply failed; forwarding unmodified body"
+
+// TestPatchWarnFuncFixedMessageAndRateLimit 是 sjson 残余失败 WARN 门的**唯一实现**
+// 单测（proxy HTTP/WS 面与 probe 注入回调共用 PatchWarnFunc/emitBodyPatchWarn/
+// bodyPatchWarnGate）：
+//   - 固定文案逐字断言、日志行键集精确（只有 template_id + format，绝无 path/value/body）；
+//   - 限频键 = template_id+format：同键 1 分钟内只 1 条，不同 template/format 各自计数；
+//   - nil logger ⇒ nil 回调（probe 侧 nil = 不告警）。
+func TestPatchWarnFuncFixedMessageAndRateLimit(t *testing.T) {
+	logger, out := newPatchWarnLogger(t)
+	warn := PatchWarnFunc(logger)
+	require.NotNil(t, warn, "非 nil logger 必须返回可调用回调")
+	require.Nil(t, PatchWarnFunc(nil), "nil logger ⇒ nil 回调（调用点 nil = 不告警）")
+
+	// 独立 template/formats 隔离进程内限频表（同包其他用例可能写过同键）。
+	warn(990201, domain.UpstreamPathChat)
+	warn(990201, domain.UpstreamPathChat)      // 同 template+format：1 分钟内抑制
+	warn(990201, domain.UpstreamPathResponses) // 不同 format：各自计数
+	warn(990202, domain.UpstreamPathChat)      // 不同 template：各自计数
+	require.NoError(t, logger.Sync())
+
+	recs := warnLogRecords(t, out)
+	require.Len(t, recs, 3, "限频键 = template_id+format：同键 1 条、不同 template/format 各自 1 条")
+	for _, rec := range recs {
+		require.Equal(t, wantPatchWarnMessage, rec["msg"], "固定文案是日志面契约（逐字断言）")
+		require.Equal(t, "warn", rec["level"])
+		require.Len(t, rec, 6, "日志行键集 = caller/format/level/msg/template_id/ts")
+		for _, key := range []string{"caller", "format", "level", "msg", "template_id", "ts"} {
+			require.Contains(t, rec, key, "日志行必须且只能有固定字段")
+		}
+	}
+	raw, err := os.ReadFile(out)
+	require.NoError(t, err)
+	text := string(raw)
+	require.Equal(t, 2, strings.Count(text, `"template_id":990201`))
+	require.Equal(t, 1, strings.Count(text, `"template_id":990202`))
+	require.Equal(t, 2, strings.Count(text, `"format":"openai-chat"`))
+	require.Equal(t, 1, strings.Count(text, `"format":"openai-responses"`))
+	for _, leak := range []string{"999999999", "must-not-leak", "secret_marker", `"path"`, `"value"`} {
+		require.NotContains(t, text, leak, "WARN 不得打印 path/value/body")
+	}
+}
+
+// TestPatchWarnFuncSharedGateWithProxyFace 证明「单一实现 + 单一限频表」：probe 侧
+// 注入的回调先命中 (template_id, format) 键后，HTTP 面同一键的残余失败必须被
+// **同一张** bodyPatchWarnGate 抑制——否则就是两份实现/两张表。
+func TestPatchWarnFuncSharedGateWithProxyFace(t *testing.T) {
+	const templateID = 990203
+	up, _ := newPatchUpstream(t, http.StatusOK, `{"id":"c1"}`)
+	tpl := customPatchTpl(t, templateID, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, "")
+	tpl.Upstream = domain.NewTemplateUpstream(nil, dirtyChatPatch())
+	logOut := filepath.Join(t.TempDir(), "warn.log")
+	p := newPatchProxy(t, tpl, nil, nil, &captureLogStore{}, logOut, nil)
+	require.NotNil(t, p.log, "夹具：proxy logger 必须存在（nil 则本用例空转）")
+	// Close 先于 t.TempDir 的清理注册（LIFO）：Windows 上打开的文件句柄会让
+	// 临时目录删除失败。
+	t.Cleanup(func() { require.NoError(t, p.log.Close()) })
+
+	warn := PatchWarnFunc(p.log)
+	require.NotNil(t, warn)
+	warn(templateID, domain.UpstreamPathChat) // probe 面先残余失败一次：写限频表 + 1 条
+
+	rec := postViaRouter(p, "/v1/chat/completions", map[string]string{"Authorization": "Bearer ck-1"},
+		[]byte(`{"model":"gpt-4o","messages":[]}`))
+	require.Equal(t, http.StatusOK, rec.Code, "残余失败不得中止请求：%s", rec.Body.String())
+
+	require.NoError(t, p.log.Sync())
+	raw, err := os.ReadFile(logOut)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(raw), wantPatchWarnMessage),
+		"probe 注入回调与 HTTP 面共用同一张 (template,format) 限频表：1 分钟内只 1 条")
+	require.Equal(t, 1, strings.Count(string(raw), fmt.Sprintf(`"template_id":%d`, templateID)))
 }
 
 // TestRequestPatchErrLogsRedactKey 上游回显防泄漏（只保日志面）：
@@ -276,6 +387,32 @@ func TestRequestPatchHelpersNoConfigZeroAllocs(t *testing.T) {
 // selectionForPatchTest 无上游配置的 Selection（零值 + 类型，供 helper 判定用）。
 func selectionForPatchTest() *api.Selection {
 	return &api.Selection{CredentialType: credential.TypeCustom, UpstreamKey: "sk-x"}
+}
+
+// forcedEscapeDecorator 是 forced-escape sink：赋给包级变量 ⇒ 闭包必然逃逸到堆，
+// 与「装饰器交给 aiclient 出站调用」的真实形态同口径（P5 评审 oracle M1）。
+var forcedEscapeDecorator func(*http.Request)
+
+// TestRequestPatchForcedEscapeOneAlloc 是 spec §7.1/§11.17 分配验收的**生产口径**
+// 门禁：原始 BenchmarkRequestPatchConfiguredHeader 的 +1 alloc/+48B 是「闭包构造
+// 从 proxy（内联进微基准循环 ⇒ 栈分配）搬进 domain 跨包函数（超内联预算 ⇒ 逃逸）」
+// 的内联边界 artifact，不是生产回归。生产形态下闭包交给出站调用必然逃逸，BASE 与
+// P5 都恰好 1 alloc、无配置都 0 alloc。把口径钉成硬断言，未来 bench 数值漂移不会
+// 被误判为回归（也不许有人为复现 bench 把构造复制回 proxy——那破坏单一实现）。
+func TestRequestPatchForcedEscapeOneAlloc(t *testing.T) {
+	configured := benchPatchSelection(true)
+	allocs := testing.AllocsPerRun(100, func() {
+		forcedEscapeDecorator = headerDecorator(configured, patchKeyChat, "sk-bench")
+	})
+	require.LessOrEqual(t, allocs, 1.0, "有配置 forced-escape（生产形态）：每 attempt ≤1 枚闭包")
+	require.NotNil(t, forcedEscapeDecorator)
+
+	plain := benchPatchSelection(false)
+	allocs = testing.AllocsPerRun(100, func() {
+		forcedEscapeDecorator = headerDecorator(plain, patchKeyChat, "sk-bench")
+	})
+	require.Zero(t, allocs, "无配置 forced-escape：0 分配（aiclient 快路径）")
+	require.Nil(t, forcedEscapeDecorator)
 }
 
 // TestRequestPatchStreamAbortWarnRedacted 上游在流内错误载荷里回显账号 key 时，

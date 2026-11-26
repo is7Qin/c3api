@@ -18,7 +18,9 @@ package proxy
 //   - {api_key} 由**调用点**把当次 attempt 的原始 cred 传进装饰器（禁止从
 //     Authorization 反解，spec 评审 momus C1）；failover 每 attempt 重算；
 //   - body sjson 残余失败：裸透传 + 固定文案限频 WARN（按 template_id+format，
-//     进程内 sync.Map；只在失败路径访问，不打印 path/value/body，无计数器）；
+//     进程内 sync.Map；只在失败路径访问，不打印 path/value/body，无计数器）。
+//     本包是**唯一实现**：HTTP/WS 面走 warnBodyPatchFailure，probe 面经组合根
+//     注入 PatchWarnFunc（同一张限频表、同一段文案）——三面同语义（spec §1/§7.4/§8）；
 //   - 日志面脱敏：上游回显的账号 key 在 err_logs/attempt_logs 落库前精确替换为
 //     [redacted]（返回客户端的 4xx 原文面保持既有契约，不脱敏）。
 
@@ -166,6 +168,10 @@ func isResponseCreateFrame(frame []byte) bool {
 // bodyPatchWarnGate 是 sjson 残余失败的进程内限频表：键 = template_id+format，
 // 值 = 上次 WARN 的 UnixNano。只在失败路径读写（spec §7.4 评审 momus M-i/M-j：
 // 成功路径零状态、零锁、零分配；只 WARN、不加计数器）。
+//
+// 单一真值：HTTP、WS 与 probe 三个出站面**共用这张表**（probe 经组合根注入
+// PatchWarnFunc 回调）。同一模板+格式的残余失败不因出站面不同而重复刷屏——
+// 这是 spec §1「三面同一套语义」在可观测面的直接落点。
 var bodyPatchWarnGate sync.Map // map[bodyPatchWarnKey]int64
 
 // bodyPatchWarnKey 限频键（template_id + 出站格式键）。
@@ -177,14 +183,37 @@ type bodyPatchWarnKey struct {
 // bodyPatchWarnInterval 单个 (template,format) 的 WARN 最小间隔。
 const bodyPatchWarnInterval = time.Minute
 
-// warnBodyPatchFailure 固定文案限频 WARN：**不打印任何 path/value/body**
-// （配置值可能是密钥；spec §2.4/§8）。模板共用时不同账号命中同一键 → 限频按
-// 模板+格式而不是账号，避免每请求一条刷屏。
-func (p *Proxy) warnBodyPatchFailure(sel *api.Selection, key domain.UpstreamPathKey) {
-	if p == nil || p.log == nil {
+// bodyPatchWarnMessage 是残余失败 WARN 的固定文案：不打印任何 path/value/body
+// （配置值可能是密钥；spec §2.4/§8）。文案是日志面契约——测试逐字断言，改文案
+// 等于改可观测契约。
+const bodyPatchWarnMessage = "request patch body apply failed; forwarding unmodified body"
+
+// PatchWarnFunc 构造 request_patch body sjson 残余失败的固定文案限频 WARN 回调。
+//
+// 这是三个出站面的**单一实现**：HTTP/WS 面（warnBodyPatchFailure）与它共用
+// emitBodyPatchWarn 与 bodyPatchWarnGate。组合根（cmd/server）把它注入 probe
+// 构造期的 Options.PatchWarn，让 probe 面也有 spec §7.4/§8 的同一可观测语义，
+// 而 probe 包仍不 import logx、不写日志、不加架构边。
+//
+// 模板共用时不同账号命中同一键 ⇒ 限频按模板+格式而不是账号，避免每请求一条刷屏。
+// log == nil ⇒ 返回 nil 回调（调用点判 nil 即不告警，不产生分支外的状态）。
+func PatchWarnFunc(log *logx.Logger) func(templateID int64, format domain.UpstreamPathKey) {
+	if log == nil {
+		return nil
+	}
+	return func(templateID int64, format domain.UpstreamPathKey) {
+		emitBodyPatchWarn(log, templateID, format)
+	}
+}
+
+// emitBodyPatchWarn 是限频 WARN 的**唯一实现**（HTTP/WS 的 warnBodyPatchFailure 与
+// 注入 probe 的 PatchWarnFunc 都落到这里）：固定文案 + template_id/format 两个
+// 结构化字段，绝不打印 path/value/body。
+func emitBodyPatchWarn(log *logx.Logger, templateID int64, format domain.UpstreamPathKey) {
+	if log == nil {
 		return
 	}
-	k := bodyPatchWarnKey{templateID: sel.TemplateID, format: key}
+	k := bodyPatchWarnKey{templateID: templateID, format: format}
 	now := time.Now().UnixNano()
 	if last, ok := bodyPatchWarnGate.Load(k); ok {
 		if now-last.(int64) < int64(bodyPatchWarnInterval) {
@@ -192,9 +221,19 @@ func (p *Proxy) warnBodyPatchFailure(sel *api.Selection, key domain.UpstreamPath
 		}
 	}
 	bodyPatchWarnGate.Store(k, now)
-	p.log.Warn("request patch body apply failed; forwarding unmodified body",
-		logx.Int64("template_id", sel.TemplateID),
-		logx.String("format", string(key)))
+	log.Warn(bodyPatchWarnMessage,
+		logx.Int64("template_id", templateID),
+		logx.String("format", string(format)))
+}
+
+// warnBodyPatchFailure 是 HTTP/WS 出站面的 api.Selection 形态薄适配：把当次尝试
+// 的 template_id 与格式键交给唯一实现 emitBodyPatchWarn（行为/文案/限频与 probe
+// 面逐字节同一份）。
+func (p *Proxy) warnBodyPatchFailure(sel *api.Selection, key domain.UpstreamPathKey) {
+	if p == nil {
+		return
+	}
+	emitBodyPatchWarn(p.log, sel.TemplateID, key)
 }
 
 // upstreamKeyOf 取当次尝试的静态账号 key（nil 安全；非静态通道的空串 =

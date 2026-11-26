@@ -73,6 +73,25 @@ func BenchmarkRequestPatchConfiguredHeader(b *testing.B) {
 	}
 }
 
+// benchPatchEscapeSink 是 forced-escape sink：与生产形态（装饰器交给 aiclient
+// 出站调用）同口径，闭包必然逃逸到堆。
+var benchPatchEscapeSink func(*http.Request)
+
+// BenchmarkRequestPatchConfiguredHeaderForcedEscape 是 bench 的**生产口径**：
+// 与 BenchmarkRequestPatchConfiguredHeader 同一 Selection，唯一区别是闭包赋给
+// 包级 sink ⇒ 必然逃逸。BASE 与 P5 期望值相同（1 alloc）；ConfiguredHeader 的
+// +1 alloc 是跨包内联边界 artifact（P5 评审 oracle M1 / 本修复报告 §M1），
+// 不作为回归口径。复现：
+//
+//	go test ./internal/proxy/ -run '^$' -bench 'RequestPatchConfiguredHeaderForcedEscape$' -benchmem -count=1
+func BenchmarkRequestPatchConfiguredHeaderForcedEscape(b *testing.B) {
+	sel := benchPatchSelection(true)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		benchPatchEscapeSink = headerDecorator(sel, patchKeyChat, "sk-bench")
+	}
+}
+
 // BenchmarkRequestPatchConfiguredBody 有配置 body：delete 排序 → set 排序的
 // sjson splice（执行器唯一成本；限频 WARN 状态只在失败路径）。
 func BenchmarkRequestPatchConfiguredBody(b *testing.B) {

@@ -132,8 +132,16 @@ func newBillingFace(d billingDeps) *billingFace {
 	f.clients = clients
 	// 单账号单模型探测执行器（account-model-test §5.1）：与 HTTP 面共用同一个
 	// aiclient Factory 与出口池。准入（4 执行 + 16 等待）与 30s 总期限在 service
-	// 内；本构造只传执行依赖。探测不落库、不计费、不进调度/规则/失败统计。
-	accountProber := accountprobe.New(clients, egressPool)
+	// 内；本构造只传执行依赖 + 一个可选观测 seam。探测不落库、不计费、不进
+	// 调度/规则/失败统计。
+	//
+	// request_patch 残余失败（spec §7.4/§8）：probe 包不写日志，可观测性由组合根
+	// 注入——proxy.PatchWarnFunc(log) 就是 HTTP/WS 面同一份实现（同一张
+	// template_id+format 限频表、同一段固定文案），三面不会各自刷屏。probe 因此
+	// 仍不 import logx、零新增架构边。
+	accountProber := accountprobe.New(clients, egressPool, accountprobe.Options{
+		PatchWarn: proxy.PatchWarnFunc(log),
+	})
 	// 管理端变更统一经 invalidate 去抖器生效（接线矩阵）：
 	// - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量 Reload（去抖窗口
 	//   内合并；新用户必须即刻进余额快照——防 ≤10s 402 窗口）

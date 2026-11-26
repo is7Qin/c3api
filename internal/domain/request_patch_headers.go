@@ -121,8 +121,8 @@ func RequestPatchFormat(up *TemplateUpstream, key UpstreamPathKey) (FormatPatch,
 //   - 无该格式层 / 空 patch / body 非 JSON 容器（multipart edits、二进制）⇒
 //     (body, nil)：**设计性跳过**，不是失败，调用方不得 WARN；
 //   - JSON 但 sjson 残余失败 ⇒ (body, err)：调用方裸透传 + 按 §7.4 的观测语义处理
-//     （proxy 固定文案限频 WARN；probe 不写日志，见 internal/probe 包注释），
-//     **不中止请求**。
+//     （三面共用一个固定文案限频 WARN 实现：HTTP/WS 面直接调用，probe 面经构造期
+//     注入的 PatchWarn 回调——probe 包自身不写日志），**不中止请求**。
 func ApplyRequestPatch(up *TemplateUpstream, key UpstreamPathKey, body []byte) ([]byte, error) {
 	fp, ok := RequestPatchFormat(up, key)
 	if !ok {
