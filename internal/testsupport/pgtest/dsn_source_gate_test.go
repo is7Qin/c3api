@@ -50,6 +50,7 @@ var e2eDSNAllowlist = map[string]string{
 	"tools/e2e/routing_e2e_test.go":           "manual e2e behind //go:build e2e",
 	"tools/e2e/routing_multi_e2e_test.go":     "manual e2e behind //go:build e2e",
 	"tools/e2e/supplier_earnings_e2e_test.go": "manual e2e behind //go:build e2e",
+	"tools/e2e/request_patch_e2e_test.go":     "manual e2e behind //go:build e2e: request_patch config-plane round-trip needs an admin DSN to create/drop its own database",
 }
 
 // requirePGAllowlist is the only place outside internal/testsupport/pgtest that
