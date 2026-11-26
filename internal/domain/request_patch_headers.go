@@ -82,7 +82,10 @@ func applyRequestPatchHeaderLayer(header http.Header, host *string, headers map[
 }
 
 // RequestPatchHeaderDecorator 构造一次 HTTP 出站请求的头装饰器（spec §7.1）：
-// **proxy 的 14 个 HTTP 接线点与 probe 的 5 个 factory 调用共用这一个构造**。
+// **proxy 的 15 个装饰器接线位点（11 个 aiclient 出站调用 + 4 个 rawJSON 第 8 参）
+// 中 HTTP 侧的 14 处与 probe 的 5 个 factory 调用共用这一个构造**——其中 13 处直接
+// 构造（9 个 aiclient HTTP 出站调用 + 4 个 rawJSON 第 8 参），rawJSON 内部的 RawPost
+// 只原样透传该装饰器；WS 拨号的 1 处改用 wsHeaderDecorator（层判据仍是同一份）。
 //   - 无头配置 ⇒ nil（aiclient 快路径，零分配）；
 //   - 否则返回闭包：两层头应用到 req.Header / req.Host（判据见
 //     ApplyRequestPatchHeaderLayers）。

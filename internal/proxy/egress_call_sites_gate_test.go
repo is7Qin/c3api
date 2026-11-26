@@ -22,9 +22,11 @@ import (
 // §10 P5 把 probe 纳入同一门禁）。
 //
 // 目的：request_patch 的装饰器是**每一个**数据面出站点的必经之路。手写 call site
-// 会漂（proxy 11 个 aiclient 出站接线 + rawJSON 1 个内部透传 + WS dial 1 个；
-// probe 5 个 factory 调用），漏一个就是「配置对该上游静默失效」——没有任何行为测试
-// 会红。本门禁把「漏接线」变成机械红：
+// 会漂（proxy 11 个 aiclient 出站调用 + 4 个 rawJSON 第 8 参 = 15 个装饰器接线位点，
+// aiclient 侧含 rawJSON 内部的 RawPost 透传与 WS 的 ResponsesWSDial 拨号；probe 5 个
+// factory 调用。WS 的 clientFrameHook 面另由 relayws_call_sites_gate_test.go 钉），
+// 漏一个就是「配置对该上游静默失效」——没有任何行为测试会红。本门禁把「漏接线」
+// 变成机械红：
 //
 //  1. 从 pkg/aiclient 生产代码**动态枚举**全部出站方法：Factory 上最后一个参数类型
 //     是 func(*http.Request) 或 func(*websocket.DialOptions) 的导出方法（今天 6+1；
@@ -205,7 +207,7 @@ func TestEgressCallSitesGateRejectsBypass(t *testing.T) {
 	// P4/P5 转正：proxy 的 WS 握手与 probe 的 5 个 factory 调用都已接非 nil 实参，
 	// 阶段白名单必须清空（否则就是「白名单留着但接线已经做了」的静默漂移——门禁
 	// 会继续放行假 nil）。
-	require.Empty(t, egressNilAllowlist, "P5 接线完成后 aiclient 出站白名单必须为空集（proxy 14 接线点 + probe 5 调用点全部传装饰器）")
+	require.Empty(t, egressNilAllowlist, "P5 接线完成后 aiclient 出站白名单必须为空集（proxy 15 接线位点 = 11 个 aiclient 出站调用 + 4 个 rawJSON 第 8 参、probe 5 个调用点，全部传装饰器）")
 	_, ok := egressNilAllowlist[nilAllowKey{file: "forward.go", fn: "rawJSON", method: "RawPost"}]
 	require.False(t, ok, "rawJSON 内部 RawPost 透传不是白名单——它必须把实参原样传下去")
 
