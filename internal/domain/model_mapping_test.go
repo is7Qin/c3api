@@ -25,7 +25,7 @@ func TestModelMappingModeJSONRoundTrip(t *testing.T) {
 	data, err = json.Marshal(ModelMappingModeImplicit)
 	require.NoError(t, err)
 	require.Equal(t, `"implicit"`, string(data))
-	// MarshalJSON 的拒绝分支（types.go:256）：值渲染是 Mode.String()，即
+	// MarshalJSON 的拒绝分支（internal/modelmap/modelmap.go:61）：值渲染是 Mode.String()，即
 	// `ModelMappingMode(%d)`——实测 Mode(99) → "ModelMappingMode(99)"。
 	// 用后缀而非 EqualError：encoding/json 会在前面套 "json: error calling
 	// MarshalJSON for type ..."，那层前缀是 stdlib 的实现细节，不属于本包契约。
@@ -143,7 +143,7 @@ func TestModelMappingRejectsInvalidEntries(t *testing.T) {
 			want:    `mapped_model "upstream " must be non-empty without leading/trailing whitespace`,
 		},
 		{
-			// 第三条并列校验（types.go:340）：值渲染是 `Mode.String()`，即
+			// 第三条并列校验（internal/modelmap/modelmap.go:145）：值渲染是 `Mode.String()`，即
 			// `ModelMappingMode(%d)`——实测 Mode(99) → "ModelMappingMode(99)"。
 			// 这一条同样是**验证面**：解码面先以 "invalid mode %q" 拦下非法 mode
 			// （见上表），只有直接构造的映射才走到这里。

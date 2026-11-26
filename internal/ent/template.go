@@ -10,8 +10,8 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/template"
+	"github.com/is7qin/c3api/internal/modelmap"
 )
 
 // Template is the model entity for the Template schema.
@@ -32,7 +32,7 @@ type Template struct {
 	// FormatModels holds the value of the "format_models" field.
 	FormatModels map[string][]string `json:"format_models,omitempty"`
 	// ModelMapping holds the value of the "model_mapping" field.
-	ModelMapping domain.ModelMapping `json:"model_mapping,omitempty"`
+	ModelMapping modelmap.ModelMapping `json:"model_mapping,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.

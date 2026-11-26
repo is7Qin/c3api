@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/identityenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +23,7 @@ func TestIdentityEnvelopeCanonicalMergePreservesUnknownKeys(t *testing.T) {
 	profile := json.RawMessage(`{"z":1,"a":"new"}`)
 	env, err := ParseIdentityEnvelope(raw)
 	require.NoError(t, err)
-	merged, err := mergeIdentityEnvelope(env, IdentityPatch{BPSProfile: profile, SetBPSProfile: true})
+	merged, err := identityenv.MergeIdentityEnvelope(env, IdentityPatch{BPSProfile: profile, SetBPSProfile: true})
 	require.NoError(t, err)
 	got, err := merged.CanonicalJSON()
 	require.NoError(t, err)

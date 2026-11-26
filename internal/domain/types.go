@@ -6,14 +6,12 @@
 package domain
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/modelmap"
 )
 
 type RequestFormat string
@@ -219,129 +217,24 @@ func TruncateErrMsg(s string) string {
 	return string(r[:ErrMsgMaxLen])
 }
 
-type ModelMappingMode uint8
-
-const (
-	ModelMappingModeInvalid  ModelMappingMode = 0
-	ModelMappingModeExplicit ModelMappingMode = 1
-	ModelMappingModeImplicit ModelMappingMode = 2
+// ModelMapping 系列是**同名类型别名**，不是新类型：canonical 定义住在中立叶子包
+// internal/modelmap（ent 生成代码必须能引用它，而 ent 不许反向依赖本包）。
+// 别名保证 Template.ModelMapping 字段的类型、方法集与跨包赋值全部逐字节不变。
+type (
+	ModelMappingMode  = modelmap.ModelMappingMode
+	ModelMappingEntry = modelmap.ModelMappingEntry
+	ModelMapping      = modelmap.ModelMapping
 )
 
-func (m ModelMappingMode) Valid() bool {
-	switch m {
-	case ModelMappingModeExplicit, ModelMappingModeImplicit:
-		return true
-	}
-	return false
-}
+const (
+	ModelMappingModeInvalid  = modelmap.ModelMappingModeInvalid
+	ModelMappingModeExplicit = modelmap.ModelMappingModeExplicit
+	ModelMappingModeImplicit = modelmap.ModelMappingModeImplicit
+)
 
-func (m ModelMappingMode) String() string {
-	switch m {
-	case ModelMappingModeExplicit:
-		return "explicit"
-	case ModelMappingModeImplicit:
-		return "implicit"
-	default:
-		return fmt.Sprintf("ModelMappingMode(%d)", uint8(m))
-	}
-}
-
-func (m ModelMappingMode) MarshalJSON() ([]byte, error) {
-	switch m {
-	case ModelMappingModeExplicit:
-		return json.Marshal("explicit")
-	case ModelMappingModeImplicit:
-		return json.Marshal("implicit")
-	default:
-		return nil, fmt.Errorf("invalid ModelMappingMode %q", m.String())
-	}
-}
-
-func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
-	var s *string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	if s == nil {
-		return fmt.Errorf("mode must not be null")
-	}
-	switch *s {
-	case "explicit":
-		*m = ModelMappingModeExplicit
-	case "implicit":
-		*m = ModelMappingModeImplicit
-	default:
-		return fmt.Errorf("invalid mode %q", *s)
-	}
-	return nil
-}
-
-type ModelMappingEntry struct {
-	MappedModel string           `json:"mapped_model"`
-	Mode        ModelMappingMode `json:"mode"`
-}
-
-func (e *ModelMappingEntry) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		return fmt.Errorf("model mapping entry must not be null")
-	}
-	var raw map[string]*json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["mapped_model"]; !ok {
-		return fmt.Errorf("mapped_model is required")
-	}
-	if _, ok := raw["mode"]; !ok {
-		return fmt.Errorf("mode is required")
-	}
-	if len(raw) != 2 {
-		return fmt.Errorf("additional properties not allowed")
-	}
-	type alias ModelMappingEntry
-	var tmp alias
-	if err := json.Unmarshal(data, &tmp); err != nil {
-		return err
-	}
-	if strings.TrimSpace(tmp.MappedModel) == "" || tmp.MappedModel != strings.TrimSpace(tmp.MappedModel) {
-		return fmt.Errorf("mapped_model must be non-empty without leading/trailing whitespace")
-	}
-	*e = ModelMappingEntry(tmp)
-	return nil
-}
-
-type ModelMapping map[string]ModelMappingEntry
-
-func (m *ModelMapping) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-		return fmt.Errorf("model_mapping must not be null")
-	}
-	type raw ModelMapping
-	var tmp raw
-	if err := json.Unmarshal(data, (*map[string]ModelMappingEntry)(&tmp)); err != nil {
-		return err
-	}
-	if tmp == nil {
-		tmp = make(raw)
-	}
-	*m = ModelMapping(tmp)
-	return nil
-}
-
-func ValidateModelMapping(m ModelMapping) error {
-	for alias, entry := range m {
-		if strings.TrimSpace(alias) == "" || alias != strings.TrimSpace(alias) {
-			return fmt.Errorf("alias %q must be non-empty without leading/trailing whitespace", alias)
-		}
-		if strings.TrimSpace(entry.MappedModel) == "" || entry.MappedModel != strings.TrimSpace(entry.MappedModel) {
-			return fmt.Errorf("mapped_model %q must be non-empty without leading/trailing whitespace", entry.MappedModel)
-		}
-		if !entry.Mode.Valid() {
-			return fmt.Errorf("mode %q must be explicit or implicit", entry.Mode.String())
-		}
-	}
-	return nil
-}
+// ValidateModelMapping 是本包对 modelmap.ValidateModelMapping 的同值别名：
+// 包装函数会造出第二份实现，而这里的契约恰好是"同一份校验"。
+var ValidateModelMapping = modelmap.ValidateModelMapping
 
 type Template struct {
 	ID               int64

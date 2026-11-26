@@ -11,9 +11,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
+	"github.com/is7qin/c3api/internal/identityenv"
 )
 
 // AccountExtCreate is the builder for creating a AccountExt entity.
@@ -37,7 +37,7 @@ func (_c *AccountExtCreate) SetCredentialType(v string) *AccountExtCreate {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_c *AccountExtCreate) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtCreate {
+func (_c *AccountExtCreate) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtCreate {
 	_c.mutation.SetCodexIdentity(v)
 	return _c
 }
@@ -339,7 +339,7 @@ func (u *AccountExtUpsert) UpdateCredentialType() *AccountExtUpsert {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsert) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsert {
+func (u *AccountExtUpsert) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtUpsert {
 	u.Set(accountext.FieldCodexIdentity, v)
 	return u
 }
@@ -541,7 +541,7 @@ func (u *AccountExtUpsertOne) UpdateCredentialType() *AccountExtUpsertOne {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsertOne) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsertOne {
+func (u *AccountExtUpsertOne) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.SetCodexIdentity(v)
 	})
@@ -929,7 +929,7 @@ func (u *AccountExtUpsertBulk) UpdateCredentialType() *AccountExtUpsertBulk {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsertBulk) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsertBulk {
+func (u *AccountExtUpsertBulk) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.SetCodexIdentity(v)
 	})

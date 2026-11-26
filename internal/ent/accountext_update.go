@@ -11,10 +11,10 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/predicate"
+	"github.com/is7qin/c3api/internal/identityenv"
 )
 
 // AccountExtUpdate is the builder for updating AccountExt entities.
@@ -59,7 +59,7 @@ func (_u *AccountExtUpdate) SetNillableCredentialType(v *string) *AccountExtUpda
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_u *AccountExtUpdate) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpdate {
+func (_u *AccountExtUpdate) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtUpdate {
 	_u.mutation.SetCodexIdentity(v)
 	return _u
 }
@@ -376,7 +376,7 @@ func (_u *AccountExtUpdateOne) SetNillableCredentialType(v *string) *AccountExtU
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_u *AccountExtUpdateOne) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpdateOne {
+func (_u *AccountExtUpdateOne) SetCodexIdentity(v *identityenv.IdentityEnvelope) *AccountExtUpdateOne {
 	_u.mutation.SetCodexIdentity(v)
 	return _u
 }
