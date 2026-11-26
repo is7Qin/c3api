@@ -21,6 +21,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,10 +84,10 @@ func (c *builtHeaderCapture) header(t *testing.T) http.Header {
 // 这里只需要 Direct() 给出同一条 client，未绑定账号即走它）。
 type staticEgressPool struct{ client *egressapi.Client }
 
-func (p staticEgressPool) Direct() *egressapi.Client                                  { return p.client }
-func (p staticEgressPool) For(egressapi.Spec) *egressapi.Client                       { return p.client }
-func (p staticEgressPool) Detach(map[[16]byte]struct{}) []*egressapi.Client           { return nil }
-func (p staticEgressPool) Size() int                                                  { return 0 }
+func (p staticEgressPool) Direct() *egressapi.Client                        { return p.client }
+func (p staticEgressPool) For(egressapi.Spec) *egressapi.Client             { return p.client }
+func (p staticEgressPool) Detach(map[[16]byte]struct{}) []*egressapi.Client { return nil }
+func (p staticEgressPool) Size() int                                        { return 0 }
 
 func (c *patchCapture) snapshot() []patchReq {
 	c.mu.Lock()
@@ -465,4 +466,71 @@ func TestRequestPatchSuccessPathNoPatchLogs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "request patch", "成功路径零 patch 日志")
 	require.Empty(t, strings.TrimSpace(string(data)), "成功路径不得有 WARN")
+}
+
+// TestRequestPatchHostTriStateAcrossLayers Host 特例的**按层三态**（spec §2.4/§2.6；
+// P3 评审 oracle I1 + M1）：
+//   - 全局层 Set + 格式层 ""（Del）⇒ 格式层覆盖 ⇒ req.Host 清空、出站回落 URL.Host；
+//   - 仅格式层 ""（无全局层）⇒ 回落 URL.Host；
+//   - 全局层 "" + 格式层 Set ⇒ 格式层生效；
+//   - 全局层 Set（格式层不设 Host）⇒ 全局层生效（既有语义不回退）；
+//   - Host 值里的 {api_key} 在写入 req.Host 前用当次 attempt 原始 cred 展开。
+func TestRequestPatchHostTriStateAcrossLayers(t *testing.T) {
+	cases := []struct {
+		name      string
+		patchWire string
+		wantHost  string // "" = 期望回落 httptest URL.Host
+	}{
+		{
+			// 判别性核心用例：修复前格式层空值被 no-op，全局 Host 残留（I1）。
+			name:      "global_set_format_del_falls_back_to_url_host",
+			patchWire: `{"headers":{"Host":"global.example"},"formats":{"openai-chat":{"headers":{"Host":""}}}}`,
+		},
+		{
+			name:      "format_del_only_falls_back_to_url_host",
+			patchWire: `{"formats":{"openai-chat":{"headers":{"Host":"","X-Layer":"format"}}}}`,
+		},
+		{
+			name:      "global_del_format_set_wins",
+			patchWire: `{"headers":{"Host":""},"formats":{"openai-chat":{"headers":{"Host":"format.example"}}}}`,
+			wantHost:  "format.example",
+		},
+		{
+			name:      "global_set_without_format_host_stays",
+			patchWire: `{"headers":{"Host":"global.example"}}`,
+			wantHost:  "global.example",
+		},
+		{
+			// M1：Host 值占位符必须展开，不得把字面 {api_key} 发给上游。
+			name:      "host_value_expands_api_key",
+			patchWire: `{"headers":{"Host":"{api_key}.example","X-Vendor-Key":"{api_key}"}}`,
+			wantHost:  "sk-upstream.example",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			up, capture := newPatchUpstream(t, http.StatusOK, `{"id":"c1"}`)
+			upURL, err := url.Parse(up.URL)
+			require.NoError(t, err)
+
+			tpl := customPatchTpl(t, 1, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, tc.patchWire)
+			p := newPatchProxy(t, tpl, nil, nil, &captureLogStore{}, "", nil)
+			rec := postViaRouter(p, "/v1/chat/completions", map[string]string{"Authorization": "Bearer ck-1"},
+				[]byte(`{"model":"gpt-4o","messages":[]}`))
+			require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+			got := capture.only(t)
+			wantHost := tc.wantHost
+			if wantHost == "" {
+				wantHost = upURL.Host // req.Host = "" ⇒ 出站 Host 回退 URL.Host
+			}
+			require.Equal(t, wantHost, got.Host, "Host 按层三态（Set 覆盖 / Del 回落 URL.Host）")
+			if tc.name == "format_del_only_falls_back_to_url_host" {
+				require.Equal(t, "format", got.Header.Get("X-Layer"), "格式层其余头照常应用")
+			}
+			if tc.name == "host_value_expands_api_key" {
+				require.Equal(t, "sk-upstream", got.Header.Get("X-Vendor-Key"), "{api_key} 同一展开语义")
+			}
+		})
+	}
 }

@@ -305,3 +305,117 @@ func TestRequestPatchStreamAbortWarnRedacted(t *testing.T) {
 	require.NotContains(t, logText, "sk-upstream", "进程 WARN 行不得出现账号 key")
 	require.Contains(t, logText, "[redacted]")
 }
+
+// TestRequestPatchAcceptEncodingRuntimeSkipOwnGate 运行期跳过 Accept-Encoding 的
+// **独立承重门**（P3 评审 momus Minor-1）：不经 aiclient 装饰之后的 Del，直接调用
+// headerDecorator，断言装饰器自身不会把脏库的 AE 写进出站 Header。否则 M4 变异
+// （删掉 case "Accept-Encoding" 的 continue）会被 Del 掩盖而假绿。
+func TestRequestPatchAcceptEncodingRuntimeSkipOwnGate(t *testing.T) {
+	newReq := func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "http://upstream.example/v1/chat/completions", nil)
+	}
+	decFor := func(t *testing.T, patch *domain.RequestPatch) func(*http.Request) {
+		t.Helper()
+		sel := selectionForPatchTest()
+		sel.Upstream = &domain.TemplateUpstream{Patch: patch}
+		dec := headerDecorator(sel, patchKeyChat, "sk-x")
+		require.NotNil(t, dec, "有头配置必须返回装饰器（nil 则本门空转）")
+		return dec
+	}
+
+	t.Run("dirty_ae_never_applied", func(t *testing.T) {
+		// 脏库值：保存期本应 400（非空 AE 硬拒），这里手工构造模拟手工改库。
+		dec := decFor(t, &domain.RequestPatch{Headers: map[string]string{"Accept-Encoding": "gzip"}})
+		req := newReq()
+		dec(req)
+		_, hasAE := req.Header["Accept-Encoding"]
+		require.False(t, hasAE, "装饰器自身不得写 Accept-Encoding（不能靠 aiclient 装饰后的 Del 掩盖）")
+		require.Empty(t, req.Header.Get("Accept-Encoding"))
+		for name := range req.Header {
+			require.NotEqual(t, "Accept-Encoding", http.CanonicalHeaderKey(name), "大小写变体同样不得出现")
+		}
+	})
+
+	t.Run("legal_applied_ae_skipped", func(t *testing.T) {
+		dec := decFor(t, &domain.RequestPatch{
+			Headers: map[string]string{"Accept-Encoding": "gzip", "X-Global": "applied"},
+			Formats: map[domain.UpstreamPathKey]domain.FormatPatch{
+				domain.UpstreamPathChat: {Headers: map[string]string{"Accept-Encoding": "br", "X-Format": "applied"}},
+			},
+		})
+		req := newReq()
+		dec(req)
+		require.Equal(t, "applied", req.Header.Get("X-Global"), "合法头正常应用（全局层）")
+		require.Equal(t, "applied", req.Header.Get("X-Format"), "合法头正常应用（格式层）")
+		_, hasAE := req.Header["Accept-Encoding"]
+		require.False(t, hasAE, "合法头应用的同时 Accept-Encoding 仍被跳过")
+	})
+}
+
+// TestRequestPatchDualKeyFailoverRedaction D1「一行只含本 attempt key」的最强反例
+// （P3 评审 momus Minor-2）：failover 两个 attempt 分别回显**不同**账号 key
+// （sk-first → 429 换号 → sk-second 400 终态）：
+//   - err_logs 只落最终 attempt 的消息 ⇒ 不含任一 key、含 [redacted]；
+//   - attempt_logs 每次尝试一行、各自只用本行 attempt key 脱敏 ⇒ 两行均无原 key，
+//     且每行只含本行那次回显的脱敏结果（不混入另一 attempt 的 key）；
+//   - 客户端 4xx 原文面不脱敏（spec §8 明示），含最后 attempt key。
+func TestRequestPatchDualKeyFailoverRedaction(t *testing.T) {
+	const firstKey, secondKey = "sk-first", "sk-second"
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		echo := r.Header.Get("X-Vendor-Key")
+		w.Header().Set("Content-Type", "application/json")
+		if echo == firstKey {
+			w.WriteHeader(http.StatusTooManyRequests) // 可 failover：换号
+		} else {
+			w.WriteHeader(http.StatusBadRequest) // 确定性 4xx：终态（seed-4xx-400 全透）
+		}
+		_, _ = fmt.Fprintf(w, `{"error":{"message":"invalid key %s"}}`, echo)
+	}))
+	t.Cleanup(up.Close)
+
+	tpl := customPatchTpl(t, 1, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat},
+		`{"headers":{"Authorization":"Bearer {api_key}","X-Vendor-Key":"{api_key}"}}`)
+	accs := map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: tpl.ID, Template: tpl, UpstreamKey: firstKey, Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 8},
+		{ID: 2, TemplateID: tpl.ID, Template: tpl, UpstreamKey: secondKey, Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 8},
+	}}
+	store := &captureLogStore{}
+	sink := &captureAttemptSink{}
+	p := newPatchProxy(t, tpl, accs, nil, store, "", nil)
+	p.SetAttemptLogs(sink)
+
+	rec := postViaRouter(p, "/v1/chat/completions", map[string]string{"Authorization": "Bearer ck-1"},
+		[]byte(`{"model":"gpt-4o","messages":[]}`))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "第二次 attempt 的 400 是终态：%s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), secondKey, "客户端 4xx 原文面不脱敏（spec §8），且来自最后一次 attempt")
+	require.NotContains(t, rec.Body.String(), firstKey, "客户端只看到最后一次 attempt 的上游原文")
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+
+	var errRows []*domain.UsageLog
+	for _, row := range logRows(store) {
+		if row.ErrorType != domain.ErrNone {
+			errRows = append(errRows, row)
+		}
+	}
+	require.Len(t, errRows, 1, "err_logs 只落最终 attempt 一条（中间 429 不落库）")
+	require.NotNil(t, errRows[0].ErrorMessage)
+	require.NotContains(t, *errRows[0].ErrorMessage, firstKey, "err_logs 不得出现任一 attempt key")
+	require.NotContains(t, *errRows[0].ErrorMessage, secondKey, "err_logs 不得出现任一 attempt key")
+	require.Contains(t, *errRows[0].ErrorMessage, redactedPatchKey, "终态行脱敏为固定文本")
+
+	attemptRows := sink.snapshot()
+	require.Len(t, attemptRows, 2, "两次 failover attempt 各一行 attempt_logs")
+	for i, row := range attemptRows {
+		require.NotNil(t, row.ErrorMessage, "第 %d 行必须有上游回显文本", i)
+		require.NotContains(t, *row.ErrorMessage, firstKey, "第 %d 行不得出现任一 attempt key", i)
+		require.NotContains(t, *row.ErrorMessage, secondKey, "第 %d 行不得出现任一 attempt key", i)
+		require.Contains(t, *row.ErrorMessage, redactedPatchKey, "第 %d 行必须含 [redacted]", i)
+		require.Equal(t, 1, strings.Count(*row.ErrorMessage, redactedPatchKey), "第 %d 行只含本行 attempt key 的脱敏", i)
+	}
+	require.Equal(t, int16(1), attemptRows[0].Ordinal)
+	require.Equal(t, int16(2), attemptRows[1].Ordinal)
+	require.Equal(t, int64(1), attemptRows[0].AccountID)
+	require.Equal(t, int64(2), attemptRows[1].AccountID)
+}

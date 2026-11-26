@@ -72,11 +72,12 @@ func formatPatchFor(sel *api.Selection, key domain.UpstreamPathKey) (domain.Form
 // headerDecorator 构造 aiclient 出站头装饰器（spec §7.1）：
 //   - 无全局头且无该格式层头 ⇒ nil（aiclient 快路径，零分配）；
 //   - 否则返回闭包：先应用全局层，再应用格式层（后者逐键覆盖/删除）；
-//   - 每层：非空值 Set、"" Del；Host 特例走 req.Host（空值/Del 不改，回退
-//     URL.Host）；Accept-Encoding 规范形比较后**运行期跳过**（保存期已 400，
-//     这里防御脏库值）；
+//   - 每层：非空值 Set、"" Del；Host 特例走 req.Host，**按层三态**（非空 =
+//     展开后覆盖，"" = 清除 ⇒ 出站回落 URL.Host——因此格式层 "" 能覆盖全局层
+//     Set）；Accept-Encoding 规范形比较后**运行期跳过**（保存期已 400，这里防御
+//     脏库值）；
 //   - 头值里的 {api_key} 用闭包捕获的 apiKey 原值展开（strings.ReplaceAll 仅在
-//     命中占位符时才分配）。
+//     命中占位符时才分配；Host 值同样展开）。
 //
 // apiKey 必须来自当次 attempt 的**原始 cred**（credentialFor(sel) / caller 的
 // cred 参数），不得从 auth / "Bearer "+key 反解。
@@ -99,15 +100,19 @@ func headerDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey stri
 
 // applyPatchHeaders 应用**一层**头语义。头名在保存期已归一为规范形
 // （domain.ParseRequestPatch），此处直接比较，不再 CanonicalHeaderKey。
+//
+// Host 是**按层三态**（spec §2.4/§2.6；P3 评审 oracle I1）：非空值 ⇒
+// req.Host = 展开后的值；空值（Del）⇒ req.Host = ""（显式清除上一层/网关默认）。
+// req.Host 空 = 出站回退 URL.Host（HTTP 上"不设置 Host"），所以格式层 Host:""
+// 能覆盖全局层 Host:Set，与普通头的逐层 Del 覆盖语义一致。
 func applyPatchHeaders(req *http.Request, headers map[string]string, apiKey string) {
 	for name, value := range headers {
 		switch name {
 		case "Host":
 			// Host 特例（spec §2.4/§7.1）：只改 Host 请求头，不改连接目标/TLS
-			// SNI；空值/Del 语义 = 回退 URL.Host（不设置 req.Host）。
-			if value != "" {
-				req.Host = value
-			}
+			// SNI；空值经 expandAPIKey 仍为 ""（= 清除 ⇒ 回退 URL.Host）。头值
+			// 占位符同样展开（同一层语义，不写 Header map）。
+			req.Host = expandAPIKey(value, apiKey)
 		case "Accept-Encoding":
 			// 运行期永不应用（响应编码不变量兜底；保存期已拒绝非空值）。
 			continue
