@@ -10,12 +10,16 @@ import { readFileSync } from 'node:fs'
 import {
   CUSTOM_PATH_FIELDS,
   TRANSPORT_DOWNGRADE_CONFIRM,
+  emptyRequestPatchForm,
   extEchoBlocked,
   extFormFields,
   extWriteBody,
   extWriteConfirm,
+  isEmptyRequestPatch,
   isCodexCredentialType,
   nonEmptyPaths,
+  requestPatchFromForm,
+  requestPatchToForm,
   saveTargetID,
   shouldSyncEcho,
 } from './template-extensions.ts'
@@ -32,6 +36,7 @@ describe('extFormFields', () => {
         strip_image_tools: true,
         upstream_paths: { anthropic: 'v1/messages', 'openai-chat': 'chat/completions' },
         codex_responses_transport: 'ws',
+        request_patch: emptyRequestPatchForm(),
       },
     )
   })
@@ -39,7 +44,12 @@ describe('extFormFields', () => {
   it('无 ext 行 → 空表（该模板确实没有配置，可以标记已同步）', () => {
     assert.deepEqual(
       extFormFields(null),
-      { strip_image_tools: false, upstream_paths: {}, codex_responses_transport: '' },
+      {
+        strip_image_tools: false,
+        upstream_paths: {},
+        codex_responses_transport: '',
+        request_patch: emptyRequestPatchForm(),
+      },
     )
   })
 
@@ -59,7 +69,12 @@ describe('extFormFields', () => {
   it('存在 ext 行但字段全为 null → 未配置', () => {
     assert.deepEqual(
       extFormFields({ upstream_paths: null, strip_image_tools: null, codex_responses_transport: null }),
-      { strip_image_tools: false, upstream_paths: {}, codex_responses_transport: '' },
+      {
+        strip_image_tools: false,
+        upstream_paths: {},
+        codex_responses_transport: '',
+        request_patch: emptyRequestPatchForm(),
+      },
     )
   })
 
@@ -119,10 +134,15 @@ describe('extEchoBlocked', () => {
 })
 
 describe('extWriteBody', () => {
+  const requestPatch = {
+    headers: { 'User-Agent': 'vibe-code/1.0' },
+    formats: { anthropic: { set: { 'metadata.user_id': 'vibe_code' }, delete: ['metadata.client_field'] } },
+  }
   const fields = {
     strip_image_tools: true,
     upstream_paths: { anthropic: 'v1/messages', 'openai-chat': '  ' },
     codex_responses_transport: 'ws',
+    request_patch: requestPatch,
   }
 
   it('codex：三字段一起发（全列替换）', () => {
@@ -133,12 +153,25 @@ describe('extWriteBody', () => {
     })
   })
 
-  it('custom：带归一后的路径，不带传输字段', () => {
+  it('custom：带归一后的路径 + request_patch，不带传输字段', () => {
     assert.deepEqual(extWriteBody(fields, 'custom'), {
       credential_type: 'custom',
       strip_image_tools: true,
       upstream_paths: { anthropic: 'v1/messages' },
+      request_patch: requestPatch,
     })
+  })
+
+  it('自定义类型省略 request_patch（= 清空；非 custom 提交非空会被 400）', () => {
+    for (const ct of ['responses-special', 'codex-oauth', 'codex-pat', 'bps', 'api_key']) {
+      const body = extWriteBody(fields, ct) as Record<string, unknown>
+      assert.equal('request_patch' in body, false, ct)
+    }
+  })
+
+  it('custom 的空 request_patch 省略（全空 = 未配置 = 清空，不发送 {} ）', () => {
+    const body = extWriteBody({ ...fields, request_patch: {} }, 'custom') as Record<string, unknown>
+    assert.equal('request_patch' in body, false)
   })
 
   // 非 codex 不发送该字段：陈旧行（模板类型改掉后残留 ws）原样带回会被判 400。
@@ -343,5 +376,114 @@ describe('templates 页：扩展配置入口', () => {
   })
   it('BPS 弹窗不渲染 strip_image_tools（该开关只属于 codex/responses-special）', () => {
     assert.match(page, /!isBPSCredential\(\(extTarget\?\.CredentialType as string\) \?\? ''\)/)
+  })
+})
+// —— request_patch（custom 出站请求修饰）的纯逻辑 ——
+// 全列替换语义：回显链路任何一环漏掉 request_patch，保存一次就会把已有配置清空。
+describe('request_patch 回显与写面', () => {
+  const wire = {
+    headers: { Authorization: 'Bearer {api_key}', 'X-Drop': '' },
+    formats: {
+      'openai-chat': {
+        headers: { 'User-Agent': 'ua' },
+        // 2^53-1 是 JS Number 能精确表示的最大整数；更大的整数只能由 API 精确维护
+        // （浏览器 JSON.parse 会先经过 float64，见管理 API/P1 报告已知边界）。
+        set: { 'metadata.call_source': 'vibe_code', big: 9007199254740991, nested: { b: 2, a: 1 }, nul: null },
+        delete: ['metadata.client_field'],
+      },
+      anthropic: { set: { 'metadata.user_id': 'x' } },
+    },
+  }
+
+  it('wire → 行状态 → wire 往返不丢字段（set 值以 JSON 文本编辑）', () => {
+    const form = requestPatchToForm(wire)
+    assert.deepEqual(form.headers, [
+      { name: 'Authorization', value: 'Bearer {api_key}' },
+      { name: 'X-Drop', value: '' },
+    ])
+    const chat = form.formats['openai-chat']
+    assert.deepEqual(chat.headers, [{ name: 'User-Agent', value: 'ua' }])
+    assert.deepEqual(chat.delete, ['metadata.client_field'])
+    assert.equal(chat.set.find(r => r.path === 'big')?.value, '9007199254740991')
+    assert.equal(chat.set.find(r => r.path === 'nul')?.value, 'null')
+    const round = requestPatchFromForm(form)
+    assert.equal(round.invalid, false)
+    assert.deepEqual(round.patch, wire)
+  })
+
+  it('三态：undefined 与 null 都得到空表（调用方用 undefined 区分「没读到」）', () => {
+    assert.deepEqual(requestPatchToForm(undefined), emptyRequestPatchForm())
+    assert.deepEqual(requestPatchToForm(null), emptyRequestPatchForm())
+    assert.deepEqual(requestPatchToForm({ headers: {} }), emptyRequestPatchForm())
+  })
+
+  it('深拷贝：改表单不写回 echo 缓存', () => {
+    const cached = {
+      headers: { 'X-A': '1' },
+      formats: { anthropic: { set: { 'a.b': 1 }, delete: ['c'] } },
+    }
+    const form = requestPatchToForm(cached)
+    form.headers[0].value = 'edited'
+    form.formats['anthropic'].set[0].value = '2'
+    form.formats['anthropic'].delete.push('d')
+    assert.equal(cached.headers['X-A'], '1')
+    assert.deepEqual(cached.formats['anthropic'].set, { 'a.b': 1 })
+    assert.deepEqual(cached.formats['anthropic'].delete, ['c'])
+  })
+
+  it('空行忽略；空 set 值/非法 JSON 标记 invalid（不静默丢弃）', () => {
+    const form = requestPatchToForm(null)
+    form.headers.push({ name: '  ', value: 'x' })
+    form.headers.push({ name: ' X-A ', value: '' })
+    form.formats['openai-chat'] = {
+      headers: [{ name: '  ', value: 'v' }],
+      set: [
+        { path: 'a.b', value: '' },
+        { path: 'c.d', value: '{bad' },
+        { path: 'e.f', value: '{"ok":true}' },
+      ],
+      delete: ['', '  ', ' g.h '],
+    }
+    const out = requestPatchFromForm(form)
+    assert.equal(out.invalid, true, '空 set 值 / 非法 JSON 必须被标记（调用方拦住保存）')
+    assert.deepEqual(out.patch, {
+      headers: { 'X-A': '' },
+      formats: { 'openai-chat': { set: { 'e.f': { ok: true } }, delete: ['g.h'] } },
+    })
+  })
+
+  it('全空表单 ⇒ patch undefined（上层省略字段 = 清空）', () => {
+    const out = requestPatchFromForm(emptyRequestPatchForm())
+    assert.equal(out.patch, undefined)
+    assert.equal(out.invalid, false)
+  })
+
+  it('isEmptyRequestPatch：空值头（Del）是有效配置，不是空 patch', () => {
+    assert.equal(isEmptyRequestPatch(undefined), true)
+    assert.equal(isEmptyRequestPatch({}), true)
+    assert.equal(isEmptyRequestPatch({ headers: { 'X-A': '' } }), false)
+    assert.equal(isEmptyRequestPatch({ formats: { anthropic: { delete: ['a'] } } }), false)
+  })
+})
+
+// 接线 tripwire：全列替换下两个写面都必须把 request_patch 带回（漏一个就清空）。
+describe('templates 页：request_patch 两个写面', () => {
+  const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')
+
+  it('扩展对话框：回显原样带回 request_patch', () => {
+    assert.match(page, /request_patch: extRequestPatch/)
+    assert.match(page, /setExtRequestPatch\(extQ\.data\?\.request_patch \?\? \{\}\)/,
+      '对话框回显必须记录 request_patch，否则保存一次就清空')
+  })
+
+  it('主表单链式写：行状态转 wire 后带回 request_patch', () => {
+    assert.match(page, /requestPatchFromForm\(f\.request_patch\)/)
+    assert.match(page, /request_patch: requestPatch\.patch \?\? \{\}/)
+  })
+
+  it('custom 主表单渲染请求修饰编辑器（全局头 + 按格式面板 + JSON 语法提示）', () => {
+    assert.match(page, /templates\.ext\.requestPatchHeaders/)
+    assert.match(page, /templates\.ext\.requestPatchSet/)
+    assert.match(page, /const layer = patchFormat\(f\.key\)/)
   })
 })

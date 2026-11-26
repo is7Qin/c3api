@@ -4130,6 +4130,44 @@ components:
           nullable: true
           additionalProperties: { type: string }
           description: "custom 专用逐格式路径（原样拼到 base_url 之后，不补 /v1）。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。"
+        # custom 专用：出站请求修饰器（spec custom-request-patch §2/§5.4）。
+        # 与 upstream_paths 同为全列替换：缺省 / null = 清空；非 custom 提交非空 → 400。
+        # 值与 GET 响应**原样回显**：值可为密钥（如 Authorization）、{api_key} 占位符
+        # 保持原文（不做替换、不做掩码）——这不是密钥保险箱，仅管理面可见。
+        request_patch:
+          allOf:
+            - $ref: '#/components/schemas/TemplateRequestPatch'
+          nullable: true
+    # custom 模板的出站请求修饰器（spec custom-request-patch §2.2/§5.4）：
+    # 全局头 + 逐格式（七键）头/body set/delete。PUT 全列替换，缺省或 null = 清空。
+    TemplateRequestPatch:
+      type: object
+      description: "custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。"
+      properties:
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: "全局层头：键为 HTTP 头名（服务端先按 http.CanonicalHeaderKey 归一；同层归一后同名 → 400）；值 \"\" = 删除该头；值可含 {api_key} 占位符（运行期用当前账号上游 key 替换，配置只存占位符原文）。Host 可覆盖：只改 Host 请求头，不改连接目标/TLS SNI。Accept-Encoding 非空值保存期 400（响应编码不变量，空值/Del 允许）。"
+        formats:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TemplateFormatPatch' }
+          description: "格式层：键 ∈ {openai-chat, openai-responses, openai-responses-ws, anthropic, openai-search, openai-images.generations, openai-images.edits}；未知键 400。格式层同名头覆盖全局层（值 \"\" = 删除，即覆盖为 Del）；层为 null/空对象 = 该层未配置。"
+    TemplateFormatPatch:
+      type: object
+      description: "单个出站格式的请求修饰（body 只对 JSON 请求体生效；非 JSON 结构性跳过）。"
+      properties:
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: "格式层头：同名覆盖全局层；值 \"\" = 删除。"
+        set:
+          type: object
+          additionalProperties: true
+          description: "gjson path → 任意 JSON 值；字节级保存/回显（大整数与 1e18 不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。"
+        delete:
+          type: array
+          items: { type: string }
+          description: "gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；不存在或不适用（body 非 JSON）时无操作。"
     AccountExt:
       type: object
       required: [credential_type]

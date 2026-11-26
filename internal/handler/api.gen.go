@@ -2696,6 +2696,7 @@ type TemplateExt struct {
 
 	// CredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
 	CredentialType TemplateExtCredentialType `json:"credential_type"`
+	RequestPatch   *TemplateRequestPatch     `json:"request_patch"`
 
 	// StripImageTools 公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）
 	StripImageTools *bool  `json:"strip_image_tools"`
@@ -2707,6 +2708,18 @@ type TemplateExt struct {
 
 // TemplateExtCredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
 type TemplateExtCredentialType string
+
+// TemplateFormatPatch 单个出站格式的请求修饰（body 只对 JSON 请求体生效；非 JSON 结构性跳过）。
+type TemplateFormatPatch struct {
+	// Delete gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；不存在或不适用（body 非 JSON）时无操作。
+	Delete *[]string `json:"delete,omitempty"`
+
+	// Headers 格式层头：同名覆盖全局层；值 "" = 删除。
+	Headers *map[string]string `json:"headers,omitempty"`
+
+	// Set gjson path → 任意 JSON 值；字节级保存/回显（大整数与 1e18 不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。
+	Set *map[string]interface{} `json:"set,omitempty"`
+}
 
 // TemplateListResponse defines model for TemplateListResponse.
 type TemplateListResponse struct {
@@ -2727,6 +2740,15 @@ type TemplatePatch struct {
 
 // TemplatePatchSupportedFormats defines model for TemplatePatch.SupportedFormats.
 type TemplatePatchSupportedFormats string
+
+// TemplateRequestPatch custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。
+type TemplateRequestPatch struct {
+	// Formats 格式层：键 ∈ {openai-chat, openai-responses, openai-responses-ws, anthropic, openai-search, openai-images.generations, openai-images.edits}；未知键 400。格式层同名头覆盖全局层（值 "" = 删除，即覆盖为 Del）；层为 null/空对象 = 该层未配置。
+	Formats *map[string]TemplateFormatPatch `json:"formats,omitempty"`
+
+	// Headers 全局层头：键为 HTTP 头名（服务端先按 http.CanonicalHeaderKey 归一；同层归一后同名 → 400）；值 "" = 删除该头；值可含 {api_key} 占位符（运行期用当前账号上游 key 替换，配置只存占位符原文）。Host 可覆盖：只改 Host 请求头，不改连接目标/TLS SNI。Accept-Encoding 非空值保存期 400（响应编码不变量，空值/Del 允许）。
+	Headers *map[string]string `json:"headers,omitempty"`
+}
 
 // UsageGatewayStats 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0）
 type UsageGatewayStats struct {

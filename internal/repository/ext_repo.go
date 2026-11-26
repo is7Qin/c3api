@@ -6,6 +6,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"fmt"
 
 	"entgo.io/ent/dialect"
@@ -155,12 +156,20 @@ func templateExtRow(ctx context.Context, c *ent.Client, templateID int64) (*doma
 // 注意 ent 语义：SetNillableX(nil) 是 no-op（不进 INSERT 列），NULL 清空必须在
 // 冲突 UPDATE 里显式 ClearX（与 pricing repo 同模式）。
 func upsertTemplateExtUnlocked(ctx context.Context, c *ent.Client, e *domain.TemplateExt) error {
-	_, err := c.TemplateExt.Create().
+	create := c.TemplateExt.Create().
 		SetTemplateID(e.TemplateID).
 		SetCredentialType(string(e.CredentialType)).
-		SetNillableStripImageTools(e.StripImageTools).                 // nil = no-op（插入路径缺列 → NULL）
-		SetUpstreamPaths(e.UpstreamPaths).                             // nil → NULL（JSON 列零值即 nil）
-		SetCodexResponsesTransport(string(e.CodexResponsesTransport)). // 非可空列：零值 "" 即"未配置 = 默认 http"
+		SetNillableStripImageTools(e.StripImageTools). // nil = no-op（插入路径缺列 → NULL）
+		SetUpstreamPaths(e.UpstreamPaths).             // nil → NULL（JSON 列零值即 nil）
+		SetCodexResponsesTransport(string(e.CodexResponsesTransport))
+	// request_patch：写路径的规范形 = CanonicalBytes（nil/空 patch ⇒ NULL 清列；
+	// 规范形同时是 P2 digest 的输入，二者共用同一份序列化）。插入路径零值不调
+	// SetRequestPatch（列缺省 ⇒ NULL，与可空列既有写法一致）。
+	requestPatch := e.RequestPatch.CanonicalBytes()
+	if len(requestPatch) > 0 {
+		create = create.SetRequestPatch(jsontext.Value(requestPatch))
+	}
+	_, err := create.
 		OnConflictColumns(templateext.FieldTemplateID).
 		Update(func(u *ent.TemplateExtUpsert) {
 			u.SetCredentialType(string(e.CredentialType))
@@ -176,6 +185,11 @@ func upsertTemplateExtUnlocked(ctx context.Context, c *ent.Client, e *domain.Tem
 				u.SetUpstreamPaths(e.UpstreamPaths)
 			} else {
 				u.ClearUpstreamPaths()
+			}
+			if len(requestPatch) > 0 {
+				u.SetRequestPatch(jsontext.Value(requestPatch))
+			} else {
+				u.ClearRequestPatch()
 			}
 		}).
 		ID(ctx)

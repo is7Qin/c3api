@@ -419,6 +419,11 @@ type TemplateExt struct {
 	// UpstreamPaths 逐格式自定义上游路径（custom 专用）。nil = 未配置（NULL
 	// 落库）；空 map 与 nil 等价。键集合与默认值见 spec §4.3。
 	UpstreamPaths map[string]string
+	// RequestPatch 出站请求修饰器（custom 专用；spec custom-request-patch
+	// §2/§5.1）。nil = 未配置（NULL 落库）。**只存在于 ext 读模型**：P1 只做
+	// 配置面（存/校验/回显/往返），快照面的 Template.Upstream 统一由 P2 落成；
+	// 数据面消费也在 P2/P3（相位边界见 P1 brief §0）。
+	RequestPatch *RequestPatch
 	// CodexResponsesTransport 代码出站传输开关（仅 codex-oauth/codex-pat 有意义；
 	// 非 codex 只接受 ""）。非可空列："" = 未配置 = 默认 http。库里**能**区分
 	// `""` 与 `"http"`（两个不同的落库值）；不能区分的是「从未配置」与「显式写入

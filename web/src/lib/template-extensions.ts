@@ -43,13 +43,137 @@ export function supportsResponsesTransport(credentialType: string): boolean {
 /** 降级确认令牌（与 service 的字面量契约一致：`?confirm=transport-downgrade`）。 */
 export const TRANSPORT_DOWNGRADE_CONFIRM = 'transport-downgrade'
 
+/** 单个格式层的请求修饰（wire 形状；与 openapi TemplateFormatPatch 兼容）。 */
+export type TemplateFormatPatch = {
+  headers?: Record<string, string>
+  /** gjson path → 任意 JSON 值。 */
+  set?: Record<string, unknown>
+  delete?: string[]
+}
+
+/** 出站请求修饰（request_patch，custom 专用；与 openapi TemplateRequestPatch 兼容）。
+ *
+ * 值可为密钥、可含 {api_key} 占位符；GET 原样回显（不替换/不掩码）。全列替换语义：
+ * 缺省/null = 清空，所以回显链路漏一环就会把已有配置清掉。 */
+export type TemplateRequestPatch = {
+  headers?: Record<string, string>
+  formats?: Record<string, TemplateFormatPatch>
+}
+
 /** GET /templates/{id}/ext 的响应形态；null = 没有 ext 行。 */
 export type TemplateExtEcho = {
   upstream_paths?: Record<string, string> | null
   strip_image_tools?: boolean | null
   /** ""（默认=http） / "http" / "ws"；后端恒回显（含 ""）。 */
   codex_responses_transport?: string | null
+  request_patch?: TemplateRequestPatch | null
 } | null
+
+// —— 请求修饰编辑器的**行**状态（表单用；set 值是 JSON 文本）——
+//
+// 行状态与 wire 形状分开：表单需要"空行可增删"的中间态，wire 只需要最终值。
+// 三态继续成立：undefined = 没读到（不灌表单）；null/无 ext 行 = 空表；有值 = 行。
+export type PatchHeaderRow = { name: string; value: string }
+export type PatchSetRow = { path: string; value: string }
+export type FormatPatchForm = { headers: PatchHeaderRow[]; set: PatchSetRow[]; delete: string[] }
+export type RequestPatchForm = {
+  headers: PatchHeaderRow[]
+  /** 键 ∈ CUSTOM_PATH_FIELDS；缺键 = 该格式层未配置。 */
+  formats: Record<string, FormatPatchForm>
+}
+
+/** 空请求修饰（新建/无 ext 行/清空后的表单形态）。 */
+export function emptyRequestPatchForm(): RequestPatchForm {
+  return { headers: [], formats: {} }
+}
+
+/**
+ * wire 请求修饰 → 行编辑器状态（回显映射的唯一入口）。
+ *
+ * **深拷贝**：header/formats/set/delete 全部新建，不与 echo 缓存共享引用——否则
+ * 表单编辑会写回 react-query 缓存，下一次回显 effect 看到的是"已被改过的旧值"。
+ * 三态语义：undefined（没读到）由调用方拦住，不在本函数处理；null = 无 ext 行。
+ */
+export function requestPatchToForm(patch: TemplateRequestPatch | null | undefined): RequestPatchForm {
+  const out = emptyRequestPatchForm()
+  if (!patch) return out
+  for (const [name, value] of Object.entries(patch.headers ?? {})) {
+    out.headers.push({ name, value })
+  }
+  for (const [key, fp] of Object.entries(patch.formats ?? {})) {
+    const layer: FormatPatchForm = { headers: [], set: [], delete: [] }
+    for (const [name, value] of Object.entries(fp.headers ?? {})) layer.headers.push({ name, value })
+    for (const [path, value] of Object.entries(fp.set ?? {})) {
+      layer.set.push({ path, value: JSON.stringify(value) ?? 'null' })
+    }
+    layer.delete = [...(fp.delete ?? [])]
+    out.formats[key] = layer
+  }
+  return out
+}
+
+/** wire 请求修饰是否为空（空 = 未配置 = 上层省略字段 ⇒ 清空）。 */
+export function isEmptyRequestPatch(patch: TemplateRequestPatch | null | undefined): boolean {
+  if (!patch) return true
+  return Object.keys(patch.headers ?? {}).length === 0 && Object.keys(patch.formats ?? {}).length === 0
+}
+
+/** requestPatchFromForm 的结果：patch 非空才需要上送；invalid = 有 set 行的 JSON 不合法
+ * （或值为空）。客户端只做 JSON 语法检查，语义/合法性仍由服务端权威判定。 */
+export type RequestPatchFromFormResult = { patch?: TemplateRequestPatch; invalid: boolean }
+
+/**
+ * 行编辑器状态 → wire 请求修饰（写面的唯一转换点）。
+ *
+ * - 空头名/空 path 行忽略（表单留的空行不该变成配置）；
+ * - header 值允许留空（= 删除该头，语义有效）；
+ * - set 值必须是合法 JSON 文本：空/非法 ⇒ invalid=true 且该行不上送（调用方必须
+ *   拦住保存并提示，而不是静默丢弃——静默丢弃＝运营以为写进去了）；
+ * - 全空 ⇒ patch 为 undefined（上层省略字段 = 清空，与 upstream_paths 同语义）。
+ */
+export function requestPatchFromForm(form: RequestPatchForm): RequestPatchFromFormResult {
+  let invalid = false
+  const headers: Record<string, string> = {}
+  for (const row of form.headers) {
+    const name = row.name.trim()
+    if (!name) continue
+    headers[name] = row.value
+  }
+  const formats: Record<string, TemplateFormatPatch> = {}
+  for (const [key, layer] of Object.entries(form.formats)) {
+    const out: TemplateFormatPatch = {}
+    const layerHeaders: Record<string, string> = {}
+    for (const row of layer.headers) {
+      const name = row.name.trim()
+      if (!name) continue
+      layerHeaders[name] = row.value
+    }
+    if (Object.keys(layerHeaders).length) out.headers = layerHeaders
+    const set: Record<string, unknown> = {}
+    for (const row of layer.set) {
+      const path = row.path.trim()
+      if (!path) continue
+      const raw = row.value.trim()
+      if (!raw) {
+        invalid = true
+        continue
+      }
+      try {
+        set[path] = JSON.parse(raw)
+      } catch {
+        invalid = true
+      }
+    }
+    if (Object.keys(set).length) out.set = set
+    const del = layer.delete.map(s => s.trim()).filter(Boolean)
+    if (del.length) out.delete = del
+    if (out.headers || out.set || out.delete) formats[key] = out
+  }
+  const patch: TemplateRequestPatch = {}
+  if (Object.keys(headers).length) patch.headers = headers
+  if (Object.keys(formats).length) patch.formats = formats
+  return { patch: isEmptyRequestPatch(patch) ? undefined : patch, invalid }
+}
 
 /** 写面 body 的字段来源：两处写面（主表单链式写 + 扩展对话框）共用。
  *
@@ -59,10 +183,15 @@ export type ExtWriteFields = {
   upstream_paths: Record<string, string>
   /** "" 是合法值（未配置 = 默认 http）——不做归一/折叠。 */
   codex_responses_transport: string
+  /** wire 形状（custom 且非空才会进 body；其余类型省略 = 清空）。 */
+  request_patch: TemplateRequestPatch
 }
 
-/** 表单里与 ext 对应的字段（表单没有"未配置"这一态）。 */
-export type ExtFormFields = ExtWriteFields & { strip_image_tools: boolean }
+/** 表单里与 ext 对应的字段（表单没有"未配置"这一态；request_patch 是行编辑器状态）。 */
+export type ExtFormFields = Omit<ExtWriteFields, 'strip_image_tools' | 'request_patch'> & {
+  strip_image_tools: boolean
+  request_patch: RequestPatchForm
+}
 
 /** ext 写面 body（与 `components['schemas']['TemplateExt']` 结构兼容）。
  *
@@ -73,6 +202,7 @@ export type TemplateExtWriteBody = {
   strip_image_tools: boolean | null
   codex_responses_transport?: string
   upstream_paths?: Record<string, string>
+  request_patch?: TemplateRequestPatch
 }
 
 /**
@@ -87,13 +217,22 @@ export type TemplateExtWriteBody = {
  */
 export function extFormFields(ext: TemplateExtEcho | undefined): ExtFormFields | null {
   if (ext === undefined) return null
-  if (ext === null) return { strip_image_tools: false, upstream_paths: {}, codex_responses_transport: '' }
+  if (ext === null) {
+    return {
+      strip_image_tools: false,
+      upstream_paths: {},
+      codex_responses_transport: '',
+      request_patch: emptyRequestPatchForm(),
+    }
+  }
   return {
     strip_image_tools: ext.strip_image_tools === true,
     // 未配置的键不出现：输入框留空 = 该格式走默认端点
     upstream_paths: { ...(ext.upstream_paths ?? {}) },
     // "" 本身有意义（默认面）：只把 null/undefined 兜成 ""，其余原样。
     codex_responses_transport: ext.codex_responses_transport ?? '',
+    // request_patch 深拷贝（不共享 echo 缓存引用）；没有 ext 行 = 空表。
+    request_patch: requestPatchToForm(ext.request_patch ?? null),
   }
 }
 
@@ -138,6 +277,7 @@ export function extEchoBlocked(
  * ext 写面 body 的**唯一**组装点（两处写面共用）：全列替换，三字段一起发。
  *
  * - `upstream_paths` 只有 custom 发：其余类型提交非空 map → 400；
+ * - `request_patch` 同样只有 custom 发（非空时），其余类型省略 = 清空；
  * - `codex_responses_transport` 只有 Responses 原生 provider（codex/bps）发：其余
  *   类型下 `"http"`/`"ws"` 永远不生效（→ 400），而陈旧行残留值是否"恰好等于库里的
  *   原值"（幂等例外）在 web 侧无法判定，所以不猜——省略即清空；旧值确实是 `ws` 时
@@ -148,7 +288,11 @@ export function extWriteBody(f: ExtWriteFields, credentialType: string): Templat
     credential_type: credentialType as TemplateExtWriteBody['credential_type'],
     strip_image_tools: f.strip_image_tools,
   }
-  if (credentialType === 'custom') body.upstream_paths = nonEmptyPaths(f.upstream_paths)
+  if (credentialType === 'custom') {
+    body.upstream_paths = nonEmptyPaths(f.upstream_paths)
+    // request_patch 只有 custom 发：其余类型提交非空 ⇒ 400；省略即清空（全列替换）。
+    if (!isEmptyRequestPatch(f.request_patch)) body.request_patch = f.request_patch
+  }
   if (supportsResponsesTransport(credentialType)) body.codex_responses_transport = f.codex_responses_transport
   return body
 }

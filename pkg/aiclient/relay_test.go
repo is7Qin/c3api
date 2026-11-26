@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/pkg/httpx"
 )
 
 // TestRelayHeadersAllowSide R1（允许面）：自定义头与协议协商头原样送达 +
@@ -68,9 +70,11 @@ func TestRelayHeadersValueHygiene(t *testing.T) {
 	require.Equal(t, []string{"a b"}, out["X-Space"], "空格是合法头值字节，必须保留")
 	require.Equal(t, []string{"good", "also good"}, out["X-Mixed"], "只丢脏的那一个值，同键其余值保留")
 
-	require.True(t, valueClean("a\tb"))
-	require.True(t, valueClean("a b"))
-	require.False(t, valueClean("a\x7f"))
+	// 值卫生判据已上收 pkg/httpx（全仓单源，spec request_patch §2.6）；这里只锁
+	// relay 面的行为，判据本身由 pkg/httpx 的等价表驱动测试覆盖。
+	require.True(t, httpx.ValidHeaderValue("a\tb"))
+	require.True(t, httpx.ValidHeaderValue("a b"))
+	require.False(t, httpx.ValidHeaderValue("a\x7f"))
 }
 
 // TestRelayHeadersDenySide R3a（剔除面 + 形状行为清单）：遍历 relayDeny 全部

@@ -13,13 +13,20 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
 import {
   CUSTOM_PATH_FIELDS,
+  emptyRequestPatchForm,
   extEchoBlocked as echoBlocked,
   extFormFields,
   extWriteBody,
   extWriteConfirm,
   isCodexCredentialType as isCodexCredential,
+  requestPatchFromForm,
   saveTargetID,
   shouldSyncEcho,
+  type FormatPatchForm,
+  type PatchHeaderRow,
+  type PatchSetRow,
+  type RequestPatchForm,
+  type TemplateRequestPatch,
 } from '@/lib/template-extensions'
 import { BatchBar } from '@/components/batch-bar'
 import { commaList, formatDateTime, truncate } from '@/components/fmt'
@@ -124,6 +131,9 @@ interface FormState {
   strip_image_tools: boolean
   // custom 专用逐格式路径（键 → 路径；空串/缺键 = 用默认端点）
   upstream_paths: Record<string, string>
+  // custom 专用出站请求修饰（request_patch）的行编辑器状态：全局头 + 7 格式层
+  // （头/body set/delete）。回显经 extFormFields 深拷贝填充；保存时转 wire 上送。
+  request_patch: RequestPatchForm
   // codex 出站传输（"" = 未配置 = 默认 http；"http" / "ws"）——编辑态经 ext 回显填充，
   // 保存时链式写 ext。表单里不提供修改入口（改它在「扩展配置」弹窗，需 409 确认流）。
   codex_responses_transport: string
@@ -139,6 +149,7 @@ const emptyForm = (): FormState => ({
   model_mapping: [],
   strip_image_tools: false,
   upstream_paths: {},
+  request_patch: emptyRequestPatchForm(),
   codex_responses_transport: '',
 })
 
@@ -162,6 +173,7 @@ function toForm(t: Template): FormState {
     // 编辑回显经 GET /templates/{id}/ext 拉取填充（见 dialog 挂载 effect）
     strip_image_tools: false,
     upstream_paths: {},
+    request_patch: emptyRequestPatchForm(),
     codex_responses_transport: '',
   }
 }
@@ -290,6 +302,58 @@ function FormFields({
     setForm(f => ({ ...f, model_mapping: f.model_mapping.filter((_, j) => j !== i) }))
   const addMappingRow = () => setForm(f => ({ ...f, model_mapping: [...f.model_mapping, { alias: '', mapped_model: '', mode: 'explicit' }] }))
 
+  // —— custom 出站请求修饰（request_patch）行编辑器 ——
+  // 行状态与 wire 形状的转换在 lib（requestPatchFromForm/requestPatchToForm）；
+  // 这里只做不可变更新，保证「空行可增删、保存时才丢弃空行」。
+  const patchFormat = (key: string): FormatPatchForm =>
+    form.request_patch.formats[key] ?? { headers: [], set: [], delete: [] }
+  const updateFormatPatch = (key: string, update: (layer: FormatPatchForm) => FormatPatchForm) =>
+    setForm(f => ({
+      ...f,
+      request_patch: {
+        ...f.request_patch,
+        formats: {
+          ...f.request_patch.formats,
+          [key]: update(f.request_patch.formats[key] ?? { headers: [], set: [], delete: [] }),
+        },
+      },
+    }))
+  const setPatchHeader = (i: number, patch: Partial<PatchHeaderRow>) =>
+    setForm(f => ({
+      ...f,
+      request_patch: {
+        ...f.request_patch,
+        headers: f.request_patch.headers.map((r, j) => (j === i ? { ...r, ...patch } : r)),
+      },
+    }))
+  const removePatchHeader = (i: number) =>
+    setForm(f => ({
+      ...f,
+      request_patch: { ...f.request_patch, headers: f.request_patch.headers.filter((_, j) => j !== i) },
+    }))
+  const addPatchHeader = () =>
+    setForm(f => ({
+      ...f,
+      request_patch: { ...f.request_patch, headers: [...f.request_patch.headers, { name: '', value: '' }] },
+    }))
+  const setFormatHeader = (key: string, i: number, patch: Partial<PatchHeaderRow>) =>
+    updateFormatPatch(key, l => ({ ...l, headers: l.headers.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
+  const removeFormatHeader = (key: string, i: number) =>
+    updateFormatPatch(key, l => ({ ...l, headers: l.headers.filter((_, j) => j !== i) }))
+  const addFormatHeader = (key: string) =>
+    updateFormatPatch(key, l => ({ ...l, headers: [...l.headers, { name: '', value: '' }] }))
+  const setSetRow = (key: string, i: number, patch: Partial<PatchSetRow>) =>
+    updateFormatPatch(key, l => ({ ...l, set: l.set.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
+  const removeSetRow = (key: string, i: number) =>
+    updateFormatPatch(key, l => ({ ...l, set: l.set.filter((_, j) => j !== i) }))
+  const addSetRow = (key: string) =>
+    updateFormatPatch(key, l => ({ ...l, set: [...l.set, { path: '', value: '' }] }))
+  const setDeleteRow = (key: string, i: number, path: string) =>
+    updateFormatPatch(key, l => ({ ...l, delete: l.delete.map((p, j) => (j === i ? path : p)) }))
+  const removeDeleteRow = (key: string, i: number) =>
+    updateFormatPatch(key, l => ({ ...l, delete: l.delete.filter((_, j) => j !== i) }))
+  const addDeleteRow = (key: string) => updateFormatPatch(key, l => ({ ...l, delete: [...l.delete, ''] }))
+
   // 格式行下拉选项 = 已选 supported_formats
   const formatOptions: Record<string, string> = {}
   for (const f of form.supported_formats) formatOptions[f] = FORMAT_LABELS[f]
@@ -389,24 +453,166 @@ function FormFields({
           </div>
         )}
         {form.credential_type === 'custom' && (
-          <div className="space-y-2 rounded-md border p-3">
-            <div className="space-y-0.5">
-              <Label>{t('templates.ext.customPaths')}</Label>
-              <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsHint')}</p>
-            </div>
-            {CUSTOM_PATH_FIELDS.map(f => (
-              <div key={f.key} className="grid grid-cols-[15rem_1fr] items-center gap-2">
-                <code className="text-xs text-muted-foreground">{f.key}</code>
-                <Input
-                  value={form.upstream_paths[f.key] ?? ''}
-                  placeholder={f.placeholder}
-                  onChange={e => setForm(prev => ({
-                    ...prev,
-                    upstream_paths: { ...prev.upstream_paths, [f.key]: e.target.value },
-                  }))}
-                />
+          <div className="space-y-3">
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label>{t('templates.ext.customPaths')}</Label>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsHint')}</p>
               </div>
-            ))}
+              {CUSTOM_PATH_FIELDS.map(f => (
+                <div key={f.key} className="grid grid-cols-[15rem_1fr] items-center gap-2">
+                  <code className="text-xs text-muted-foreground">{f.key}</code>
+                  <Input
+                    value={form.upstream_paths[f.key] ?? ''}
+                    placeholder={f.placeholder}
+                    onChange={e => setForm(prev => ({
+                      ...prev,
+                      upstream_paths: { ...prev.upstream_paths, [f.key]: e.target.value },
+                    }))}
+                  />
+                </div>
+              ))}
+            </div>
+            {/* 出站请求修饰（request_patch）：客户端只做 JSON 语法与空值提示，
+                服务端是唯一权威。值可为密钥、可含 {api_key} 占位符——GET 原样回显，
+                这不是密钥保险箱，仅管理面可见。 */}
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label>{t('templates.ext.requestPatch')}</Label>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchHint')}</p>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchSecretHint')}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t('templates.ext.requestPatchHeaders')}</Label>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchHeadersHint')}</p>
+                {form.request_patch.headers.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                    <Input
+                      value={row.name}
+                      placeholder={t('templates.ext.requestPatchHeaderName')}
+                      onChange={e => setPatchHeader(i, { name: e.target.value })}
+                    />
+                    <Input
+                      value={row.value}
+                      placeholder={t('templates.ext.requestPatchHeaderValue')}
+                      onChange={e => setPatchHeader(i, { value: e.target.value })}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('templates.ext.requestPatchRemoveRow')}
+                      onClick={() => removePatchHeader(i)}
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" onClick={addPatchHeader}>
+                  <Plus />{t('templates.ext.requestPatchAddHeader')}
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t('templates.ext.requestPatchFormats')}</Label>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchFormatHint')}</p>
+                {CUSTOM_PATH_FIELDS.map(f => {
+                  const layer = patchFormat(f.key)
+                  const count = layer.headers.length + layer.set.length + layer.delete.length
+                  return (
+                    <details key={f.key} className="rounded-md border">
+                      <summary className="cursor-pointer px-2 py-1 text-xs">
+                        <code>{f.key}</code>
+                        {count > 0 && <span className="ml-2 text-muted-foreground">({count})</span>}
+                      </summary>
+                      <div className="space-y-3 border-t p-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">{t('templates.ext.requestPatchHeaders')}</Label>
+                          {layer.headers.map((row, i) => (
+                            <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                              <Input
+                                value={row.name}
+                                placeholder={t('templates.ext.requestPatchHeaderName')}
+                                onChange={e => setFormatHeader(f.key, i, { name: e.target.value })}
+                              />
+                              <Input
+                                value={row.value}
+                                placeholder={t('templates.ext.requestPatchHeaderValue')}
+                                onChange={e => setFormatHeader(f.key, i, { value: e.target.value })}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={t('templates.ext.requestPatchRemoveRow')}
+                                onClick={() => removeFormatHeader(f.key, i)}
+                              >
+                                <X />
+                              </Button>
+                            </div>
+                          ))}
+                          <Button type="button" size="sm" variant="outline" onClick={() => addFormatHeader(f.key)}>
+                            <Plus />{t('templates.ext.requestPatchAddHeader')}
+                          </Button>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">{t('templates.ext.requestPatchSet')}</Label>
+                          {layer.set.map((row, i) => (
+                            <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+                              <Input
+                                value={row.path}
+                                placeholder={t('templates.ext.requestPatchSetPath')}
+                                onChange={e => setSetRow(f.key, i, { path: e.target.value })}
+                              />
+                              <Input
+                                value={row.value}
+                                placeholder={t('templates.ext.requestPatchSetValue')}
+                                onChange={e => setSetRow(f.key, i, { value: e.target.value })}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={t('templates.ext.requestPatchRemoveRow')}
+                                onClick={() => removeSetRow(f.key, i)}
+                              >
+                                <X />
+                              </Button>
+                            </div>
+                          ))}
+                          <Button type="button" size="sm" variant="outline" onClick={() => addSetRow(f.key)}>
+                            <Plus />{t('templates.ext.requestPatchAddSet')}
+                          </Button>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">{t('templates.ext.requestPatchDelete')}</Label>
+                          {layer.delete.map((path, i) => (
+                            <div key={i} className="grid grid-cols-[1fr_auto] items-center gap-2">
+                              <Input
+                                value={path}
+                                placeholder={t('templates.ext.requestPatchDeletePath')}
+                                onChange={e => setDeleteRow(f.key, i, e.target.value)}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={t('templates.ext.requestPatchRemoveRow')}
+                                onClick={() => removeDeleteRow(f.key, i)}
+                              >
+                                <X />
+                              </Button>
+                            </div>
+                          ))}
+                          <Button type="button" size="sm" variant="outline" onClick={() => addDeleteRow(f.key)}>
+                            <Plus />{t('templates.ext.requestPatchAddDelete')}
+                          </Button>
+                        </div>
+                      </div>
+                    </details>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         )}
         </>
@@ -643,6 +849,10 @@ export default function Templates() {
   const [extStrip, setExtStrip] = useState<boolean | null>(null)
   // 出站传输："" = 未配置（默认 http）/ "http" / "ws"，与后端回显同一个字符串。
   const [extTransport, setExtTransport] = useState<string>('')
+  // 全列替换：对话框不编辑 custom 的 upstream_paths / request_patch（它们属于主表单），
+  // 但必须把回显值原样带回——漏一环 = 保存一次就把已有配置清空。
+  const [extUpstreamPaths, setExtUpstreamPaths] = useState<Record<string, string>>({})
+  const [extRequestPatch, setExtRequestPatch] = useState<TemplateRequestPatch>({})
   // 409 二次确认：只有用户点头后重发才带 confirm（禁止无条件带）。
   const [extConfirmOpen, setExtConfirmOpen] = useState(false)
   const extQ = useQuery({
@@ -661,6 +871,8 @@ export default function Templates() {
     setExtTarget(t)
     setExtStrip(null)
     setExtTransport('')
+    setExtUpstreamPaths({})
+    setExtRequestPatch({})
     setExtConfirmOpen(false)
   }
   useEffect(() => {
@@ -670,6 +882,9 @@ export default function Templates() {
     // 回显是写面的前提：没读回旧值就保存＝把已生效的 ws 静默清回默认
     const transport = extQ.data?.codex_responses_transport ?? ''
     setExtTransport(prev => (prev === transport ? prev : transport))
+    // 两种 custom 专有字段本弹窗不编辑，但写面是全列替换：原样带回回显值。
+    setExtUpstreamPaths({ ...(extQ.data?.upstream_paths ?? {}) })
+    setExtRequestPatch(extQ.data?.request_patch ?? {})
   }, [extTarget?.ID, extQ.isLoading, extQ.data])
   // 扩展对话框的写面：body 走唯一的组装点（与主表单链式写同一个 helper）。
   // mutationFn 的入参就是「用户是否已在 409 弹窗里确认」——确认才带令牌。
@@ -677,7 +892,12 @@ export default function Templates() {
     mutationFn: (vars: { confirmed: boolean }) => {
       const tpl = extTarget!
       const body: TemplateExt = extWriteBody(
-        { strip_image_tools: extStrip, upstream_paths: {}, codex_responses_transport: extTransport },
+        {
+          strip_image_tools: extStrip,
+          upstream_paths: extUpstreamPaths,
+          codex_responses_transport: extTransport,
+          request_patch: extRequestPatch,
+        },
         tpl.CredentialType as string,
       )
       return api.putTemplateExt(tpl.ID, body, extWriteConfirm(vars.confirmed))
@@ -772,6 +992,12 @@ export default function Templates() {
       if (echoBlocked(ct, editing?.ID ?? null, extSyncedFor)) {
         throw new Error(tr('templates.ext.echoRequired'))
       }
+      // request_patch 的行状态 → wire（客户端只做 JSON 语法检查；语义由服务端权威判定）。
+      // 必须在任何写之前拦住非法 JSON，否则会「模板已改、ext 却写失败」。
+      const requestPatch = requestPatchFromForm(f.request_patch)
+      if (requestPatch.invalid) {
+        throw new Error(tr('templates.ext.requestPatchInvalidJson'))
+      }
       let id = saveTargetID(editing?.ID ?? null, pendingTemplateID)
       if (id === null) {
         const created = await api.createTemplate(toBody(f))
@@ -783,7 +1009,15 @@ export default function Templates() {
         await api.updateTemplate(id, toBody(f))
       }
       if (id && hasTemplateExt(ct)) {
-        const body: TemplateExt = extWriteBody(f, ct)
+        const body: TemplateExt = extWriteBody(
+          {
+            strip_image_tools: f.strip_image_tools,
+            upstream_paths: f.upstream_paths,
+            codex_responses_transport: f.codex_responses_transport,
+            request_patch: requestPatch.patch ?? {},
+          },
+          ct,
+        )
         try {
           await api.putTemplateExt(id, body)
         } catch (e) {
@@ -844,6 +1078,10 @@ export default function Templates() {
     const mappingErr = validateMappingRows(form.model_mapping, tr)
     if (mappingErr) {
       setValidationMsg(mappingErr)
+      return
+    }
+    if (requestPatchFromForm(form.request_patch).invalid) {
+      setValidationMsg(tr('templates.ext.requestPatchInvalidJson'))
       return
     }
     save.mutate(form)

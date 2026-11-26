@@ -91,13 +91,35 @@ func validateUpstreamPaths(paths map[string]string) (map[string]string, error) {
 // validateTemplateExt 校验模板 ext 行：credential_type ∈ {responses-special,
 // codex-oauth, codex-pat, custom, bps}（api_key 主列类型无 ext 行；类型一致性——
 // ext 行类型必须 == 父模板类型——由 UpsertTemplateExt 校验）。模板是共享配置面：
-// 可空列 strip_image_tools（四类型公共能力开关，nil = 未配置 = 关闭）与
-// upstream_paths（仅 custom 有意义，nil = 全部按格式默认端点）。
+// 可空列 strip_image_tools（四类型公共能力开关，nil = 未配置 = 关闭）、
+// upstream_paths 与 request_patch（仅 custom 有意义）。
 func validateTemplateExt(e *domain.TemplateExt) error {
 	if e.TemplateID <= 0 {
 		return ErrInvalidInput
 	}
 	if !e.CredentialType.ValidTemplateExt() {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+// validateRequestPatchPolicy 校验 request_patch 的**策略面**：仅 custom 模板可配
+// （spec custom-request-patch §2.6/§5.2）。wire 合法性（头名/值、Accept-Encoding、
+// 格式键、path 文法、归一）已在 domain.ParseRequestPatch 完成——handler 已解析，
+// 本层不复制第二套判据（"两份判据"正是 spec 要消灭的）。
+//
+// 为什么只需看 e.CredentialType：ext 行的 credential_type 必须 == 父模板类型，
+// 这个不变量由 UpsertTemplateExt 在调用本函数之前守着（tpl.CredentialType !=
+// e.CredentialType ⇒ 400），因此「ext 行 cred 类型 == custom」与「父模板是 custom」
+// 等价——不需要为此回读父模板（那会把校验塞进依赖注入、也增加一次事务外读）。
+// 陈旧 ext 行（模板类型从 custom 改成别的类型后不删除行）在写面被这里 400 挡住，
+// 读面则由 repository 的 custom 门决定是否消费（P2：Template.Upstream 仅在 custom
+// 门内构造，非 custom ⇒ nil，两条面不共享「行还在就生效」的假设）。
+func validateRequestPatchPolicy(e *domain.TemplateExt) error {
+	if e.RequestPatch.IsEmpty() {
+		return nil
+	}
+	if e.CredentialType != credential.TypeCustom {
 		return ErrInvalidInput
 	}
 	return nil
@@ -179,6 +201,13 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 		// 落成 JSON NULL 而不是 `{}`——否则同一语义有两种落库形态，回显与
 		// 运维排查会出现「明明清空了却还看到 {}」的噪音。
 		e.UpstreamPaths = nil
+	}
+	// request_patch：仅 custom 可配（wire 合法性已由 handler 侧的
+	// domain.ParseRequestPatch 校验；这里只做策略面）。位置与 upstream_paths 的
+	// custom-only 判定并列——都在第 0/1 步之后、守卫写（409 降级门）之前，因此
+	// 非法配置恒为 400，不会被降级门截成 409。
+	if err := validateRequestPatchPolicy(e); err != nil {
+		return nil, err
 	}
 	// 第 2/3/4 步：交给守卫写在**同一事务**里完成（父行锁 + 事务内读 + decide +
 	// 写）。old 经闭包捕获出来供第 5 步 WARN 用——这是 decide 唯一被允许的副作用。

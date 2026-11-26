@@ -88,13 +88,25 @@ func protocolConvertStrings(pcs []domain.ProtocolConvert) []string {
 }
 
 func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {
-	return &domain.TemplateExt{
+	d := &domain.TemplateExt{
 		TemplateID:              e.TemplateID,
 		CredentialType:          credential.Type(e.CredentialType),
 		StripImageTools:         e.StripImageTools,
 		UpstreamPaths:           e.UpstreamPaths,
 		CodexResponsesTransport: domain.CodexResponsesTransport(e.CodexResponsesTransport),
 	}
+	// request_patch 的读路径转换**只在这里**（与写路径的 CanonicalBytes 概念对称）：
+	// domain.ParseRequestPatch 是 wire 校验的唯一入口，读面不再复制判据。
+	//
+	// 存量脏值（手工改库/旧形状）视为未配置：不报错、不 panic、不半应用
+	// （spec §2.6「读路径遇到存量脏值…视为未配置」/§5.3）。脏值只可能来自绕过
+	// 唯一写入口的 DB 直改——jsonb 列本身保证语法合法，wire 语义非法即在此忽略。
+	if len(e.RequestPatch) > 0 {
+		if p, err := domain.ParseRequestPatch(json.RawMessage(e.RequestPatch)); err == nil {
+			d.RequestPatch = p
+		}
+	}
+	return d
 }
 
 // toDomainAccountExt projects only the fields owned by the current provider.

@@ -13,7 +13,11 @@
 // 都必须过同级评审，且不得被配置穿透。
 package aiclient
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/is7qin/c3api/pkg/httpx"
+)
 
 // relayDeny 是全仓唯一的剔除清单（32 键，7 类：连接级 13 + 实体级 4 + 寻址 1
 // + 凭据/多租户 3 + 传输协商 1 + 入站足迹 9 + 网关自身写入 1）。
@@ -123,7 +127,7 @@ func RelayHeaders(in http.Header) http.Header {
 		}
 		clean := true
 		for _, s := range v {
-			if !valueClean(s) {
+			if !httpx.ValidHeaderValue(s) {
 				clean = false
 				break
 			}
@@ -134,7 +138,7 @@ func RelayHeaders(in http.Header) http.Header {
 		}
 		keep := v[:0:0] // 有脏值 ⇒ len 0 cap 0 的新 slice（绝不可写 v[:0]：会就地回写入站底层数组）
 		for _, s := range v {
-			if valueClean(s) {
+			if httpx.ValidHeaderValue(s) {
 				keep = append(keep, s)
 			}
 		}
@@ -146,15 +150,7 @@ func RelayHeaders(in http.Header) http.Header {
 	return out
 }
 
-// valueClean 头值卫生判据：含任一 <0x20 且非 TAB 的字节，或 0x7f（DEL）即不合
-// 法（单个脏值会被整个请求 Do 掉，一个脏头拖死一次调用）。入站 net/http 已自行
-// 判 400，此层是纵深防御。
-func valueClean(s string) bool {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == 0x7f || (c < 0x20 && c != '\t') {
-			return false
-		}
-	}
-	return true
-}
+// 头值卫生判据不在本包：全仓单源是 pkg/httpx.ValidHeaderValue（与保存期
+// request_patch 校验共用同一份判据，spec request_patch §2.6）。含任一 <0x20 且
+// 非 TAB 的字节、或 0x7f（DEL）即不合法（单个脏值会被整个请求 Do 掉，一个脏头
+// 拖死一次调用）。入站 net/http 已自行判 400，RelayHeaders 这层是纵深防御。
