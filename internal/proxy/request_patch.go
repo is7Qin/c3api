@@ -4,12 +4,18 @@
 
 package proxy
 
-// request_patch 数据面接线（spec custom-request-patch §7.1/§7.4/§8，P3）：
-//   - patchOf / headerDecorator / bodyPatch 三个 helper——无配置一律 nil / 原切片
-//     （零闭包、零 map 复制、零解析），有配置才分配（闭包每 attempt 至多一枚）；
+// request_patch 数据面接线（spec custom-request-patch §7.1/§7.2/§7.4/§8，P3/P4）：
+//   - 头语义（两层 / Host 三态 / Del / 运行期跳 Accept-Encoding / {api_key} 展开）
+//     与 body 执行器的**唯一实现住在 internal/domain**（RequestPatchHeaderLayers /
+//     ApplyRequestPatchHeaderLayers / RequestPatchHeaderDecorator /
+//     RequestPatchFormat / ApplyRequestPatch）——HTTP、WS 握手与 probe 三个出站面
+//     共用同一份判据，本文件只保留 api.Selection 形态的薄适配与 proxy 独有的
+//     失败 WARN/脱敏；
+//   - 无配置一律 nil / 原切片（零闭包、零 map 复制、零解析），有配置才分配
+//     （闭包每 attempt 至多一枚）；
 //   - 执行顺序：既有变换（setModel / stripTier / 转换）全部之后、真正出网之前
-//     （bodyPatch 是 body 的最后一步；headerDecorator 是 aiclient 头的最后一步）；
-//   - {api_key} 由**调用点闭包**捕获当次 attempt 的原始 cred 展开（禁止从
+//     （bodyPatch 是 body 的最后一步；装饰器是 aiclient 头的最后一步）；
+//   - {api_key} 由**调用点**把当次 attempt 的原始 cred 传进装饰器（禁止从
 //     Authorization 反解，spec 评审 momus C1）；failover 每 attempt 重算；
 //   - body sjson 残余失败：裸透传 + 固定文案限频 WARN（按 template_id+format，
 //     进程内 sync.Map；只在失败路径访问，不打印 path/value/body，无计数器）；
@@ -43,115 +49,50 @@ const (
 	patchKeyImagesEdits = domain.UpstreamPathImagesEdits
 )
 
-// apiKeyPlaceholder 是 request_patch 头值里唯一保留的占位符（spec §2.4）：
-// 运行期用当次 attempt 的账号上游 key 原值展开；body 值不做替换（字面量）。
-const apiKeyPlaceholder = "{api_key}"
-
 // redactedPatchKey 是日志面脱敏后的替换文本（spec §8：精确字符串替换）。
 const redactedPatchKey = "[redacted]"
 
-// patchOf 取当次尝试的 request_patch（nil = 未配置）。只读快照指针——绝不写、
-// 不复制（P2 交接：Selection.Upstream.Patch 是只读共享指针）。
-func patchOf(sel *api.Selection) *domain.RequestPatch {
-	if sel == nil || sel.Upstream == nil {
+// upstreamOf 取当次尝试的 custom 出站上游修饰（nil = 未配置 = 默认端点 + 无
+// patch）。只读快照指针——绝不写、不复制（P2 交接：Selection.Upstream 是只读
+// 共享指针）。nil Selection 安全（零值 selection 只出现在测试夹具）。
+func upstreamOf(sel *api.Selection) *domain.TemplateUpstream {
+	if sel == nil {
 		return nil
 	}
-	return sel.Upstream.Patch
+	return sel.Upstream
 }
 
-// formatPatchFor 取该出站格式的格式层 patch（不存在 ⇒ ok=false）。
+// headerDecorator 构造 aiclient HTTP 出站头装饰器（spec §7.1）：直接复用
+// domain.RequestPatchHeaderDecorator——与 probe 是**同一个构造**，本函数只做
+// api.Selection → *domain.TemplateUpstream 的字段投影。
 //
-// 返回**值拷贝**而不是指针：domain.FormatPatch 只有两个 map + 一个 slice（24B
-// 头），值传递避免取 map 元素地址造成的堆逃逸；执行器按值读。
-func formatPatchFor(sel *api.Selection, key domain.UpstreamPathKey) (domain.FormatPatch, bool) {
-	patch := patchOf(sel)
-	if patch == nil || len(patch.Formats) == 0 {
-		return domain.FormatPatch{}, false
-	}
-	fp, ok := patch.Formats[key]
-	return fp, ok
-}
-
-// headerDecorator 构造 aiclient 出站头装饰器（spec §7.1）：
-//   - 无全局头且无该格式层头 ⇒ nil（aiclient 快路径，零分配）；
-//   - 否则返回闭包：先应用全局层，再应用格式层（后者逐键覆盖/删除）；
-//   - 每层：非空值 Set、"" Del；Host 特例走 req.Host，**按层三态**（非空 =
-//     展开后覆盖，"" = 清除 ⇒ 出站回落 URL.Host——因此格式层 "" 能覆盖全局层
-//     Set）；Accept-Encoding 规范形比较后**运行期跳过**（保存期已 400，这里防御
-//     脏库值）；
-//   - 头值里的 {api_key} 用闭包捕获的 apiKey 原值展开（strings.ReplaceAll 仅在
-//     命中占位符时才分配；Host 值同样展开）。
+//	无配置 ⇒ nil（aiclient 快路径，零分配）；
+//	有配置 ⇒ 一枚闭包：全局层 → 格式层（后者逐键覆盖），Host 走 req.Host，
+//	          Accept-Encoding 运行期跳过，{api_key} 用当次 attempt 原始 cred 展开。
 //
-// apiKey 必须来自当次 attempt 的**原始 cred**（credentialFor(sel) / caller 的
-// cred 参数），不得从 auth / "Bearer "+key 反解。
+// apiKey 必须来自当次 attempt 的**原始 cred**（caller 的 cred 参数 /
+// credentialFor(sel)），不得从 auth / "Bearer "+key 反解。
 func headerDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey string) func(*http.Request) {
-	patch := patchOf(sel)
-	if patch == nil {
-		return nil
-	}
-	formatHeaders, hasFormat := patch.Formats[key]
-	if len(patch.Headers) == 0 && (!hasFormat || len(formatHeaders.Headers) == 0) {
-		return nil
-	}
-	return func(req *http.Request) {
-		applyPatchHeaders(req.Header, &req.Host, patch.Headers, apiKey)
-		if hasFormat {
-			applyPatchHeaders(req.Header, &req.Host, formatHeaders.Headers, apiKey)
-		}
-	}
-}
-
-// applyPatchHeaders 应用**一层**头语义——HTTP（req.Header / req.Host）与 WS 握手
-// （DialOptions.HTTPHeader / DialOptions.Host）的**唯一判据**：落点只有「头 map +
-// Host 字符串指针」两处差异，判据本身不复制第二份。
-//
-// 头名在保存期已归一为规范形（domain.ParseRequestPatch），此处直接比较，不再
-// CanonicalHeaderKey。每层：非空 Set、"" Del。
-//
-// Host 是**按层三态**（spec §2.4/§2.6/§7.1；P3 评审 oracle I1，P4 WS 同语义）：
-// 非空值 ⇒ *host = 展开后的值；空值（Del）⇒ *host = ""（显式清除上一层/网关
-// 默认）。HTTP 上 req.Host 空 = 出站回退 URL.Host；WS 上 DialOptions.Host 空 =
-// 握手回落 URL.Host（coder/websocket 仅在非空时覆盖）——因此格式层 Host:""
-// 能覆盖全局层 Host:Set，与普通头的逐层 Del 覆盖语义一致。
-//
-// Accept-Encoding 运行期永不应用（保存期已 400，防御脏库值；响应编码不变量）。
-// 头值里的 {api_key} 用当次 attempt 原始 cred 展开。
-func applyPatchHeaders(header http.Header, host *string, headers map[string]string, apiKey string) {
-	for name, value := range headers {
-		switch name {
-		case "Host":
-			// Host 特例：只改 Host 头，不改连接目标/TLS SNI（HTTP 与 WS 同一落法：
-			// 各自语言层的 Host 字段，绝不写 Header map）。
-			*host = expandAPIKey(value, apiKey)
-		case "Accept-Encoding":
-			// 运行期永不应用（响应编码不变量兜底；保存期已拒绝非空值）。
-			continue
-		default:
-			if value == "" {
-				header.Del(name)
-				continue
-			}
-			header.Set(name, expandAPIKey(value, apiKey))
-		}
-	}
+	return domain.RequestPatchHeaderDecorator(upstreamOf(sel), key, apiKey)
 }
 
 // wsHeaderDecorator 构造 ResponsesWSDial 的**握手**装饰器（spec §7.2/§10 P4）：
-//   - 无全局头且无该格式层头 ⇒ nil（aiclient 快路径，零分配）；
-//   - 否则返回闭包：全局层 → 格式层逐层应用（共用 applyPatchHeaders 的同一份
-//     判据；Host 落 DialOptions.Host，{api_key} 用闭包捕获的原值展开）。
+//   - 无头配置 ⇒ nil（aiclient 快路径，零分配）；
+//   - 否则返回闭包：全局层 → 格式层逐层应用（共用
+//     domain.ApplyRequestPatchHeaderLayers 的唯一判据；Host 落
+//     DialOptions.Host，{api_key} 用闭包捕获的原值展开）。
+//
+// WS 与 HTTP 的差异只有落点（DialOptions 字段 vs *http.Request 字段）——HTTP 面
+// 的 RequestPatchHeaderDecorator 不能直接复用，但层选择与逐层判据全部来自
+// domain，本函数不复制任何头语义。
 //
 // 调用时机由 aiclient.ResponsesWSDial 保证：网关的 Authorization /
 // Responses-Websockets 已写入 DialOptions.HTTPHeader **之后**才调本装饰器（后写
 // 覆盖赢，可覆盖/删除网关默认头）。apiKey 必须来自当次 attempt 的原始 cred
 // （credentialFor(sel)），不得从 Authorization 反解。
 func wsHeaderDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey string) func(*websocket.DialOptions) {
-	patch := patchOf(sel)
-	if patch == nil {
-		return nil
-	}
-	formatHeaders, hasFormat := patch.Formats[key]
-	if len(patch.Headers) == 0 && (!hasFormat || len(formatHeaders.Headers) == 0) {
+	global, format := domain.RequestPatchHeaderLayers(upstreamOf(sel), key)
+	if len(global) == 0 && len(format) == 0 {
 		return nil
 	}
 	return func(opts *websocket.DialOptions) {
@@ -159,32 +100,20 @@ func wsHeaderDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey st
 			// 防御：aiclient 恒先建好 HTTPHeader；独立调用（测试/未来入口）也不 panic。
 			opts.HTTPHeader = make(http.Header)
 		}
-		applyPatchHeaders(opts.HTTPHeader, &opts.Host, patch.Headers, apiKey)
-		if hasFormat {
-			applyPatchHeaders(opts.HTTPHeader, &opts.Host, formatHeaders.Headers, apiKey)
-		}
+		domain.ApplyRequestPatchHeaderLayers(opts.HTTPHeader, &opts.Host, global, format, apiKey)
 	}
 }
 
-// expandAPIKey 展开头值中的 {api_key} 占位符（可多次）；无占位符时零分配
-// （strings.ReplaceAll 内部 count==0 直接返回原串）。
-func expandAPIKey(value, apiKey string) string {
-	return strings.ReplaceAll(value, apiKeyPlaceholder, apiKey)
-}
-
 // bodyPatch 对出站 JSON body 应用格式层 patch（spec §7.1/§7.4）：
-//   - 无该格式层 / 空 patch ⇒ 原 slice 返回（零解析、零分配）；
-//   - 非 JSON / 空 body ⇒ 设计性跳过（原 slice；不 WARN）；
+//   - 选择 + 执行都走 domain.ApplyRequestPatch（唯一执行器
+//     domain.ApplyRequestBodyPatch 的域内入口）：无该格式层 / 空 patch ⇒ 原 slice
+//     （零解析、零分配）；非 JSON / 空 body ⇒ 设计性跳过（原 slice，不 WARN）；
 //   - JSON 但 sjson 残余失败 ⇒ 原 body 裸透传 + 固定文案限频 WARN。
 //
 // 必须在该格式既有 body 变换（setModel/转换）之后、真正出网之前调用：它是
 // body 的最后一步（操作员权威可覆盖 model/stream 等任何字段）。
 func (p *Proxy) bodyPatch(sel *api.Selection, key domain.UpstreamPathKey, body []byte) []byte {
-	fp, ok := formatPatchFor(sel, key)
-	if !ok {
-		return body
-	}
-	out, err := domain.ApplyRequestBodyPatch(body, &fp)
+	out, err := domain.ApplyRequestPatch(upstreamOf(sel), key, body)
 	if err != nil {
 		p.warnBodyPatchFailure(sel, key)
 		return body
@@ -202,8 +131,8 @@ var responseCreateTypeBytes = []byte("response.create")
 //     isResponsesCompleted/isResponsesCreated 同款）判顶层 type == "response.create"；
 //     未命中（response.cancel / 其他控制帧 / 非 JSON）返回 nil = 原样转发，**字节
 //     不变、不复制帧、不解析帧**；
-//   - 命中才执行 body patch——**复用 bodyPatch**（domain.ApplyRequestBodyPatch 是
-//     唯一执行器：delete 排序→set 排序、set 胜、非 JSON 结构性跳过；sjson 残余
+//   - 命中才执行 body patch——**复用 bodyPatch**（domain.ApplyRequestPatch 是唯一
+//     执行入口：delete 排序→set 排序、set 胜、非 JSON 结构性跳过；sjson 残余
 //     失败 ⇒ bodyPatch 返回原 slice + 固定文案限频 WARN，此处随之裸透传，不中止
 //     会话、不改写帧）；
 //   - {api_key} 只用于握手头，body 值是字面量（spec §2.4）。
@@ -211,7 +140,7 @@ var responseCreateTypeBytes = []byte("response.create")
 // 生命周期：每次 attempt 构造一次（有配置才分配 1 枚闭包），client-loop 单
 // goroutine 调用，无锁无全局查询；成功路径零日志。
 func (p *Proxy) wsClientFrameHook(sel *api.Selection) func([]byte) []byte {
-	fp, ok := formatPatchFor(sel, patchKeyResponsesWS)
+	fp, ok := domain.RequestPatchFormat(upstreamOf(sel), patchKeyResponsesWS)
 	if !ok || (len(fp.Set) == 0 && len(fp.Delete) == 0) {
 		return nil
 	}
@@ -257,8 +186,10 @@ func (p *Proxy) warnBodyPatchFailure(sel *api.Selection, key domain.UpstreamPath
 	}
 	k := bodyPatchWarnKey{templateID: sel.TemplateID, format: key}
 	now := time.Now().UnixNano()
-	if last, ok := bodyPatchWarnGate.Load(k); ok && now-last.(int64) < int64(bodyPatchWarnInterval) {
-		return
+	if last, ok := bodyPatchWarnGate.Load(k); ok {
+		if now-last.(int64) < int64(bodyPatchWarnInterval) {
+			return
+		}
 	}
 	bodyPatchWarnGate.Store(k, now)
 	p.log.Warn("request patch body apply failed; forwarding unmodified body",

@@ -39,8 +39,13 @@ const (
 	// headerDecorator / bodyPatch / upstreamKeyOf / warnBodyPatchFailure）。
 	// P4（request_patch WS 数据面）未新增源文件，request_patch.go 追加 2 个
 	// api.Selection 位点（wsHeaderDecorator / wsClientFrameHook）⇒ 92 → 94。
+	// P5（probe 数据面）把 request_patch 的头/体执行核心抽到 internal/domain
+	// （RequestPatchHeaderDecorator / ApplyRequestPatch 等，proxy/probe 共用），
+	// request_patch.go 的 patchOf / formatPatchFor 两个纯投影 helper 随之删除、
+	// 换成 1 个 upstreamOf（Selection → *domain.TemplateUpstream）⇒ 94 → 93。
+	// 文件数不变（probe 的新 helper 在 internal/probe，不属本包扫描面）。
 	datapathScanFiles     = 55
-	datapathContractSites = 94
+	datapathContractSites = 93
 	datapathReleaseSites  = 38
 	datapathHandleCalls   = 50
 	datapathContractFloor = 84 // V0 下限
