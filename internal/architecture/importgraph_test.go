@@ -530,6 +530,16 @@ var testFixtureAllow = []string{
 	// （P5-4 已把它从 scheduler 的 allow to 列表里删掉，testFixtureAllow 只加宽
 	// TestImports 口径，不影响 Imports 口径）。
 	"internal/sdkbridge",
+	// P4-c-1：handler 的若干集成测试要挂**真实** `server.NewServer`（含 adminAuth
+	// 中间件）来验证"鉴权注入 → created_by / 400 契约"这类端到端行为，直接
+	// 调 Router() 测不到中间件那一层（balance_warning_test.go /
+	// management_keys_user_test.go / payment_providers_test.go）。
+	//
+	// 这不再是 productionLedger 的债：本单已把 UserIDFromContext 迁到 internal/auth，
+	// handler 的生产代码不再 import internal/server。剩下的纯是测试装配需求——
+	// 与上面 internal/sdkbridge 那条同型（测试要真实装配，生产不需要）。
+	// testFixtureAllow 只加宽 TestImports 口径，不影响 Imports 口径。
+	"internal/server",
 	"pkg/",
 }
 
@@ -810,7 +820,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 7,
+	debtMax: 6,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
@@ -818,7 +828,6 @@ var productionLedger = ledger{
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},
 		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},
-		{"internal/handler", "internal/server", "只为 server.UserIDFromContext 一个 context 访问器而反向依赖传输壳；P1 零生产改动无法即消，P3 把该访问器移到 auth/api-meta 后本边消失", phaseP3},
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 	},
 	keep: []legacyRow{

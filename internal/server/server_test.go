@@ -368,7 +368,7 @@ func TestAdminUserIDContextInjection(t *testing.T) {
 	var gotActor domain.FundsActor
 	var gotActorOK bool
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotID, gotOK = UserIDFromContext(r.Context())
+		gotID, gotOK = auth.UserIDFromContext(r.Context())
 		gotActor, gotActorOK = domain.FundsActorFrom(r.Context())
 		w.WriteHeader(200)
 	})

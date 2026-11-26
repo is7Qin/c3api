@@ -6,7 +6,6 @@ package server
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -16,22 +15,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
-
-// adminUserIDKey /admin 认证中间件写入的 platform_admin 用户 id（created_by 用，
-// 决策 5：0 = 系统）。管理 key（mk-）路径同样写入 owner id。
-type adminUserIDKey struct{}
-
-// UserIDFromContext 取 /admin 鉴权路径注入的用户 id（JWT 或管理 key mk- 皆注入；
-// 兑换码生成 created_by 用）；未注入 → (0, false)。
-func UserIDFromContext(ctx context.Context) (int64, bool) {
-	id, ok := ctx.Value(adminUserIDKey{}).(int64)
-	return id, ok
-}
 
 // adminAuth 管理面鉴权（/admin 组，含 /api/admin/ops/workers 运维观测）=
 // platform_admin JWT 或 platform_admin 身份的**管理 key mk-**（两个都过才拒）。
@@ -44,7 +33,7 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 // 管理 key 分支（spec 2026-10-09 §4.4）：Bearer mk-… → 快照查表（前缀先判、失败
 // 不回退 JWT）→ owner UserSnapshot；`role==platform_admin && status==active` 才
 // 放行（降权后该 key 立即失去 /api/admin 可达，仍是其 user 面 key），注入
-// adminUserIDKey + FundsActor{TokenVersion: sn.TokenVersion}；否则 401。
+// auth.WithUserID + FundsActor{TokenVersion: sn.TokenVersion}；否则 401。
 // 静态管理面 token 机制已全量删除（spec §4.7）；缺失/空凭证
 // 绝不放行（无匹配即 401）。
 func adminAuth(opts Options) func(http.Handler) http.Handler {
@@ -57,7 +46,7 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 				if meta, ok := opts.Auth.AuthenticateManagement(req); ok {
 					if sn, ok := opts.Auth.UserSnapshot(meta.UserID); ok &&
 						sn.Role == domain.RolePlatformAdmin && sn.Status == domain.UserStatusActive {
-						ctx := context.WithValue(req.Context(), adminUserIDKey{}, meta.UserID)
+						ctx := auth.WithUserID(req.Context(), meta.UserID)
 						ctx = domain.WithFundsActor(ctx, domain.FundsActor{UserID: meta.UserID, TokenVersion: sn.TokenVersion})
 						next.ServeHTTP(w, req.WithContext(ctx))
 						return
@@ -78,7 +67,7 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 						sn.Role == domain.RolePlatformAdmin && sn.Status == domain.UserStatusActive &&
 						sn.TokenVersion == claims.Ver {
 						// JWT 路径注入 claims.UserID（兑换码 created_by 用，决策 5）
-						ctx := context.WithValue(req.Context(), adminUserIDKey{}, claims.UserID)
+						ctx := auth.WithUserID(req.Context(), claims.UserID)
 						// 资金操作者（spec 2026-10-09 §6.5 I5）：具名 uid + 签名请求的
 						// token_version——资金写命令在写事务内据它复核。
 						ctx = domain.WithFundsActor(ctx, domain.FundsActor{UserID: claims.UserID, TokenVersion: claims.Ver})
