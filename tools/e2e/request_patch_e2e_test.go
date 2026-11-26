@@ -16,6 +16,13 @@
 //	   与 server.log 脱敏而客户端 4xx 原文不脱敏（spec §8 明示裁决）。
 //	B. Responses WS custom（尽力）：握手头 / Host / {api_key} / 格式层删网关默认
 //	   beta 头；首帧 patch、后续仅 response.create 帧 patch、response.cancel 字节不变。
+//	C. probe（account-model-test，P5 数据面）：真实管理面探测端点 → 捕获上游断言
+//	   探测请求携带 patch 握手头（Authorization/{api_key}/Host/UA）；7 键映射按出站
+//	   格式取层（chat / responses / responses-ws 各用自己键，responses-ws 不消费
+//	   responses 层）；body set/delete 生效；images edits multipart 只头（体结构性
+//	   跳过）。另含「真实脏库 → probe 残余失败 WARN」观测：SQL 直写 template_exts.
+//	   request_patch 为运行期必然 sjson 残余失败的合法 JSON → 探测结论不变 + 固定
+//	   文案限频 WARN 恰好 1 条（含 template_id/format，不含 path/value/body/key）。
 //
 // 运行（前置：PG :15432；Redis 缺省 127.0.0.1:16379，可经 C3API_REDIS_ADDR 覆盖）：
 //
@@ -30,9 +37,13 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +88,27 @@ const (
 
 	// rpWSCancelFrame response.cancel 原始帧（只能逐字节原样到达上游）。
 	rpWSCancelFrame = `{"type":"response.cancel","response_id":"resp_rp_cancel"}`
+
+	// probe（account-model-test，P5）场景模型。probe 出站目标/凭据全部来自已存储
+	// 配置，请求体只带 model/format；patch 在 probe 的既有载荷合成之后应用。
+	rpModelProbeChat   = "rp-probe-chat-model"
+	rpModelProbeResp   = "rp-probe-resp-model"
+	rpModelProbeWS     = "rp-probe-ws-model"
+	rpModelProbeImg    = "rp-probe-img-model"
+	rpModelDirty       = "rp-dirty-model"
+	rpProbeChatPatched = "rp-probe-chat-patched"
+	rpProbeRespPatched = "rp-probe-resp-patched"
+
+	// rpDirtyAccountKey 脏库 WARN 场景的账号上游 key（日志/上游体都不得泄漏它）。
+	rpDirtyAccountKey = "rp-key-dirty-e2e"
+	// rpDirtySecretMarker 脏 patch 里的 set 值哨兵：残余失败必须裸透传，绝不出现在
+	// 上游 body / 日志里（value 泄漏负断言）。
+	rpDirtySecretMarker = "must-not-leak-dirty-value"
+	// rpDirtyPathMarker 脏 patch 里的 set path 哨兵（超 sjson 数组 padding 上限 ⇒
+	// 运行期必然残余失败；path 不得出现在日志里）。
+	rpDirtyPathMarker = "x.999999999"
+	// rpProbeWarnMessage 残余失败固定文案（日志面契约；逐字断言，改文案=改契约）。
+	rpProbeWarnMessage = "request patch body apply failed; forwarding unmodified body"
 )
 
 // ---- 进程内捕获上游 ----
@@ -108,6 +140,7 @@ type rpWSConn struct {
 type rpCapture struct {
 	srv    *httptest.Server
 	respID string
+	imgB64 string // probe images edits 用的合法 PNG（data URL 与回包 b64_json 同一份）
 
 	mu       sync.Mutex
 	seq      int64
@@ -115,9 +148,30 @@ type rpCapture struct {
 	wsConns  []rpWSConn
 }
 
+// rpSmallPNG 生成 1x1 PNG（probe images edits 的 image_url 与上游 b64_json 响应共用，
+// 运行期生成保证是可解码的真实 PNG，免外部夹具）。
+func rpSmallPNG() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 0xFF, A: 0xFF})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic("rpSmallPNG: " + err.Error()) // 1x1 编码不可能失败（编程错误）
+	}
+	return buf.Bytes()
+}
+
+// rpWriteBody 写 JSON 响应体。
+func rpWriteBody(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, body)
+}
+
 func rpStartCapture(t *testing.T) *rpCapture {
 	t.Helper()
-	c := &rpCapture{respID: fmt.Sprintf("resp_rp_%d", time.Now().UnixNano())}
+	c := &rpCapture{
+		respID: fmt.Sprintf("resp_rp_%d", time.Now().UnixNano()),
+		imgB64: base64.StdEncoding.EncodeToString(rpSmallPNG()),
+	}
 	c.srv = httptest.NewServer(http.HandlerFunc(c.serve))
 	t.Cleanup(c.srv.Close)
 	return c
@@ -146,6 +200,21 @@ func (c *rpCapture) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprintf(w, `{"error":{"message":"upstream rejected auth=%s"}}`, r.Header.Get("Authorization"))
+		return
+	}
+	// probe（account-model-test）各格式的成功响应：路径由 custom 模板 upstream_paths
+	// 决定（与 request_patch 格式层同一把格式键）。chat/responses 回真实成功判定形状，
+	// images edits 回可解析的 b64 图片 ⇒ probe 结论 success=true，证明整条探测链路
+	// （service→prober→aiclient 出站）真实可用，而不只是"上游收到了请求"。
+	switch r.URL.Path {
+	case "/v1/rp-probe-chat":
+		rpWriteBody(w, `{"choices":[{"message":{"content":"probe-ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		return
+	case "/v1/rp-probe-resp", "/v1/rp-probe-ws":
+		rpWriteBody(w, `{"output":[{"type":"message","content":[{"type":"output_text","text":"probe-ok"}]}]}`)
+		return
+	case "/v1/rp-probe-img-edits":
+		rpWriteBody(w, fmt.Sprintf(`{"data":[{"b64_json":"%s"}]}`, c.imgB64))
 		return
 	}
 	if gjson.GetBytes(body, "stream").Bool() {
@@ -570,6 +639,40 @@ func rpLogFile(t *testing.T, h *rpHarness) string {
 	return string(data)
 }
 
+// rpProbe 管理面单账号单模型探测（account-model-test）：POST /accounts/{id}/test。
+// 200 恒为探测结论（success=false 也是 200）；只读、不落库、不计费。
+func rpProbe(t *testing.T, env *e2eEnv, accountID int64, body map[string]any) (int, string) {
+	t.Helper()
+	return env.admin(http.MethodPost, fmt.Sprintf("/accounts/%d/test", accountID), body)
+}
+
+// rpRequireProbeSuccess 断言探测结论为「上游 200 且可用输出」。
+func rpRequireProbeSuccess(t *testing.T, code int, body, what string) {
+	t.Helper()
+	require.Equal(t, 200, code, "%s：探测端点必须 200（结论在体内）: %s", what, body)
+	require.True(t, gjson.Get(body, "success").Bool(), "%s：探测结论必须 success=true: %s", what, body)
+	require.Equal(t, 200, int(gjson.Get(body, "status_code").Int()), "%s：上游状态 200: %s", what, body)
+}
+
+// rpServerLogJSONLines 服务日志逐行 JSON 解码（zap JSON 行；非 JSON 行跳过——
+// 只用于观测面断言，不把启动期任何非结构化输出当失败）。
+func rpServerLogJSONLines(t *testing.T, h *rpHarness) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for line := range strings.SplitSeq(rpLogFile(t, h), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // rpDialGatewayWS 客户端拨网关 /v1/responses（Authorization: Bearer <用户 key>）。
 func rpDialGatewayWS(t *testing.T, env *e2eEnv, key string) *websocket.Conn {
 	t.Helper()
@@ -972,4 +1075,177 @@ func TestRequestPatchE2E(t *testing.T) {
 		gjson.GetBytes(wsRec.Frames[0], "metadata.call_source").String(),
 		gjson.GetBytes(wsRec.Frames[1], "model").String(),
 		string(wsRec.Frames[2]) == rpWSCancelFrame, len(got))
+
+	// ---- C probe（account-model-test，P5 数据面；spec §11.6/§7.3/§7.4/§10 P5）----
+	//
+	// probe 是 custom 模板的诊断面：它必须与生产 HTTP 面同一份 wire 语义，否则
+	// 「探测结果」不能作为配置生效的证据。本段走**真实管理面探测端点**
+	// （POST /accounts/{id}/test）→ service → prober → 捕获上游，断言探测请求实际
+	// 携带的 patch 握手头/body；并用 SQL 直写脏库触发 probe 面残余失败 WARN。
+	t.Log("C1 probe 出站报文：真实管理面探测端点 → 捕获上游断言 patch 握手头/body；7 键按出站格式取层")
+	tplProbe := rpCreateCustomTemplate(t, env, "rp-tpl-probe", captureURL,
+		[]string{"openai-chat", "openai-responses", "openai-responses-ws", "openai-images"},
+		[]string{rpModelProbeChat, rpModelProbeResp, rpModelProbeWS, rpModelProbeImg})
+	gProbe := env.create("/groups", map[string]any{"name": "rp-g-probe"})
+	accProbe := rpCreateAccount(t, env, "rp-acc-probe", tplProbe, "rp-key-probe", gProbe)
+	pngDataURL := "data:image/png;base64," + capture.imgB64
+	code, body = rpPutExt(t, env, tplProbe, rpExtBody("custom",
+		map[string]string{
+			"openai-chat":         "v1/rp-probe-chat",
+			"openai-responses":    "v1/rp-probe-resp",
+			"openai-responses-ws": "v1/rp-probe-ws",
+			"openai-images.edits": "v1/rp-probe-img-edits",
+		},
+		map[string]any{
+			"headers": map[string]any{
+				"Authorization":     "E2E {api_key}",
+				"Host":              "probe.example.invalid",
+				"User-Agent":        "rp-probe-ua/1.0",
+				"X-RP-Probe-Global": "g1",
+			},
+			"formats": map[string]any{
+				"openai-chat": map[string]any{
+					"headers": map[string]any{"X-RP-Probe-Format": "chat"},
+					"set": map[string]any{
+						"model":                rpProbeChatPatched,
+						"metadata.call_source": "rp-probe-chat",
+					},
+					"delete": []string{"max_tokens"},
+				},
+				"openai-responses": map[string]any{
+					"headers": map[string]any{"X-RP-Probe-Resp": "resp"},
+					"set": map[string]any{
+						"model":                rpProbeRespPatched,
+						"metadata.call_source": "rp-probe-resp",
+					},
+					"delete": []string{"max_output_tokens"},
+				},
+				"openai-responses-ws": map[string]any{
+					"headers": map[string]any{"X-RP-Probe-WS": "ws"},
+				},
+				"openai-images.edits": map[string]any{
+					"headers": map[string]any{"X-RP-Probe-ImgEdit": "edit"},
+					"set":     map[string]any{"prompt": "patched-by-e2e"},
+				},
+			},
+		}))
+	require.Equal(t, 200, code, "写 probe 模板 ext: %s", body)
+
+	// probe 出站报告面（每次 probe 恰好一条上游请求）：全局层 + 该格式自己的层。
+	assertProbeUpstream := func(rec rpHTTPReq, wantPath, wantFormatHeader, wantFormatValue, what string) {
+		t.Helper()
+		require.Equal(t, wantPath, rec.Path, "%s：probe 出站路径来自 upstream_paths（与 patch 同一把格式键）", what)
+		require.Equal(t, "probe.example.invalid", rec.Host, "%s：probe Host 覆盖走 req.Host", what)
+		require.Equal(t, "E2E rp-key-probe", rec.Header.Get("Authorization"),
+			"%s：probe Authorization 被 patch 覆盖 + {api_key} 展开为账号 key", what)
+		require.Equal(t, "rp-probe-ua/1.0", rec.Header.Get("User-Agent"), "%s：probe UA 覆盖", what)
+		require.Equal(t, "g1", rec.Header.Get("X-RP-Probe-Global"), "%s：probe 全局层头", what)
+		require.Equal(t, wantFormatValue, rec.Header.Get(wantFormatHeader), "%s：probe 格式层头取自己的键", what)
+	}
+
+	code, body = rpProbe(t, env, accProbe, map[string]any{"model": rpModelProbeChat, "format": "openai-chat"})
+	rpRequireProbeSuccess(t, code, body, "C1 probe chat")
+	rec = capture.lastHTTP(t)
+	assertProbeUpstream(rec, "/v1/rp-probe-chat", "X-RP-Probe-Format", "chat", "C1 chat")
+	require.Equal(t, rpProbeChatPatched, gjson.GetBytes(rec.Body, "model").String(), "C1 chat：body set（model）")
+	require.Equal(t, "rp-probe-chat", gjson.GetBytes(rec.Body, "metadata.call_source").String(), "C1 chat：body 嵌套 set")
+	require.False(t, gjson.GetBytes(rec.Body, "max_tokens").Exists(), "C1 chat：body delete（max_tokens）")
+	require.Equal(t, "hi", gjson.GetBytes(rec.Body, "messages.0.content").String(), "C1 chat：探测载荷 input 原样")
+
+	code, body = rpProbe(t, env, accProbe, map[string]any{"model": rpModelProbeResp, "format": "openai-responses"})
+	rpRequireProbeSuccess(t, code, body, "C1 probe responses")
+	rec = capture.lastHTTP(t)
+	assertProbeUpstream(rec, "/v1/rp-probe-resp", "X-RP-Probe-Resp", "resp", "C1 responses")
+	require.Empty(t, rec.Header.Get("X-RP-Probe-Format"), "C1 responses：不消费 openai-chat 层头")
+	require.Equal(t, rpProbeRespPatched, gjson.GetBytes(rec.Body, "model").String(), "C1 responses：body set（本层）")
+	require.False(t, gjson.GetBytes(rec.Body, "max_output_tokens").Exists(), "C1 responses：body delete（本层）")
+
+	// responses-ws：探测实际走 HTTP responses 语义，但 patch 键与 URL 路径同一把
+	// （openai-responses-ws）——必须不消费 openai-responses 键的头/体（spec §7.3）。
+	code, body = rpProbe(t, env, accProbe, map[string]any{"model": rpModelProbeWS, "format": "openai-responses-ws"})
+	rpRequireProbeSuccess(t, code, body, "C1 probe responses-ws")
+	rec = capture.lastHTTP(t)
+	assertProbeUpstream(rec, "/v1/rp-probe-ws", "X-RP-Probe-WS", "ws", "C1 responses-ws")
+	require.Empty(t, rec.Header.Get("X-RP-Probe-Resp"),
+		"C1 responses-ws：键是 openai-responses-ws——不消费 openai-responses 层头（7 键映射）")
+	require.Equal(t, rpModelProbeWS, gjson.GetBytes(rec.Body, "model").String(),
+		"C1 responses-ws：未配 body 层 ⇒ 不消费 openai-responses 层 body patch")
+	require.True(t, gjson.GetBytes(rec.Body, "max_output_tokens").Exists(),
+		"C1 responses-ws：openai-responses 层 delete 不作用于本键")
+	require.False(t, gjson.GetBytes(rec.Body, "metadata").Exists())
+
+	// images edits：multipart 非 JSON 容器 ⇒ 结构性跳过 body（只注入头）；上游回
+	// 可解析 b64 PNG ⇒ probe 结论 success=true 且预览非空（整条探测链路可用）。
+	code, body = rpProbe(t, env, accProbe, map[string]any{
+		"model": rpModelProbeImg, "format": "openai-images",
+		"image_mode": "edits", "image_url": pngDataURL,
+	})
+	rpRequireProbeSuccess(t, code, body, "C1 probe images edits")
+	require.NotEmpty(t, gjson.Get(body, "image_previews").Array(), "C1 images：200 回包 b64 PNG 通过校验（真实预览非空）")
+	rec = capture.lastHTTP(t)
+	require.Equal(t, "/v1/rp-probe-img-edits", rec.Path, "C1 images edits：出站路径取自 openai-images.edits 键")
+	require.Equal(t, "E2E rp-key-probe", rec.Header.Get("Authorization"), "C1 images edits：头装饰生效")
+	require.Equal(t, "edit", rec.Header.Get("X-RP-Probe-ImgEdit"), "C1 images edits：只注入格式层头")
+	require.True(t, strings.HasPrefix(rec.Header.Get("Content-Type"), "multipart/form-data"),
+		"images edits 走 multipart（非 JSON）: %s", rec.Header.Get("Content-Type"))
+	require.NotContains(t, string(rec.Body), "patched-by-e2e",
+		"C1 images edits：multipart 非 JSON ⇒ body patch 结构性跳过（只头）")
+	require.Contains(t, string(rec.Body), "Turn this image into a watercolor painting",
+		"C1 images edits：probe 默认 prompt 原样")
+	t.Logf("C1 probe 上游：chat/responses/responses-ws 各自键的 path=%q auth=%q 头层+body 逐项生效；images edits contentType=%q header=%q body_patch_skipped=true",
+		"/v1/rp-probe-chat", "E2E rp-key-probe", rec.Header.Get("Content-Type"), rec.Header.Get("X-RP-Probe-ImgEdit"))
+
+	// ---- C2 probe 真实脏库 → 残余失败 WARN（spec §7.4/§8/§11.16；P5 fix1 观测面）----
+	t.Log("C2 probe 真实脏库：SQL 直写 template_exts.request_patch → 残余失败 WARN（固定文案/限频/零泄漏）+ 探测结论不变")
+	tplDirty := rpCreateCustomTemplate(t, env, "rp-tpl-dirty", captureURL, []string{"openai-chat"}, []string{rpModelDirty})
+	gDirty := env.create("/groups", map[string]any{"name": "rp-g-dirty"})
+	accDirty := rpCreateAccount(t, env, "rp-acc-dirty", tplDirty, rpDirtyAccountKey, gDirty)
+	code, body = rpPutExt(t, env, tplDirty, rpExtBody("custom", nil, nil))
+	require.Equal(t, 200, code, "C2 建 ext 行（request_patch 先为空）: %s", body)
+	// 脏值构造：路径文法合法、但下标超过 sjson 数组 padding 上限（maxpad=100000）⇒
+	// 只在运行时 splice 失败。保存期写面不做执行试跑（spec §5.2 评审 I6：空文档试跑
+	// 只作辅助），所以「保存期本应拒绝」在 wire 文法层并不成立——**这类残余失败只可能
+	// 由手工改库/极端组合引入**；读路径与保存期共用同一 ParseRequestPatch，非法 wire
+	// 会被视为未配置，因此 SQL 直写是该观测面的唯一真实入口。直写同时绕过快照/
+	// digest 副作用（probe 每次从 DB 读模板 ext，不依赖调度快照）。
+	dirtyPatch := fmt.Sprintf(
+		`{"headers":{"Authorization":"E2E {api_key}","X-RP-Dirty":"d1"},"formats":{"openai-chat":{"set":{"secret_marker":"%s","%s":1}}}}`,
+		rpDirtySecretMarker, rpDirtyPathMarker)
+	_, err = env.pg.Exec(context.Background(),
+		`UPDATE public.template_exts SET request_patch = $1::jsonb WHERE template_id = $2`,
+		dirtyPatch, tplDirty)
+	require.NoError(t, err, "SQL 直写脏 request_patch（模拟手工改库）")
+	// 两次探测：第二次用于锁「同一 template+format 1min 内只 1 条 WARN」（共享限频表）。
+	for i := 1; i <= 2; i++ {
+		code, body = rpProbe(t, env, accDirty, map[string]any{"model": rpModelDirty, "format": "openai-chat"})
+		rpRequireProbeSuccess(t, code, body, fmt.Sprintf("C2 脏库 probe #%d", i))
+	}
+	rec = capture.lastHTTP(t)
+	require.Equal(t, "E2E "+rpDirtyAccountKey, rec.Header.Get("Authorization"),
+		"C2：头装饰与 body 残余失败相互独立（头照常生效）")
+	require.Equal(t, "d1", rec.Header.Get("X-RP-Dirty"), "C2：全局层头照常注入")
+	require.Equal(t, rpModelDirty, gjson.GetBytes(rec.Body, "model").String(), "C2：残余失败 ⇒ body 裸透传（不半应用）")
+	require.True(t, gjson.GetBytes(rec.Body, "max_tokens").Exists(), "C2：探测载荷原样（max_tokens 保留）")
+	require.False(t, gjson.GetBytes(rec.Body, "secret_marker").Exists(), "C2：残余失败不得半应用任何 set")
+	require.NotContains(t, string(rec.Body), rpDirtySecretMarker)
+
+	var warnLines []map[string]any
+	for _, line := range rpServerLogJSONLines(t, h) {
+		if line["msg"] == rpProbeWarnMessage {
+			warnLines = append(warnLines, line)
+		}
+	}
+	require.Len(t, warnLines, 1, "C2：残余失败必须恰好 1 条固定文案 WARN（同 template+format 1min 限频）")
+	warnLine := warnLines[0]
+	require.Equal(t, float64(tplDirty), warnLine["template_id"], "C2：WARN 含 template_id")
+	require.Equal(t, "openai-chat", warnLine["format"], "C2：WARN 含出站格式键")
+	for _, forbidden := range []string{"path", "value", "body", "set", "delete", "headers", "authorization", "upstream_key"} {
+		require.NotContains(t, warnLine, forbidden, "C2：WARN 字段集不得含 %s（不打印 path/value/body）", forbidden)
+	}
+	logText = rpLogFile(t, h)
+	for _, leak := range []string{rpDirtySecretMarker, rpDirtyPathMarker, rpDirtyAccountKey} {
+		require.NotContains(t, logText, leak, "C2：日志不得泄漏 %s", leak)
+	}
+	t.Logf("C2 脏库 probe WARN：msg=%q template_id=%v format=%v（两次探测共 %d 条；上游 body 逐字节裸透传）",
+		warnLine["msg"], warnLine["template_id"], warnLine["format"], len(warnLines))
 }
