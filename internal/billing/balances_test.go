@@ -64,7 +64,7 @@ func TestBalancesReloadFailSafe(t *testing.T) {
 // （快照内自洽：不出现新余额 + 旧倍率错配）。
 func TestBalancesReloadGroupFailSafe(t *testing.T) {
 	b := NewBalances(fakeBalLoader{
-		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{1, 1}: 20000}, gm: map[int64]int{1: 15000},
+		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 20000}, gm: map[int64]int{1: 15000},
 	}, nil)
 	require.NoError(t, b.Reload(context.Background()))
 	// 余额加载成功、组倍率失败 → 整体不替换
@@ -80,7 +80,7 @@ func TestBalancesReloadGroupFailSafe(t *testing.T) {
 // 旧值（快照内自洽）。
 func TestBalancesReloadAssignmentFailSafe(t *testing.T) {
 	b := NewBalances(fakeBalLoader{
-		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{1, 1}: 20000}, gm: map[int64]int{1: 15000},
+		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 20000}, gm: map[int64]int{1: 15000},
 	}, nil)
 	require.NoError(t, b.Reload(context.Background()))
 	b.loader = fakeBalLoader{m: map[int64]int64{1: 999}, failAt: 3}
@@ -141,14 +141,14 @@ func TestBalancesSetAfterReload(t *testing.T) {
 // fail-safe 保留旧倍率快照。
 func TestReloadMultipliers(t *testing.T) {
 	b := NewBalances(fakeBalLoader{
-		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{1, 1}: 20000}, gm: map[int64]int{1: 15000},
+		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 20000}, gm: map[int64]int{1: 15000},
 	}, nil)
 	require.NoError(t, b.Reload(context.Background()))
 
 	// 组倍率变更（g2 从 10000 → 30000）+ assignment 倍率变更（(1,1) 20000 → 0）
 	b.loader = fakeBalLoader{
 		m:  map[int64]int64{1: 100},
-		am: map[AssignmentKey]int{{1, 1}: 0, {9, 3}: 5000},
+		am: map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 0, {UserID: 9, GroupID: 3}: 5000},
 		gm: map[int64]int{1: 15000, 2: 30000},
 	}
 	require.NoError(t, b.ReloadMultipliers(context.Background()))
@@ -187,10 +187,10 @@ func TestEffectiveMultiplier(t *testing.T) {
 		userID, gid int64
 		want        int
 	}{
-		{"assignment 覆盖组", map[AssignmentKey]int{{1, 1}: 20000}, map[int64]int{1: 15000}, 1, 1, 20000},
-		{"assignment 免费覆盖组", map[AssignmentKey]int{{1, 1}: 0}, map[int64]int{1: 15000}, 1, 1, 0},
-		{"assignment ×10 上限", map[AssignmentKey]int{{1, 1}: 100000}, nil, 1, 1, 100000},
-		{"同用户不同组不同倍率", map[AssignmentKey]int{{1, 1}: 20000, {1, 2}: 5000}, map[int64]int{1: 15000}, 1, 2, 5000},
+		{"assignment 覆盖组", map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 20000}, map[int64]int{1: 15000}, 1, 1, 20000},
+		{"assignment 免费覆盖组", map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 0}, map[int64]int{1: 15000}, 1, 1, 0},
+		{"assignment ×10 上限", map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 100000}, nil, 1, 1, 100000},
+		{"同用户不同组不同倍率", map[AssignmentKey]int{{UserID: 1, GroupID: 1}: 20000, {UserID: 1, GroupID: 2}: 5000}, map[int64]int{1: 15000}, 1, 2, 5000},
 		{"仅组倍率", nil, map[int64]int{1: 15000}, 1, 1, 15000},
 		{"组免费（用户未设置）", nil, map[int64]int{2: 0}, 1, 2, 0},
 		{"均缺默认×1", nil, nil, 1, 1, 10000},
