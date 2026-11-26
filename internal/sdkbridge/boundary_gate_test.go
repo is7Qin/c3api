@@ -55,6 +55,10 @@ var sdkTestImportAllowlist = map[string]string{
 	"internal/proxy/codex_session_identity_test.go":   "集成面：读握手头常量 HeaderTurnState 才能断言 turn-state 落点",
 	"internal/proxy/caller_images_regression_test.go": "集成面：必须构造 SDK 的 *HTTPError / RefreshOAuthError 才能验证生图错误翻译",
 	"internal/proxy/attempt_log_test.go":              "集成面：必须注入 SDK 的 RefreshOAuthError 才能驱动 IsFatal 分支（err_logs.attempt_ordinal 的写点）；判死判据本身的门禁在 sdkbridge 侧",
+	// 中立叶子包自己的**对照测试**必须看见 SDK 那份实现：TestDeriveAccountIDMatchesSDK
+	// 把 codexproto.DeriveAccountID 与 codexsdk.AccountIDFromToken 逐用例对照——这就是
+	// 「两份 JWT 解析实现必须一致」的机械约束。搬不走：它要证的就是两者等价。
+	"internal/codexproto/codexproto_test.go": "对照用例：证明本包 JWT 解析与 codexsdk.AccountIDFromToken 语义一致（两份实现的唯一机械约束）",
 }
 
 // sdkImportPath 是被垄断的 import 路径前缀（含子包，如 .../redisstore）。

@@ -9,9 +9,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— codex 凭据批量导入（batch-import-codex-oauth / batch-import-codex-pat；
@@ -46,12 +46,11 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 	items := make([]domain.CodexOAuthImportItem, len(in.Items))
 	for i, it := range in.Items {
 		accountID := it.CodexAccountId
-		if accountID == "" && it.CodexOauthToken != "" {
-			// account id 缺省补全（JWT claims 离线解析；完整语义见 sdkbridge/codex_account_id.go；
-			// 仍空 → service 行级必填校验照常 failed）。
-			if id, ok := sdkbridge.DeriveCodexAccountID(it.CodexOauthToken); ok {
-				accountID = id
-			}
+		if accountID == "" {
+			// account id 缺省补全：离线解 JWT claims（派生策略唯一实现在
+			// codex_account_id.go 的 deriveAccountID；空 token 由纯函数短路返回空，
+			// 故此处不必前置判空。仍空 → service 行级必填校验照常 failed）。
+			accountID = h.deriveAccountID(r.Context(), credential.TypeCodexOAuth, it.CodexOauthToken, "")
 		}
 		items[i] = domain.CodexOAuthImportItem{
 			CodexEmail:             it.CodexEmail,
@@ -95,12 +94,10 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 	items := make([]domain.CodexPATImportItem, len(in.Items))
 	for i, it := range in.Items {
 		accountID := it.CodexAccountId
-		if accountID == "" && it.CodexPatKey != "" {
-			// account id 缺省补全（whoami 在线查询；完整语义见 sdkbridge/codex_account_id.go；
-			// 失败/仍空 → service 行级必填校验照常 failed）。
-			if id, err := sdkbridge.FetchPATAccountID(r.Context(), it.CodexPatKey); err == nil && id != "" {
-				accountID = id
-			}
+		if accountID == "" {
+			// account id 缺省补全：在线 whoami（同一个 deriveAccountID；resolver 未装配 /
+			// 空 key → 留空，不阻塞导入）。失败/仍空 → service 行级必填校验照常 failed）。
+			accountID = h.deriveAccountID(r.Context(), credential.TypeCodexPAT, "", it.CodexPatKey)
 		}
 		items[i] = domain.CodexPATImportItem{
 			CodexEmail:     it.CodexEmail,

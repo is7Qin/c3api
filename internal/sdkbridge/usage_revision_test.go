@@ -24,6 +24,7 @@ import (
 
 	codexsdk "github.com/is7Qin/codex-sdk"
 
+	"github.com/is7qin/c3api/internal/codexproto"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -301,7 +302,12 @@ func TestUsageFailureCooldownPerRevision(t *testing.T) {
 	require.Equal(t, 1, u.callsN())
 	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, k, v.errRev, "失败冷却标上本次拉取的 K")
-	require.Equal(t, ErrUpstream, v.err)
+	// 冷却只存**分类结果**（类型 + 旧哨兵两层同链）：既认哨兵也认 Kind，不比较值相等
+	// ——分类结果本身就是包装后的链（见 codex.go 文件头「usage 错误面」）。
+	require.ErrorIs(t, v.err, ErrUpstream, "冷却只存分类哨兵")
+	var cachedErr *codexproto.Error
+	require.ErrorAs(t, v.err, &cachedErr, "冷却只存分类类型")
+	require.Equal(t, codexproto.ErrKindUpstream, cachedErr.Kind)
 	require.Truef(t, v.errAt.Equal(now), "失败时刻取自注入时钟: %v", v.errAt)
 	require.False(t, v.hasSnap, "失败不写快照")
 

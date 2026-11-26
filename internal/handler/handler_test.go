@@ -66,9 +66,16 @@ func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose st
 
 func newTestHandler(t *testing.T) *AdminAPI {
 	t.Helper()
+	return newTestHandlerWithOpts(t, OpsOptions{})
+}
+
+// newTestHandlerWithOpts 同 newTestHandler，但把 OpsOptions 交给构造器（零值 =
+// 旧行为：变参注入的缺省语义与本单前完全一致）。
+func newTestHandlerWithOpts(t *testing.T, opts OpsOptions) *AdminAPI {
+	t.Helper()
 	store := newFakeStore()
 	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
-	return New(svc)
+	return New(svc, opts)
 }
 
 func TestAdminFlow(t *testing.T) {
@@ -579,7 +586,14 @@ func TestGetUsageLogsLimitClip(t *testing.T) {
 // newListTestRouter 列表参数测试的接线：chi + admin token 中间件 + 挂载契约路由。
 func newListTestRouter(t *testing.T) (*AdminAPI, http.Handler, func(method, path, body string) *httptest.ResponseRecorder) {
 	t.Helper()
-	h := newTestHandler(t)
+	return newListTestRouterOpts(t, OpsOptions{})
+}
+
+// newListTestRouterOpts 同 newListTestRouter，但可注入 OpsOptions（需要真实端口
+// 装配的用例——例如 PAT whoami 走 sdkbridge.PATWhoami 而不是 fake）。
+func newListTestRouterOpts(t *testing.T, opts OpsOptions) (*AdminAPI, http.Handler, func(method, path, body string) *httptest.ResponseRecorder) {
+	t.Helper()
+	h := newTestHandlerWithOpts(t, opts)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

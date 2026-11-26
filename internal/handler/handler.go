@@ -26,6 +26,11 @@ type AdminAPI struct {
 	// （GetAccountsUsage fan-out）经构造直调适配器；nil = 未装配 → codex
 	// 账号返回 null 快照，不 panic，与旧 nil 回填语义一致）。
 	usageSnap CodexUsageProber
+	// accountIDResolver codex account id 的在线查询面（PAT whoami）——保存/导入
+	// 时的补全策略见 codex_account_id.go 的 deriveAccountID。nil = 未装配 → PAT
+	// 分支留空（不 500、不 panic、不阻塞保存）。类型是本包声明的消费方接口，
+	// 刻意不写成 sdkbridge 的具体类型。
+	accountIDResolver AccountIDResolver
 	// pricingSync 价格手动同步/预览编排面（service 侧回填删除后，
 	// sync/preview 端点经构造直调 worker；nil = 未装配 → 端点 500，不 panic，
 	// 与旧 nil-fetcher 降级语义一致）。类型是本包声明的消费方接口
@@ -54,14 +59,15 @@ func New(svc *service.Service, ops ...OpsOptions) *AdminAPI {
 		o = ops[0]
 	}
 	return &AdminAPI{
-		svc:           svc,
-		ops:           o,
-		usageSnap:     o.UsageSnap,
-		pricingSync:   o.PricingSync,
-		log:           o.Log,
-		overviewCache: newTTLCache(30 * time.Second),
-		usersTopCache: newTTLCache(2 * time.Second),
-		now:           time.Now,
+		svc:               svc,
+		ops:               o,
+		usageSnap:         o.UsageSnap,
+		accountIDResolver: o.AccountIDResolver,
+		pricingSync:       o.PricingSync,
+		log:               o.Log,
+		overviewCache:     newTTLCache(30 * time.Second),
+		usersTopCache:     newTTLCache(2 * time.Second),
+		now:               time.Now,
 	}
 }
 

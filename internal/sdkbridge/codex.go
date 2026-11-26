@@ -18,6 +18,7 @@ import (
 
 	codexsdk "github.com/is7Qin/codex-sdk"
 
+	"github.com/is7qin/c3api/internal/codexproto"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/storeerr"
 	"github.com/is7qin/c3api/pkg/egress"
@@ -650,14 +651,37 @@ func closeWSIdleConns(clients []*codexsdk.HTTPClient) {
 
 // —— codex 额度快照（GetUsageSnapshot——代际绑定 + 单飞 + TTL/冷却 + 有界并发） ——
 
+// —— usage 错误面（分类的三层形状，改动前必读） ——
+//
+// 每一次 GetUsageSnapshot 失败都同时携带**两种判定**（同一条 %w 链上）：
+//
+//	err = fmt.Errorf("%w: %w", &codexproto.Error{Kind, Err: cause}, 旧哨兵)
+//	         ↑ 消费方（handler）用 errors.As 认这个类型  ↑ 老调用方用 errors.Is 认这个值
+//
+// 为什么是两层而不是只留一种：
+//   - **类型**（internal/codexproto.Error）住中立叶子包，消费方（handler）判 Kind
+//     就不必 import 本包——这正是本仓库"生产方与消费方都不认识对方的包"的范式
+//     （与 internal/pricingresult.FetchError 同构）；
+//   - **旧哨兵**是本包既有的公开面，本包自己的几十条 require.ErrorIs 与
+//     QuotaDeadline / worker 等调用方仍认它。删掉它是行为破坏，不是解耦。
+//     As 与 Is 相互独立，两条判定互不依赖，共存无副作用。
+//
+// ⚠ 本包的 ErrUpstream 与 serviceerr.ErrUpstream **同名、不同值、同词义**（仓库
+// 第二例）。判"codex 用量上游失败"只许用本包的值或 codexproto.ErrKindUpstream，
+// 不要拿 serviceerr 的那个取代它。
+
 // ErrAuthExpired 凭据失效分类错误（GetUsageSnapshot 错误面——IsFatal 纯判定
 // 零副作用：usage 查询面不重复上报不摘除——凭据失效由会话路径（Dial/
 // Responses）经 FatalAuth 上报，防循环；凭据变更后 entry sig 重建自然恢复。
 // upstream_error 映射输入）。
+//
+// 保留为**值**（老调用方与老测试认它）；新的判定请用 &codexproto.Error 的 Kind。
 var ErrAuthExpired = errors.New("codex: usage auth expired")
 
 // ErrUpstream 上游错误分类错误（GetUsageSnapshot 错误面——*HTTPError/网络/
 // RefreshError 等一律保守归本类；upstream_error 映射输入）。
+//
+// 保留为**值**（老调用方与老测试认它）；新的判定请用 &codexproto.Error 的 Kind。
 var ErrUpstream = errors.New("codex: usage upstream error")
 
 // ErrUsageStale 本次观测已不属于当前身份代际：拉取在途期间同签名的身份写入
@@ -735,6 +759,12 @@ type usageFlight struct {
 // 其余（*HTTPError/网络/RefreshError，含非致命 401——无判死标记的拒绝属上游
 // 面，不从状态码反推鉴权结论）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
 // 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
+//
+// **错误面的形状**（消费方判定依据，见文件上方「usage 错误面」）：分类结果 =
+// `fmt.Errorf("%w: %w", &codexproto.Error{Kind, Err}, 旧哨兵)`。用 errors.As 取
+// Kind 与用 errors.Is 认哨兵**都**成立，两者互不依赖；ctx 取消/超时与
+// ErrUsageStale 不在此列（它们不是"分类"，原样透传）。
+//
 // 命中路径零分配：先按 accountID 查 entry.usage（map 查 + 锁 + 时间与代际
 // 比较——不计算 credSig/不重建条目），命中直接返回；未命中才走
 // clientFor（entryFor 签名比对/重建）。
@@ -753,9 +783,12 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	e, client, err := a.usageClientFor(cred)
 	if err != nil {
 		// 入口错误分类：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
-		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。
+		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。形状与其他
+		// 分类点一致（类型 + 旧哨兵同链），消费方只需一种判定路径；原因原样进
+		// codexproto.Error.Err。入口错误没打上游，不进冷却三元组——直接返回。
 		if errors.Is(err, errCredentialIncomplete) {
-			return nil, ErrAuthExpired
+			return nil, fmt.Errorf("%w: %w",
+				&codexproto.Error{Kind: codexproto.ErrKindAuthExpired, Err: err}, ErrAuthExpired)
 		}
 		return nil, err
 	}
@@ -1047,11 +1080,21 @@ func isFlightCtxErr(err error) bool {
 // （无判死标记的拒绝——上游未宣告凭证死亡）不在此反推鉴权结论：真死亡必带
 // 致命标记走 fatal 路径并经 OnAuthFatal 禁用，无标记则按上游抖动冷却重试自愈
 // （的 401 特判已随 SDK PAT 判死上线退役——补丁理由消失即删）。
+//
+// 返回值形状见上方「usage 错误面」：**类型 + 旧哨兵**两层同链。cause 原样放进
+// codexproto.Error.Err（诊断可用、不丢失底层原因）；`usageErr` 只缓存这个包装
+// 结果（不是 error 体，见 failure 冷却三元组注释）。
+//
+// 一个入口都在这里：正常拉取失败（GetUsageSnapshot）与冷却态回放
+// （snapshotCooldown 读到的正是本函数上一次的产出）用同一种形状，消费方不需要
+// 区分"这次的"还是"续上的"。
 func classifyUsageErr(err error) error {
+	kind := codexproto.ErrKindUpstream
+	sentinel := ErrUpstream
 	if IsFatal(err) {
-		return ErrAuthExpired
+		kind, sentinel = codexproto.ErrKindAuthExpired, ErrAuthExpired
 	}
-	return ErrUpstream
+	return fmt.Errorf("%w: %w", &codexproto.Error{Kind: kind, Err: err}, sentinel)
 }
 
 // fromSDKUsage codexsdk.UsageStatus → domain.CodexUsageSnapshot 白名单收敛

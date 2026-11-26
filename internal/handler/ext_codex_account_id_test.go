@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— 单账号 ext 保存 account id 后置补全（spec §7.0-6 / §7.2：可留空，保存后
@@ -104,7 +106,7 @@ func TestPutAccountsExtDerivesPATAccountID(t *testing.T) {
 		defer srv.Close()
 		t.Setenv("CODEX_AUTHAPI_BASE_URL", srv.URL)
 
-		_, _, do := newListTestRouter(t)
+		_, _, do := newListTestRouterOpts(t, OpsOptions{AccountIDResolver: sdkbridge.PATWhoami{}})
 		id := extCodexAccount(t, do, "codex-pat")
 		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
 			`{"credential_type":"codex-pat","codex_pat_key":"pat-save-1"}`)
@@ -128,7 +130,7 @@ func TestPutAccountsExtDerivesPATAccountID(t *testing.T) {
 		defer srv.Close()
 		t.Setenv("CODEX_AUTHAPI_BASE_URL", srv.URL)
 
-		_, _, do := newListTestRouter(t)
+		_, _, do := newListTestRouterOpts(t, OpsOptions{AccountIDResolver: sdkbridge.PATWhoami{}})
 		id := extCodexAccount(t, do, "codex-pat")
 		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
 			`{"credential_type":"codex-pat","codex_pat_key":"pat-bad"}`)

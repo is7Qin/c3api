@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— codex 批量导入 account id 缺省补全（完整语义见 sdkbridge/codex_account_id.go；
@@ -63,7 +64,7 @@ func TestImportCodexPATDerivesAccountID(t *testing.T) {
 	const patTplID = 2 // codexImportTestAPI 预置 pat 模板（id=2）
 
 	t.Run("whoami success imports with derived id", func(t *testing.T) {
-		h, store, _, _ := codexImportTestAPI(t)
+		h, store, _, _ := codexImportTestAPIOpts(t, OpsOptions{AccountIDResolver: sdkbridge.PATWhoami{}})
 		ctx := context.Background()
 		var hits atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

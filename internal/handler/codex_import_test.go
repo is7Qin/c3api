@@ -26,6 +26,13 @@ import (
 // fakeStore——handler 契约层只关心请求/响应形状）。
 func codexImportTestAPI(t *testing.T) (*AdminAPI, *fakeStore, int64, int64) {
 	t.Helper()
+	return codexImportTestAPIOpts(t, OpsOptions{})
+}
+
+// codexImportTestAPIOpts 同 codexImportTestAPI，但可注入 OpsOptions（需要真实
+// 端口装配的用例——例如 PAT whoami 走 sdkbridge.PATWhoami 而不是 fake）。
+func codexImportTestAPIOpts(t *testing.T, opts OpsOptions) (*AdminAPI, *fakeStore, int64, int64) {
+	t.Helper()
 	store := newFakeStore()
 	tpl := &domain.Template{ID: 1, Name: "codex-tpl", CredentialType: credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}}
@@ -36,7 +43,7 @@ func codexImportTestAPI(t *testing.T) (*AdminAPI, *fakeStore, int64, int64) {
 	store.tpls[2] = &domain.Template{ID: 2, Name: "codex-pat-tpl", CredentialType: credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}}
 	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
-	return New(svc), store, tpl.ID, g.ID
+	return New(svc, opts), store, tpl.ID, g.ID
 }
 
 func doImport(t *testing.T, h *AdminAPI, method, path, body string) *httptest.ResponseRecorder {

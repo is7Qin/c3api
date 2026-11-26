@@ -32,6 +32,7 @@ import (
 	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
@@ -387,12 +388,17 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改
 	// service.New 签名（main.go:376-390 注入先例）。
 	h := handler.New(svc, handler.OpsOptions{
-		Workers:       opsWorkers,
-		UsageSnap:     codexAdapter, // codex 额度快照：handler fan-out 经构造直调（TTL 缓存/有界并发/失败冷却全在适配层）
-		PricingSync:   pricingSync,  // 价格手动同步/预览：sync 端点经构造直调 worker（零 service 中介）
-		Log:           log,          // fan-out 未知上游错误 Warn
-		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
-		InFlightUsers: auth.InFlightUsers,
+		Workers:   opsWorkers,
+		UsageSnap: codexAdapter, // codex 额度快照：handler fan-out 经构造直调（TTL 缓存/有界并发/失败冷却全在适配层）
+		// codex account id 的**在线**补全面（PAT whoami）：与 UsageSnap 是两个关注点
+		// （读快照 ≠ 查 account id），刻意分开注入。离线那一半是纯函数
+		// （codexproto.DeriveAccountID），handler 直接调，不需要装配。
+		// 用 sdkbridge.PATWhoami{} 而不是闭包：方法集匹配 ⇒ 赋值即编译期证明装配成立。
+		AccountIDResolver: sdkbridge.PATWhoami{},
+		PricingSync:       pricingSync, // 价格手动同步/预览：sync 端点经构造直调 worker（零 service 中介）
+		Log:               log,         // fan-out 未知上游错误 Warn
+		Snapshots:         func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
+		InFlightUsers:     auth.InFlightUsers,
 		// /ops/attempts/{request_id} 的 sampling 段：只注入「读丢弃总数」这一件事
 		// （函数值），不把整个 worker 交给 handler。worker 恒非 nil（健康阶段构造
 		// 失败即 fatalf），仍显式判空以保留「未装配 ⇒ 省略字段」的语义。

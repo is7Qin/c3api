@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -18,9 +19,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/codexproto"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -192,7 +193,12 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 			Credits:   &domain.CodexCredits{Balance: new("12.50")},
 			RateLimit: &domain.CodexRateLimit{UsedPercent: 42}, // ResetAt nil（零值守卫）
 		}},
-		errs: map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
+		// 分类错误一律用**中立类型**（codexproto.Error）构造——与生产口径一致：
+		// 实现方（sdkbridge）产出的就是这个类型，测试不该再以该包的哨兵变量为输入。
+		errs: map[int64]error{
+			3: fmt.Errorf("%w", &codexproto.Error{Kind: codexproto.ErrKindAuthExpired, Err: errors.New("fatal")}),
+			4: fmt.Errorf("%w", &codexproto.Error{Kind: codexproto.ErrKindUpstream, Err: errors.New("500")}),
+		},
 	})
 	// ext 行必有父账号行（生产不变量）：额度面凭据的来源 K 从父行取。
 	seedCodexAccounts(store, 1, 2, 3, 4)
@@ -318,7 +324,7 @@ func TestAssembleUpstreamParallel(t *testing.T) {
 		twoInFlight: make(chan struct{}),
 		release:     make(chan struct{}),
 		snaps:       map[int64]*domain.CodexUsageSnapshot{},
-		errs:        map[int64]error{4: sdkbridge.ErrAuthExpired}, // 单账号失败
+		errs:        map[int64]error{4: fmt.Errorf("%w", &codexproto.Error{Kind: codexproto.ErrKindAuthExpired, Err: errors.New("fatal")})}, // 单账号失败
 	}
 	for i := int64(1); i <= 8; i++ {
 		snap.snaps[i] = &domain.CodexUsageSnapshot{PlanType: "chatgpt-plus"}

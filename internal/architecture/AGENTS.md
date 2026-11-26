@@ -92,13 +92,21 @@ allowed"时报 `kindRedundantLegacy` **变红**（"该边已符合目标方向�
 - `domain` 侧留**类型别名** `type X = pkg.X`（不是新类型、不是包装），消费方零改动
 - 已有先例：`internal/modelmap`、`internal/identityenv`、`pkg/egressapi`、`internal/storeerr`、
   `internal/paymenterr`、`internal/qualitymodel`、`internal/loadport`、`internal/identityfence`、
-  `pkg/headervalid`、`internal/pricingresult`
+  `pkg/headervalid`、`internal/pricingresult`、`internal/codexproto`
 - 最新一例（request_patch）：头 wire 判据从 `pkg/httpx` 下沉为 `pkg/headervalid`——`internal/domain` 想调两个纯函数，
   不能为此 import 整个 `net/http` 传输装配；矩阵只给 `internal/domain` 的 `to` 加 `pkg/headervalid`（替换原 `pkg/httpx` 边），
   并登记一条显式空 `to` 的 `pkg/headervalid` 规则（`pkg/*` 由硬规则短路，这条是声明式意图）。指纹随矩阵变更，见 archfix 报告。
 - 最新一例（P6-1）：`internal/pricingresult` 装价格手动同步/预览的**结果值**与 `FetchError` 错误**类型**，
   让 handler 驱动价格同步而不必认识 pricing 的 fetcher/repo/settings/cron/worker 实现面；消费方用
   `errors.As` 认类型而非认实现方的哨兵变量名。
+- P6-2 一例：`internal/codexproto` 装 codex 协议的**纯解析**（`DeriveAccountID`，JWT claims →
+  `chatgpt_account_id`）与用量查询失败的**分类类型**（`Error{Kind, Err}`），让 handler 解 account id、
+  认用量错误而不必 import `sdkbridge`（该包实测 305 个传递依赖）。
+  ⚠ **禁止** `internal/codexproto` import 任何 `internal/*` 或 `pkg/*`——尤其禁止"薄包 sdkbridge"：
+  实测 `go list -deps codex-sdk` = 218 个包，一旦薄包，`to: []string{}` 不再成立、中立叶子失效。
+  ⚠ JWT 解析在此是**两份实现**（本包 + 第三方 `codexsdk.AccountIDFromToken`）；
+  「两份必须语义一致」由 `internal/codexproto/codexproto_test.go` 的 `TestDeriveAccountIDMatchesSDK`
+  逐用例对照钉住。这条对照测试是**承重结构**：删掉它，两份实现就可以静默分叉。
 
 ### 证明"别名 vs 新类型"必须用无转换赋值
 

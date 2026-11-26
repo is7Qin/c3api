@@ -5,13 +5,11 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— 账号类型化鉴权扩展（account_ext 1:1；Codex/BPS 共用 codex_identity
@@ -64,9 +62,11 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 		}
 	}
 	// account id 后置补全（可留空语义——保存后自动识别）：入参空才补；派生
-	// 失败不阻塞保存（留空落库 → 下次保存重试）。
+	// 失败不阻塞保存（留空落库 → 下次保存重试）。派生策略本身见
+	// codex_account_id.go 的 deriveAccountID（与两个批量导入共用一份）。
 	if e.CodexAccountID == nil || *e.CodexAccountID == "" {
-		if id := h.deriveCodexAccountID(r.Context(), e); id != "" {
+		if id := h.deriveAccountID(r.Context(), e.CredentialType,
+			httpface.Deref(e.CodexOAuthToken), httpface.Deref(e.CodexPATKey)); id != "" {
 			e.CodexAccountID = &id
 		}
 	}
@@ -76,30 +76,6 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, toAPIAccountExt(saved))
-}
-
-// deriveCodexAccountID 单账号保存 account id 后置补全（管理面派生点之二，另一
-// 为批量导入行处理；完整语义见 sdkbridge/codex_account_id.go）：只认请求凭据，
-// 空/不可派生 → ""（不阻塞保存，留空 → 下次保存重试；非空不可派生不绑旧 id）。
-func (h *AdminAPI) deriveCodexAccountID(ctx context.Context, e *domain.AccountExt) string {
-	switch e.CredentialType {
-	case credential.TypeCodexOAuth:
-		if tok := httpface.Deref(e.CodexOAuthToken); tok != "" {
-			if id, ok := sdkbridge.DeriveCodexAccountID(tok); ok {
-				return id
-			}
-		}
-		return ""
-	case credential.TypeCodexPAT:
-		if key := httpface.Deref(e.CodexPATKey); key != "" {
-			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
-				return id
-			}
-		}
-		return ""
-	default:
-		return ""
-	}
 }
 
 // toAPIAccountExt 账号 ext 领域对象 → 契约类型（account_id 只读，响应带）。

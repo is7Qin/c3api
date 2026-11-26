@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/is7qin/c3api/internal/codexproto"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -74,8 +74,14 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 // 不打上游，按失效来源标 upstream_error：sdk → auth_expired；rule/空 → 不标；
 // 见 svc.AccountUsageFrozen）→ codex 账号调
 // prober（nil prober = 未装配 → null 快照，与旧 service nil-setter 降级一致）
-// → sdkbridge 哨兵映射 upstream_error（ErrAuthExpired → auth_expired，
-// ErrUpstream → upstream_unavailable；未知错误 → Warn + null/null，不误标）。
+// → **按类型**映射 upstream_error（`errors.As` 取 *codexproto.Error 的 Kind：
+// ErrKindAuthExpired → auth_expired，ErrKindUpstream → upstream_unavailable；
+// 未知错误 → Warn + null/null，不误标）。
+//
+// 为什么判类型而不判哨兵：本包不该认识实现方（internal/sdkbridge）的变量名——
+// 那条 import 正是本单清掉的债。分类类型住中立叶子包 internal/codexproto，实现方
+// 产出它、消费方认它，双方各不认识对方的包（与 P6-1 的 pricingresult.FetchError
+// 同构）。
 //
 // 失败语义：单账号快照失败不整批失败（其余账号照常）；批内 errgroup 有界
 // 并发（8——与适配层 usage 并发上限 8 对齐（sdkbridge.usageFetchConcurrency）：
@@ -116,13 +122,15 @@ func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountU
 				return nil
 			}
 			snap, err := h.usageSnap.GetUsageSnapshot(ctx, cred)
+			// 分类判**类型**（errors.As），不判实现方的哨兵变量名——见函数头注释。
+			var ce *codexproto.Error
 			switch {
 			case err == nil:
 				items[i].Upstream = snap
-			case errors.Is(err, sdkbridge.ErrAuthExpired):
+			case errors.As(err, &ce) && ce.Kind == codexproto.ErrKindAuthExpired:
 				e := domain.UpstreamErrorAuthExpired
 				items[i].UpstreamError = &e
-			case errors.Is(err, sdkbridge.ErrUpstream):
+			case errors.As(err, &ce) && ce.Kind == codexproto.ErrKindUpstream:
 				e := domain.UpstreamErrorUpstreamUnavailable
 				items[i].UpstreamError = &e
 			default:

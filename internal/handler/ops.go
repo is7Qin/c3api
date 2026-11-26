@@ -56,6 +56,12 @@ type OpsOptions struct {
 	// upstream 栏经构造直调（*sdkbridge.Codex 满足）；nil = 未装配 → codex
 	// 账号 null 快照，与旧 service nil-setter 降级语义一致）。
 	UsageSnap CodexUsageProber
+	// AccountIDResolver codex account id 的在线查询面（PAT whoami——保存
+	// ext 与批量导入时补全 account_id；接口在本包声明，见 codex_account_id.go）。
+	// **与 UsageSnap 是两个关注点，不要合并**：读额度快照 ≠ 查 account id。
+	// nil = 未装配 → PAT 分支留空（不 500、不 panic、不阻塞保存）；OAuth 分支走
+	// 纯函数 codexproto.DeriveAccountID，与本字段无关，永远可用。
+	AccountIDResolver AccountIDResolver
 	// PricingSync 价格手动同步/预览编排面（POST /pricing/sync 与
 	// /pricing/sync/preview 经构造直调；接口在本包声明，pricing_port.go 的
 	// PricingSync——*pricing.SyncWorker 方法集是超集，满足它）；nil =

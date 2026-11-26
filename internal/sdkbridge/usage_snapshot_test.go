@@ -21,6 +21,7 @@ import (
 
 	codexsdk "github.com/is7Qin/codex-sdk"
 
+	"github.com/is7qin/c3api/internal/codexproto"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -238,12 +239,17 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	}
 	require.Equal(t, 1, c.callsN(), "冷却内 3 次调用 0 次上游")
 
-	// 失败不缓存错误体：冷却内返回哨兵（非上游 body 错误）
+	// 失败不缓存错误体：冷却只存**分类结果**（类型 + 旧哨兵两层同链，见 codex.go
+	// 文件头「usage 错误面」）——不是上游 body 错误。用 As + Is 两种判定一起钉，
+	// 而不是比较值相等：分类结果是包装后的链，值相等会把"包装"本身判成回归。
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
 	e.usageMu.Lock()
 	require.Nil(t, e.usage, "失败不写快照缓存")
-	require.Equal(t, ErrUpstream, e.usageErr, "冷却只存分类哨兵")
+	require.ErrorIs(t, e.usageErr, ErrUpstream, "冷却只存分类哨兵")
+	var cached *codexproto.Error
+	require.ErrorAs(t, e.usageErr, &cached, "冷却只存分类类型（消费方据此判 Kind）")
+	require.Equal(t, codexproto.ErrKindUpstream, cached.Kind)
 	// 冷却后重试（时间注入：拨旧 usageErrAt 越过冷却——禁 sleep）
 	e.usageErrAt = time.Now().Add(-a.usageCooldown - time.Second)
 	e.usageMu.Unlock()

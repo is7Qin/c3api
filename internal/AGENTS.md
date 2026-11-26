@@ -13,6 +13,7 @@
 | `httpface/` | HTTP 报文面收敛点：错误信封/JSON 写出 + 分页与统计窗口参数解析。叶子级（只依赖 `domain` 与 `service/errors`），由 handler、server、auth 三方共用 |
 | `service/` | 一资源一文件；`errors/` 叶子包 8 哨兵；探测准入（4 执行+16 等待）与唯一 30s 期限在本层 |
 | `probe/` | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
+| `codexproto/` | codex 协议的**纯数据与纯解析**（零内部依赖叶子包）：`DeriveAccountID`（JWT claims → `chatgpt_account_id`）+ 用量查询失败的类型化分类 `Error{Kind, Err}`。让 handler 解 account id、认用量错误而不必 import `sdkbridge` |
 | 领域件：`billing` `scheduler` `domain` `rule` `usage` `protoconv` `sdkbridge` `pricing` `notify` `server` `auth` `invalidate` `credential` `config` `snapshot` `worker` | 各自职责见上表与包内 AGENTS.md |
 
 ## 包内 AGENTS.md 索引
@@ -32,6 +33,7 @@
 | `usage_logs` 写入 / 分区 / 离线聚合 | `usage/AGENTS.md` |
 | 定价与换算系 | `pricing/AGENTS.md` |
 | 价格同步/预览的**结果值**（handler 侧消费方接口、`FetchError` 谓词） | `pricingresult/AGENTS.md` + `handler/AGENTS.md` |
+| codex 协议的**纯解析/纯数据**（account id 派生、用量错误分类类型） | `codexproto/AGENTS.md` + `handler/AGENTS.md` |
 | 规则引擎 | `rule/AGENTS.md` |
 | 路由装配 / 中间件 | `server/AGENTS.md` |
 | 多实例广播 | `notify/AGENTS.md` |
@@ -42,7 +44,8 @@
 | 迁移 DDL 生成器 | `db/migrate/gen/AGENTS.md` |
 | 错误哨兵归属（该进哪个包） | `storeerr/AGENTS.md` / `paymenterr/AGENTS.md` |
 
-**中立叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据，`pkg/*` 不受 legacy 通道管辖）/ `pricingresult`。
+**中立叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据，`pkg/*` 不受 legacy 通道管辖）/ `pricingresult` / `codexproto`。
+⚠ `codexproto` **禁止** import 任何 `internal/*` 或 `pkg/*`（尤其禁止"薄包 sdkbridge"——那会带进 218 个传递依赖，中立叶子失效）；它的 JWT 解析与第三方 `codexsdk.AccountIDFromToken` 是**两份实现**，一致性由 `codexproto_test.go` 的对照用例钉住。
 **测试夹具特权**（`testFixtureAllow`，跨层是允许的）：`testsupport/`、`ent/`、`db/migrate`、
 `repository`、`rulepersist`、`sdkbridge`、`server`、`billing`。
 

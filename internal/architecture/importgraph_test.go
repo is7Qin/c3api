@@ -282,6 +282,21 @@ var allowRules = []allowRule{
 	// import 时得到的是本规则明确的拒绝，而不是 leafRule 顺手放行。
 	{from: "internal/pricingresult", to: []string{}},
 
+	// P6-2：internal/codexproto 装 codex 协议的**纯数据与纯解析**（account id 的
+	// JWT claims 解析 + 用量查询失败的分类类型），零内部依赖、只 import stdlib。
+	// 为什么必须有它：handler 要解 account id、要认两类用量错误，但**不该**为此
+	// import internal/sdkbridge——那个包实测传递依赖 305 个（websocket / redis /
+	// bps-sdk / codex-sdk / pkg/egress）。此前这条边靠 productionLedger 的
+	// {handler, sdkbridge} 那条 P6 债豁免才成立，本单把它清掉了。
+	// 生产方（sdkbridge）产出 &codexproto.Error，消费方（handler）用 errors.As 判
+	// Kind，双方都不认识对方的包；JWT 解析那半是"两份实现"，由
+	// internal/codexproto/codexproto_test.go 的对照用例钉住语义一致。
+	//
+	// 显式空切片而不是裸规则：语义是"叶包不依赖任何内部包"。⚠ 将来有人往本包加
+	// 一条 internal/* 或 pkg/* 的 import（尤其是"薄包 sdkbridge 更省事"），得到的是
+	// 本规则明确的拒绝——而裸规则会让 leafRule 顺手放行 domain/credential/pkg。
+	{from: "internal/codexproto", to: []string{}},
+
 	// pkg/headervalid 是头 wire 合法性判据的**中立叶子包**（stdlib-only）：domain 的
 	// 保存期 request_patch 校验与 pkg/aiclient 的 RelayHeaders 值卫生共用同一份判据
 	// （spec request_patch §2.6）。此前判据寄居 pkg/httpx，把 net/http 传输装配整个
@@ -434,6 +449,10 @@ var allowRules = []allowRule{
 	{from: "internal/sdkbridge", to: []string{
 		"internal/domain", "internal/credential", "internal/identityfence", "internal/storeerr", "internal/worker",
 		"pkg/egress", "pkg/logx",
+		// P6-2：用量查询失败产出 &codexproto.Error{Kind, Err}（同时保留旧哨兵做
+		// %w 别名，让本包既有测试与调用方零改动）。类型住中立叶子包，消费方
+		// （handler）判 Kind 就不必 import 本包。
+		"internal/codexproto",
 	}},
 
 	// HTTP 控制器：自己的子包 + 控制器层，不允许直接摸 repository/scheduler，
@@ -455,6 +474,10 @@ var allowRules = []allowRule{
 		// P6-1：结果值叶子包（PricingSync 的返回类型），不是 pricing 的实现面。
 		// 这正是 handler -> pricing 那条生产债清掉后的替代物：只共享纯数据。
 		"internal/pricingresult",
+		// P6-2：同型替代物——用量错误的**分类类型**与 account id 的**纯解析**
+		// （errors.As 判 Kind / codexproto.DeriveAccountID）。handler ->
+		// sdkbridge 那条生产债清掉后，双方共享的只剩这个中立叶子。
+		"internal/codexproto",
 	}},
 
 	// 传输壳：只依赖 domain 与两个 pkg 原语。
@@ -724,7 +747,22 @@ const (
 	//   的消失（debtMax 5 → 4）。⚠ testLedger 同步增一行（debtMax 4 → 5）：生产边
 	//   断了之后，这条边只剩"同包测试用真实 *pricing.SyncWorker 装进消费方接口验
 	//   行不变"的夹具需求——那是 V3 的判据，换成 fake 就什么都证明不了。
-	// 前值：6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244（本单之前）
+	// P6-2 变更（矩阵三处：新增 1 条显式叶子规则 + 两条 to 各加 1 个窄边，
+	// 没有新增 all: true / deny）：
+	//   1. 新增 {from: "internal/codexproto", to: []string{}}：codex 协议的纯数据
+	//      与纯解析叶子包（JWT claims 解析 + 用量错误分类类型），零内部依赖；
+	//   2. handler 的 to 加 internal/codexproto：用量错误改判
+	//      *codexproto.Error 的 Kind、account id 离线派生改调
+	//      codexproto.DeriveAccountID；
+	//   3. sdkbridge 的 to 加 internal/codexproto：用量查询失败产出
+	//      &codexproto.Error（同时保留旧哨兵做 %w 别名）。
+	//   换来的是 productionLedger 里 {internal/handler, internal/sdkbridge} 那条 P6
+	//   债的消失（debtMax 4 → 3）。⚠ 本次 **testLedger 不增行**：handler 侧的
+	//   accounts_usage_test.go 原本真用 sdkbridge.ErrAuthExpired/ErrUpstream 构造
+	//   fake 返回值，本单把它们改成 &codexproto.Error{Kind: ...}（与生产口径一致，
+	//   也从"测真实哨兵"升级为"测中立类型"）。
+	// 前值：93aaa4ada68332006639a25be84c92c31a138de9487f69fea0d61fbdb3eacabe（P6-2 之前）
+	// 再前值：6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244（P6-1 之前）
 	// 再前值：0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664（R1-c 之后）
 	// 再前值：8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185（R1-c 之后）
 	// 再前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
@@ -733,7 +771,7 @@ const (
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "93aaa4ada68332006639a25be84c92c31a138de9487f69fea0d61fbdb3eacabe"
+	allowMatrixFingerprint = "d9e155da7d4220aa0373efc7f8350f1d19b70e2b276b507c68aa27c95f7e2c2b"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -909,12 +947,19 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 4,
+	debtMax: 3,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
-		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},
+		// P6-2 删行（debtMax 4 → 3，只减不增）：{internal/handler,
+		// internal/sdkbridge} 这条边已**真删**——handler 不再直接 import
+		// sdkbridge（account id 派生改调中立叶子 internal/codexproto，PAT 在线查询
+		// 走 handler 自己声明的 AccountIDResolver 端口，用量错误分类改用
+		// errors.As 判 codexproto.Error 的 Kind）。
+		// ⚠ 注意 `go list -deps ./internal/handler` 仍能看到 sdkbridge：那经
+		// handler -> service -> probe -> sdkbridge 传递而来，与本条债（直接边）
+		// 无关，P6-2 前就已存在，也不在本单范围内。
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 	},
 	keep: []legacyRow{
