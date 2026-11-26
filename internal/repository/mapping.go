@@ -245,11 +245,33 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	if len(t.Edges.Ext) > 0 && t.Edges.Ext[0].StripImageTools != nil {
 		d.StripImageTools = *t.Edges.Ext[0].StripImageTools
 	}
-	// 逐格式自定义路径同款快照合并（**仅 custom 模板**）：类型从 custom 改成别的
-	// 类型时陈旧 ext 行不会被删除，若无条件合并，api_key 模板会继承旧路径并把
-	// 请求打到非预期端点。按模板类型门控后，陈旧行对其它类型完全无效。
+	// custom 的逐格式路径 + request_patch **同源同门，一次构造**（spec
+	// custom-request-patch §5.3 评审 momus C5）：两者都只来自 template_ext、
+	// 都只对 credential_type=custom 生效。类型从 custom 改成别的类型时陈旧 ext
+	// 行不会被删除——若不共享门，api_key/responses-special 模板会继承旧路径
+	// （把请求打到非预期端点）或旧 request_patch（静默改写别的类型模板的请求体）。
+	// 非 custom ⇒ Template.Upstream = nil：Paths 与 Patch 一起失效。
 	if d.CredentialType == credential.TypeCustom && len(t.Edges.Ext) > 0 {
-		d.UpstreamPaths = t.Edges.Ext[0].UpstreamPaths
+		ext := t.Edges.Ext[0]
+		// request_patch 的读路径转换**只有这里**（与写路径的 CanonicalBytes 概念
+		// 对称）：domain.ParseRequestPatch 是 wire 校验的唯一入口，读面不复制判据。
+		//
+		// 这里拿到的是 **ent 从 jsonb 读回**的值：PG 已把 1e18 规范化为十进制
+		// （9007199254740993 逐字保留）。P2 的 digest 必须用这份读回/解析后的
+		// CanonicalBytes（Parse 的深归一是幂等前提），不能用写入前 bytes——
+		// 否则同一配置在写后与快照期会算成不同摘要（spec §17.2）。
+		//
+		// 存量脏值（手工改库/旧形状）视为未配置：不报错、不 panic、不半应用
+		// （spec §2.6/§5.3）。脏值只可能来自绕过唯一写入口的 DB 直改——jsonb
+		// 列本身保证语法合法，wire 语义非法即在此忽略。
+		var patch *domain.RequestPatch
+		if len(ext.RequestPatch) > 0 {
+			if p, err := domain.ParseRequestPatch(json.RawMessage(ext.RequestPatch)); err == nil {
+				patch = p
+			}
+		}
+		// 唯一装配入口同时做「空 ⇒ nil」归一：同一份空配置在快照上只有一种形态。
+		d.Upstream = domain.NewTemplateUpstream(ext.UpstreamPaths, patch)
 	}
 	// codex responses 出站传输同款快照合并（spec-codex-outbound-transport §4.4）。
 	// **独立 if**：strip_image_tools 默认 NULL，把这段塞进上面的 strip 守卫里会让
@@ -334,10 +356,11 @@ func (s *TemplateLoadScope) Misses() int { return s.misses }
 //
 // 共享的是**只读**对象。"模板不可变"不是我在这里新加的纪律，而是既有前提：
 // toDomainTemplate 本来就把 ent 行的 Models / FormatModels / ModelMapping /
-// UpstreamPaths 直接别名过去（不是深拷贝），所以"持有模板的人必须只读"在共享之前
-// 就已成立。本单元只把"每账号一份"换成"每模板一份"，没有新增可变面；唯一的增量
-// 风险是"写一处影响多个账号"，由构造期定型（scheduler.newSnapshotStatic）与
-// AST 门禁（template_immutability_gate_test.go）共同兜住。
+// Upstream（Paths 与 Patch，两跳指针）直接别名过去（不是深拷贝），所以"持有模板
+// 的人必须只读"在共享之前就已成立。本单元只把"每账号一份"换成"每模板一份"，没有
+// 新增可变面；唯一的增量风险是"写一处影响多个账号"，由构造期定型
+// （scheduler.newSnapshotStatic）与 AST 门禁（template_immutability_gate_test.go，
+// 覆盖 av.tpl.Upstream 两跳写）共同兜住。
 func toDomainAccountWithTemplateScope(a *ent.Account, scope *TemplateLoadScope) *domain.Account {
 	tpl := toDomainAccountTemplate(a, scope)
 	multBp := a.UpstreamCostMultiplierBp

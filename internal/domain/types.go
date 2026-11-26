@@ -251,11 +251,11 @@ type Template struct {
 	// 热路径快照布尔读 + 分支零开销；false = 未配置/关闭（nil 与 false 同语义，
 	// 快照收敛为 bool）。
 	StripImageTools bool
-	// UpstreamPaths 逐格式自定义上游路径（credential_type=custom 专用；
-	// template_ext.upstream_paths 快照合并）。nil/空 = 全部回落官方默认端点。
-	// 值**原样**拼到模板 base_url 之后（不自动补 /v1、不改写），可带 query；
-	// 未配置不影响任何既有类型。
-	UpstreamPaths map[string]string
+	// Upstream custom 的出站上游修饰（路径 + request_patch，**同一结构体指针**，
+	// spec custom-request-patch §5.1/§5.3）：custom 门内一次构造，非 custom 或
+	// 无 ext 行 ⇒ nil（陈旧 ext 行的 Paths/Patch 都不生效）。map 8B → 指针 8B：
+	// Selection 尺寸不变（264B），快照/磁盘布局零新增字段。
+	Upstream *TemplateUpstream
 	// CodexResponsesTransport 原生 codex responses 车道的出站传输（模板级开关；
 	// template_ext.codex_responses_transport 快照合并值，热路径只读它）。
 	// 零值 = 默认 http。**不进 CandidateFingerprint**：指纹变化会击穿在途
@@ -420,9 +420,10 @@ type TemplateExt struct {
 	// 落库）；空 map 与 nil 等价。键集合与默认值见 spec §4.3。
 	UpstreamPaths map[string]string
 	// RequestPatch 出站请求修饰器（custom 专用；spec custom-request-patch
-	// §2/§5.1）。nil = 未配置（NULL 落库）。**只存在于 ext 读模型**：P1 只做
-	// 配置面（存/校验/回显/往返），快照面的 Template.Upstream 统一由 P2 落成；
-	// 数据面消费也在 P2/P3（相位边界见 P1 brief §0）。
+	// §2/§5.1）。nil = 未配置（NULL 落库）。ext 读模型是**配置面**的唯一事实；
+	// 快照面由 repository.toDomainTemplate 的 custom 门把它与 UpstreamPaths
+	// 一起装进 Template.Upstream（同一次构造，§5.3），数据面只读快照里的
+	// TemplateUpstream.Patch（P3-P5 消费）。
 	RequestPatch *RequestPatch
 	// CodexResponsesTransport 代码出站传输开关（仅 codex-oauth/codex-pat 有意义；
 	// 非 codex 只接受 ""）。非可空列："" = 未配置 = 默认 http。库里**能**区分

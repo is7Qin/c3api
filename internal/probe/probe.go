@@ -126,7 +126,7 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	if !ok {
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
-	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.UpstreamPaths, key, domain.UpstreamDefaultTail(key))
+	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.Upstream, key, domain.UpstreamDefaultTail(key))
 	hc, err := p.guardedHTTPClient(spec)
 	if err != nil {
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}

@@ -153,9 +153,10 @@ type ProbeSpec struct {
 	// BaseURL 有效 base_url：模板值，账号非空 BaseURL 覆盖（静态族使用；
 	// codex 族由 SDK 固定官方端点，不读它）。
 	BaseURL string
-	// UpstreamPaths 仅 custom 模板携带（template_ext.upstream_paths）；nil/空 =
-	// 全部回落默认端点。ext 行缺失在 service 已归为 nil。
-	UpstreamPaths map[string]string
+	// Upstream 仅 custom 模板携带（template_ext 的 paths + request_patch，同一
+	// 结构体指针，与快照 Template.Upstream 同形）；nil = 全部回落默认端点、无
+	// 请求修饰。ext 行缺失在 service 已归为 nil。
+	Upstream *TemplateUpstream
 	// Credential 本次探测使用的静态 key 或 codex 访问令牌/PAT（只用于出站鉴权，
 	// 不进入结果/日志；结果字段只有分类白名单与有限错误码）。
 	Credential string

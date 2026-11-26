@@ -84,8 +84,11 @@ type planKey struct {
 	formatModelsKey  [32]byte
 	supportedFormats [32]byte
 	modelMappingKey  [32]byte
-	// upstreamPathsKey custom 的逐格式路径（credential_type=custom 专用）。
-	// 路径直接决定上游 URL，改配置必须换新计划，否则旧计划继续打到旧端点。
+	// upstreamPathsKey custom 的出站上游修饰摘要（credential_type=custom 专用；
+	// 字段名保留，语义扩为 TemplateUpstream = 逐格式路径 + request_patch，spec
+	// custom-request-patch §6：合并进既有 32B 槽位，不新增第 6 枚摘要）。
+	// 路径直接决定上游 URL、patch 直接决定出站报文——任一变化都必须换新计划，
+	// 否则旧计划继续打到旧端点/带着旧 patch。
 	upstreamPathsKey [32]byte
 	// codexResponsesTransport 原生 codex responses 的出站传输（spec §5）。
 	// 归一取 Key()：""/"http" 同键，"ws" 独立键，非法值折默认面。
@@ -200,6 +203,9 @@ type staticKey struct {
 // tplDigests 是模板侧的 5 项摘要——**只**依赖模板内容，与账号/组归属无关
 // （缓存单位是"一枚模板对象"，混进任何账号侧事实都会让同模板的第二个账号
 // 读到第一个账号的结果）。
+//
+// upstreamPathsKey 一位承载 **TemplateUpstream 整体**（Paths + Patch，
+// custom-request-patch §6）：仍 5 项 [32]byte，不新增摘要字段/字节。
 type tplDigests struct {
 	modelsDigest     [32]byte
 	formatModelsKey  [32]byte
@@ -345,7 +351,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 				formatModelsKey:  digestFormatModels(tpl.FormatModels),
 				supportedFormats: digestFormats(tpl.SupportedFormats),
 				modelMappingKey:  digestModelMapping(tpl.ModelMapping),
-				upstreamPathsKey: digestUpstreamPaths(tpl.UpstreamPaths),
+				upstreamPathsKey: digestTemplateUpstream(tpl.Upstream),
 			}
 			if digests != nil {
 				digests.entries[tpl] = d
@@ -485,21 +491,55 @@ func digestFormatModels(m map[domain.RequestFormat][]string) [32]byte {
 	return digestParts(len(parts), func(i int) []byte { return parts[i] })
 }
 
-// digestUpstreamPaths 对 custom 路径表取规范序摘要：键排序后每项贡献「键」
-// 与「值」两个 part，配合 digestParts 的 8 字节大端长度前缀消除拼接歧义
-// （裸拼接会让 {"ab":"c"} 与 {"a":"bc"} 同摘要，改路径后计划不失效）。
-func digestUpstreamPaths(m map[string]string) [32]byte {
-	if len(m) == 0 {
+// digestTemplateUpstream 对 custom 模板的**出站上游修饰**取规范序摘要
+// （Paths + Patch 同槽，spec custom-request-patch §6 / 评审 oracle N2：合并进
+// 既有 32B 槽位，不新增第 6 枚摘要字段）。
+//
+// 字节口径：
+//   - Paths：键排序后每项贡献「键」「值」两个 part，配合 digestParts 的 8 字节
+//     大端长度前缀消除拼接歧义（裸拼接会让 {"ab":"c"} 与 {"a":"bc"} 同摘要，
+//     改路径后计划不失效）。与 P1 的 digestUpstreamPaths **逐字节一致**
+//     （对 Paths-only 配置是同一个 part 序列 ⇒ 既有 golden 不动）。
+//   - Patch：Patch.CanonicalBytes() 作为**一个** part 追加在 Paths 之后；
+//     nil/空 patch ⇒ 不追加。part 个数与边界长度前缀共同保证 Paths 与 Patch
+//     的任意组合互不撞车（追加项落在偶数个 path part 之后，计数不同即不同）。
+//
+// nil up、空 Paths、nil Patch 全部收敛到 digestParts(0, nil)——与 P2 前
+// 「nil/空 UpstreamPaths map」摘要逐字节一致（未配置只有一种摘要形态）。
+//
+// **输入必须是读回/解析后的值**（spec §17.2 / P1 erratum）：CanonicalBytes 的
+// 确定性只对内存中经 ParseRequestPatch 深归一之后的值成立；jsonb 读回会把 1e18
+// 规范化为十进制（9007199254740993 逐字保留），Parse 幂等 ⇒ 同一份 DB 值每次读回
+// 摘要相同。调用点传的是 repository.toDomainTemplate 的 custom 门**从 ent 读回后
+// 重新 Parse** 的指针，绝不能用写入前 bytes——否则同一配置在写后与快照期算出不同
+// 摘要（换叶抖动，spec §17.2）。
+func digestTemplateUpstream(up *domain.TemplateUpstream) [32]byte {
+	if up == nil {
 		return digestParts(0, nil)
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	var keys []string
+	if len(up.Paths) > 0 {
+		keys = make([]string, 0, len(up.Paths))
+		for k := range up.Paths {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 	}
-	sort.Strings(keys)
-	parts := make([][]byte, 0, len(keys)*2)
+	// nil Patch 走 nil-safe 的 CanonicalBytes（IsEmpty 处理 nil receiver）⇒ nil。
+	patch := up.Patch.CanonicalBytes()
+	n := len(keys) * 2
+	if len(patch) > 0 {
+		n++
+	}
+	if n == 0 {
+		return digestParts(0, nil)
+	}
+	parts := make([][]byte, 0, n)
 	for _, k := range keys {
-		parts = append(parts, []byte(k), []byte(m[k]))
+		parts = append(parts, []byte(k), []byte(up.Paths[k]))
+	}
+	if len(patch) > 0 {
+		parts = append(parts, patch)
 	}
 	return digestParts(len(parts), func(i int) []byte { return parts[i] })
 }

@@ -87,8 +87,9 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) (plan
 		k.formatModelsKey = digestFormatModels(tpl.FormatModels)
 		k.supportedFormats = digestFormats(tpl.SupportedFormats)
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
-		// custom 路径同样进键（编码由 TestDigestUpstreamPaths 单独冻结）
-		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
+		// custom 上游修饰（Paths + request_patch）同样进键（编码由
+		// TestDigestTemplateUpstreamKAT 单独冻结）。
+		k.upstreamPathsKey = digestTemplateUpstream(tpl.Upstream)
 		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
 	}
 	k.groupIDsDigest = digestInt64s(gids)
@@ -205,13 +206,14 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress(), nil)),
 		planKeyOf(newSnapshotStatic(a, &tplModels, nil, directEgress(), nil)),
 		"model content change must change the key")
-	// custom upstream paths are part of the key: content and presence both count
-	// (the encoding itself is frozen separately by TestDigestUpstreamPaths; here we
-	// only pin that the constructor actually folds the field in).
+	// custom upstream (paths + request_patch) is part of the key: content and
+	// presence both count (the encoding itself is frozen separately by
+	// TestDigestTemplateUpstreamKAT; here we only pin that the constructor
+	// actually folds the field in).
 	tplPaths := *tpl
-	tplPaths.UpstreamPaths = map[string]string{"openai-chat": "v1/chat/completions"}
+	tplPaths.Upstream = &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/chat/completions"}}
 	tplPathsOther := *tpl
-	tplPathsOther.UpstreamPaths = map[string]string{"openai-chat": "v2/chat/completions"}
+	tplPathsOther.Upstream = &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v2/chat/completions"}}
 	require.NotEqual(t,
 		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress(), nil)),
 		planKeyOf(newSnapshotStatic(a, &tplPaths, nil, directEgress(), nil)),
@@ -223,7 +225,7 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	// Same content in a *different* map instance must not change the key either
 	// (comparing one instance with itself would assert nothing).
 	tplPathsSame := *tpl
-	tplPathsSame.UpstreamPaths = map[string]string{"openai-chat": "v1/chat/completions"}
+	tplPathsSame.Upstream = &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/chat/completions"}}
 	require.Equal(t,
 		planKeyOf(newSnapshotStatic(a, &tplPaths, nil, directEgress(), nil)),
 		planKeyOf(newSnapshotStatic(a, &tplPathsSame, nil, directEgress(), nil)),

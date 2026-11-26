@@ -282,7 +282,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 			AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
 			Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
 			CredentialType: curAv.tpl.CredentialType, Model: mapped,
-			StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
+			StripImageTools: curAv.tpl.StripImageTools, Upstream: curAv.tpl.Upstream, Ext: curAv.acc.Ext,
 			// 传输是**模板原值**（不做归一）：消费方只调 Key()/Name()，Selection 保存
 			// 原值才能让"配置写了什么"在响应头/日志里可辨认。
 			CodexResponsesTransport: curAv.tpl.CodexResponsesTransport,

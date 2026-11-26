@@ -43,9 +43,10 @@ type Selection struct {
 	// 续接"（计划级、决定要不要 fail-closed 解析），本政策位回答"这次派发要不要连
 	// 绑定账本都不碰"（请求级）。
 	SkipContinuation bool
-	// UpstreamPaths custom 的逐格式自定义上游路径（只读引用快照 map，不复制、
-	// 不修改；nil = 未配置 = 全部回落官方默认端点）。
-	UpstreamPaths map[string]string
+	// Upstream custom 的出站上游修饰（逐格式路径 + request_patch，同一结构体
+	// 指针；只读引用快照对象，不复制、不修改；nil = 未配置 = 全部回落官方默认
+	// 端点、无请求修饰）。map 8B → 指针 8B：Sizeof 仍 264（§5.1）。
+	Upstream *domain.TemplateUpstream
 	// CodexResponsesTransport 原生 codex responses 的出站传输（构造期参数，
 	// 来自 tpl.CodexResponsesTransport 原值；消费方只调 Key()/Name()）。
 	//

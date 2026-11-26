@@ -103,11 +103,11 @@ func randomDigestTemplate(rng *rand.Rand, id int64) *domain.Template {
 		}
 	}
 
-	// UpstreamPaths：随机键值（键只有 3 个 → 覆盖与覆盖写都可能发生）。
+	// TemplateUpstream：随机路径键值（键只有 3 个 → 覆盖与覆盖写都可能发生）。
 	if rng.IntN(2) == 0 {
-		tp.UpstreamPaths = make(map[string]string, 3)
+		tp.Upstream = &domain.TemplateUpstream{Paths: make(map[string]string, 3)}
 		for i := 0; i < rng.IntN(4); i++ {
-			tp.UpstreamPaths[fmt.Sprintf("path-%d", rng.IntN(3))] = fmt.Sprintf("v%d/x", rng.IntN(3))
+			tp.Upstream.Paths[fmt.Sprintf("path-%d", rng.IntN(3))] = fmt.Sprintf("v%d/x", rng.IntN(3))
 		}
 	}
 	return tp
@@ -127,20 +127,20 @@ func TestTemplateDigestCacheMatchesDirectDerivation(t *testing.T) {
 			ID: 1, CredentialType: credential.TypeAPIKey,
 			Models: []string{}, SupportedFormats: []domain.RequestFormat{},
 			FormatModels: map[domain.RequestFormat][]string{},
-			ModelMapping: domain.ModelMapping{}, UpstreamPaths: map[string]string{},
+			ModelMapping: domain.ModelMapping{}, Upstream: &domain.TemplateUpstream{Paths: map[string]string{}},
 		},
 		// 同 ID、不同内容：以 templateID 为键的缓存会在这里串味（变异 1）。
 		{
 			ID: 7, CredentialType: credential.TypeAPIKey,
 			Models:           []string{"m-2", "m-1"},
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
-			UpstreamPaths:    map[string]string{"openai-chat": "v1/a"},
+			Upstream:         &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/a"}},
 		},
 		{
 			ID: 7, CredentialType: credential.TypeAPIKey,
 			Models:           []string{"m-9"},
 			SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic},
-			UpstreamPaths:    map[string]string{"openai-chat": "v1/a"},
+			Upstream:         &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/a"}},
 		},
 	}
 	for i := 0; i < 24; i++ {
@@ -185,13 +185,13 @@ func TestTemplateDigestCacheMatchesDirectDerivation(t *testing.T) {
 func TestTemplateDigestCacheKeysByObjectNotByID(t *testing.T) {
 	a := &domain.Template{
 		ID: 7, CredentialType: credential.TypeAPIKey,
-		Models:        []string{"m-1"},
-		UpstreamPaths: map[string]string{"openai-chat": "v1/a"},
+		Models:   []string{"m-1"},
+		Upstream: &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/a"}},
 	}
 	b := &domain.Template{
 		ID: 7, CredentialType: credential.TypeAPIKey,
-		Models:        []string{"m-2", "m-3"},
-		UpstreamPaths: map[string]string{"openai-chat": "v2/b"},
+		Models:   []string{"m-2", "m-3"},
+		Upstream: &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v2/b"}},
 	}
 
 	cache := newTemplateDigestCache()
@@ -223,7 +223,7 @@ func TestTemplateDigestIgnoresMapInsertionOrder(t *testing.T) {
 			SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic, domain.FormatOpenAIChat},
 			FormatModels:     map[domain.RequestFormat][]string{},
 			ModelMapping:     domain.ModelMapping{},
-			UpstreamPaths:    map[string]string{},
+			Upstream:         &domain.TemplateUpstream{Paths: map[string]string{}},
 		}
 		formats := []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatAnthropic}
 		aliases := []string{"alias-a", "alias-b"}
@@ -240,7 +240,7 @@ func TestTemplateDigestIgnoresMapInsertionOrder(t *testing.T) {
 			tp.ModelMapping[alias] = domain.ModelMappingEntry{MappedModel: alias + "-up", Mode: domain.ModelMappingModeExplicit}
 		}
 		for _, p := range paths {
-			tp.UpstreamPaths[p] = p + "/v1"
+			tp.Upstream.Paths[p] = p + "/v1"
 		}
 		return tp
 	}
@@ -260,20 +260,20 @@ func TestTemplateDigestCacheDoesNotLeakAcrossScopes(t *testing.T) {
 		ID: 11, CredentialType: credential.TypeAPIKey,
 		Models:           []string{"m-1"},
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
-		UpstreamPaths:    map[string]string{"openai-chat": "v1/a"},
+		Upstream:         &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/a"}},
 	}
 	first := newTemplateDigestCache()
 	before := newSnapshotStatic(digestFixtureAccount(tp), tp, nil, directEgress(), first)
 
 	// 模板内容改动（就地：同一枚指针），下一次作用域必须重算。
 	tp.Models = []string{"m-1", "m-2"}
-	tp.UpstreamPaths["openai-chat"] = "v2/b"
+	tp.Upstream.Paths["openai-chat"] = "v2/b"
 	second := newTemplateDigestCache()
 	after := newSnapshotStatic(digestFixtureAccount(tp), tp, nil, directEgress(), second)
 
 	require.Equal(t, digestStrings([]string{"m-1", "m-2"}), after.key.modelsDigest,
 		"模板改了摘要必须变（跨作用域复用会返回旧字节）")
-	require.Equal(t, digestUpstreamPaths(map[string]string{"openai-chat": "v2/b"}), after.key.upstreamPathsKey)
+	require.Equal(t, digestTemplateUpstream(&domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v2/b"}}), after.key.upstreamPathsKey)
 	require.NotEqual(t, before.key.modelsDigest, after.key.modelsDigest,
 		"模板改了摘要必须变（表提到包级会返回旧字节）")
 	require.NotEqual(t, before.key.upstreamPathsKey, after.key.upstreamPathsKey)

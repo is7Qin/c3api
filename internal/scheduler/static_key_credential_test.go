@@ -73,7 +73,7 @@ func TestPlanKeyCredentialPairEquivalenceClasses(t *testing.T) {
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses},
 			FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {"m-a", "m-b"}},
 			ModelMapping:     domain.ModelMapping{"alias": {MappedModel: "up", Mode: domain.ModelMappingModeExplicit}},
-			UpstreamPaths:    map[string]string{"openai-chat": "v1/chat/completions"},
+			Upstream:         &domain.TemplateUpstream{Paths: map[string]string{"openai-chat": "v1/chat/completions"}},
 		}
 		acc := domain.Account{
 			ID: 7, Name: "acct-7", TemplateID: tpl.ID, UpstreamKey: upstream,

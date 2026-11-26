@@ -211,15 +211,15 @@ func TestProbeCustomPath(t *testing.T) {
 
 	spec := staticSpec(up.URL)
 	spec.CredentialType = credential.TypeCustom
-	spec.UpstreamPaths = map[string]string{string(domain.UpstreamPathChat): "v1/custom/chat?api-version=2024-10-21"}
+	spec.Upstream = &domain.TemplateUpstream{Paths: map[string]string{string(domain.UpstreamPathChat): "v1/custom/chat?api-version=2024-10-21"}}
 	res := newTestProber(t, nil).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 	c := <-got
 	require.Equal(t, "/v1/custom/chat", c.path)
 	require.Equal(t, "api-version=2024-10-21", c.rawQuery)
 
-	// ext 行缺失（service 归为 nil map）→ 回落默认端点。
-	spec.UpstreamPaths = nil
+	// ext 行缺失（service 归为 nil Upstream）→ 回落默认端点。
+	spec.Upstream = nil
 	res = newTestProber(t, nil).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 	c = <-got

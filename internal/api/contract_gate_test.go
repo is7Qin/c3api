@@ -38,7 +38,7 @@ import (
 var selectionFacts = []string{
 	"AccountID", "TemplateID", "BaseURL", "Format", "UpstreamKey",
 	"CredentialType", "Model", "StripImageTools", "SkipContinuation",
-	"UpstreamPaths", "CodexResponsesTransport", "Ext", "CandidateFingerprint",
+	"Upstream", "CodexResponsesTransport", "Ext", "CandidateFingerprint",
 	"Conversation", "CacheDomain", "InstallationID", "ModelMappingMode",
 	"SupplierFinance", "Egress", "ProxyID",
 }

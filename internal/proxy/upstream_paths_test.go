@@ -16,6 +16,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // TestCustomUpstreamPathReachesUpstream custom 模板配置的路径必须真正决定上游
@@ -74,7 +75,7 @@ func TestCustomUpstreamPathReachesUpstream(t *testing.T) {
 
 			tpl := mappingTpl(up.URL, nil)
 			tpl.CredentialType = credential.TypeCustom
-			tpl.UpstreamPaths = tc.paths
+			tpl.Upstream = domain.NewTemplateUpstream(tc.paths, nil)
 			store := &captureLogStore{}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
 
@@ -126,20 +127,26 @@ func TestDefaultTailsAreProtocolFree(t *testing.T) {
 //     写 x 就是 x：/v1 的补全属于内置端点，与自定义路径无关）
 func TestTargetPath(t *testing.T) {
 	require.Equal(t, "/v1/"+defaultPathChat, targetPath(nil, pathKeyChat, defaultPathChat))
-	require.Equal(t, "/v1/"+defaultPathChat, targetPath(&api.Selection{}, pathKeyChat, defaultPathChat), "nil map 回落默认端点")
+	require.Equal(t, "/v1/"+defaultPathChat, targetPath(&api.Selection{}, pathKeyChat, defaultPathChat), "nil Upstream 回落默认端点")
 	require.Equal(t, "/v1/"+defaultPathChat,
-		targetPath(&api.Selection{UpstreamPaths: map[string]string{pathKeyChat: ""}}, pathKeyChat, defaultPathChat), "空值等同未配置")
+		targetPath(&api.Selection{Upstream: &domain.TemplateUpstream{Paths: map[string]string{pathKeyChat: ""}}}, pathKeyChat, defaultPathChat), "空值等同未配置")
+	require.Equal(t, "/v1/"+defaultPathChat,
+		targetPath(&api.Selection{Upstream: &domain.TemplateUpstream{}}, pathKeyChat, defaultPathChat), "空 TemplateUpstream 等同未配置")
 
-	custom := &api.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	custom := &api.Selection{CredentialType: credential.TypeCustom, Upstream: &domain.TemplateUpstream{Paths: map[string]string{pathKeyChat: "v1/x"}}}
 	require.Equal(t, "v1/x", targetPath(custom, pathKeyChat, defaultPathChat), "custom 路径原样透传")
+	// P2：request_patch 与路径同结构体共存，不影响路径解析。
+	require.Equal(t, "v1/x", targetPath(&api.Selection{CredentialType: credential.TypeCustom, Upstream: &domain.TemplateUpstream{
+		Paths: map[string]string{pathKeyChat: "v1/x"}, Patch: &domain.RequestPatch{Headers: map[string]string{"X-A": "1"}},
+	}}, pathKeyChat, defaultPathChat), "带 request_patch 的 Upstream 的路径解析不变")
 
-	customNoV1 := &api.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "acme/chat"}}
+	customNoV1 := &api.Selection{CredentialType: credential.TypeCustom, Upstream: &domain.TemplateUpstream{Paths: map[string]string{pathKeyChat: "acme/chat"}}}
 	require.Equal(t, "acme/chat", targetPath(customNoV1, pathKeyChat, defaultPathChat),
 		"不以 v1/ 开头的自定义路径同样原样透传：补 /v1 只属于内置端点")
 	require.NotEqual(t, "/v1/acme/chat", targetPath(customNoV1, pathKeyChat, defaultPathChat))
 
 	// 非 custom 类型即使快照里残留配置也必须回落默认（防类型切换后打到旧端点）
-	apiKey := &api.Selection{CredentialType: credential.TypeAPIKey, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	apiKey := &api.Selection{CredentialType: credential.TypeAPIKey, Upstream: &domain.TemplateUpstream{Paths: map[string]string{pathKeyChat: "v1/x"}}}
 	require.Equal(t, "/v1/"+defaultPathChat, targetPath(apiKey, pathKeyChat, defaultPathChat), "非 custom 忽略路径")
 }
 

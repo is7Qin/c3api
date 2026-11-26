@@ -10,6 +10,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // benchBody 构造典型非流 chat 请求体（pad 填充 messages 内容以模拟大请求）。
@@ -45,7 +46,7 @@ func BenchmarkDuplicateTopLevelKey(b *testing.B) {
 func BenchmarkTargetPath(b *testing.B) {
 	custom := &api.Selection{
 		CredentialType: credential.TypeCustom,
-		UpstreamPaths:  map[string]string{pathKeyChat: "v1/chat/completions"},
+		Upstream:       &domain.TemplateUpstream{Paths: map[string]string{pathKeyChat: "v1/chat/completions"}},
 	}
 	plain := &api.Selection{CredentialType: credential.TypeAPIKey}
 	b.Run("custom-hit", func(b *testing.B) {

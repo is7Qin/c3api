@@ -157,7 +157,7 @@ func (p *Prober) probeStaticImages(ctx context.Context, spec domain.ProbeSpec) d
 	if spec.ImageMode == domain.ProbeImageModeEdits {
 		key = domain.UpstreamPathImagesEdits
 	}
-	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.UpstreamPaths, key, domain.UpstreamDefaultTail(key))
+	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.Upstream, key, domain.UpstreamDefaultTail(key))
 	// 新 images 格式：只有 200 允许 2 MiB+1（溢出探测），其他 2xx 恰好 2 MiB。
 	hc, err := p.guardedHTTPClient200Only(spec)
 	if err != nil {
@@ -227,7 +227,7 @@ func (p *Prober) probeStaticSearch(ctx context.Context, spec domain.ProbeSpec) d
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
 	key := domain.UpstreamPathSearch
-	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.UpstreamPaths, key, domain.UpstreamDefaultTail(key))
+	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.Upstream, key, domain.UpstreamDefaultTail(key))
 	hc, err := p.guardedHTTPClient200Only(spec)
 	if err != nil {
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}

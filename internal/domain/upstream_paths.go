@@ -92,19 +92,21 @@ func UpstreamPathKeyForFormat(f RequestFormat) (UpstreamPathKey, bool) {
 }
 
 // ResolveUpstreamPath 取该格式最终拼进 URL 的路径（单一实现：proxy 热路径与
-// 探测执行都调用这里）。
+// 探测执行都调用这里）。**nil 安全在唯一实现里**（spec §5.1）：up == nil、
+// up.Paths == nil、非 custom 三种「未配置」形态走同一条默认分支，调用点零判断。
 //
 //   - custom 模板配置了该键 → **原样返回**：自定义路径就是用户对上游路径的完整
 //     表达，这里不做任何补全/改写（"补 /v1" 是内置端点的协议适配，与 custom
 //     无关；要打 /v1/x 就写 v1/x，要打 /x 就写 x）。
-//   - 其余（非 custom，或 custom 未配置该键）→ 内置默认端点："/v1/" + 尾段。
-//     裸根 base_url 下得 base/v1/chat/completions 等，与去 SDK 前逐字节一致。
+//   - 其余（非 custom，或 custom 未配置该键，或 up == nil）→ 内置默认端点：
+//     "/v1/" + 尾段。裸根 base_url 下得 base/v1/chat/completions 等，与去 SDK
+//     前逐字节一致。
 //
 // defaultTail 是调用方持有的默认尾段（proxy 以常量传入，探测以
-// UpstreamDefaultTail(key) 传入）：保留该形参使 proxy 既有调用点与测试零改动。
-func ResolveUpstreamPath(ct credential.Type, paths map[string]string, key UpstreamPathKey, defaultTail string) string {
-	if ct == credential.TypeCustom && paths != nil {
-		if v := paths[string(key)]; v != "" {
+// UpstreamDefaultTail(key) 传入）。
+func ResolveUpstreamPath(ct credential.Type, up *TemplateUpstream, key UpstreamPathKey, defaultTail string) string {
+	if ct == credential.TypeCustom && up != nil && up.Paths != nil {
+		if v := up.Paths[string(key)]; v != "" {
 			return v
 		}
 	}

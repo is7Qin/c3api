@@ -34,7 +34,14 @@ import (
 //	X.Template = …                                                     （账号重绑）
 //
 // `<field>` 不必是白名单里的名字：`X.tpl.F` 要能编译就已经证明 F 是 domain.Template
-// 的字段，所以"两层选择子"本身就是判据。
+// 的字段，所以"经 .tpl/.Template 选择子"本身就是判据。
+//
+// **判据覆盖任意跳数**（P2 / oracle I3）：Template 有 Upstream *TemplateUpstream
+// 之后，写可以落在两层之后——`av.tpl.Upstream.Paths["k"] = …`、
+// `av.tpl.Upstream.Patch = …`、`acc.Template.Upstream = …`。旧判据只看最外两层
+// 选择子（`X.tpl.<field>`），这类两跳写整体漏检；现在沿选择器链自外向内走到根，
+// 只要链上任何一跳是 .tpl/.Template 就判为字段写（写的是它指向/持有的对象）。
+// 反例/正例各一份见 TestTemplateImmutabilityGateRejectsInPlaceWrites。
 //
 // 白名单分两类，**都精确到表达式形态**：
 //
@@ -162,7 +169,9 @@ func mutateView(av *accountView) {
 	av.tpl.Models = nil
 	av.tpl.BaseURL += "x"
 	(*av.tpl).Name = "n"
-	av.tpl.UpstreamPaths["k"] = "v"
+	av.tpl.Upstream.Paths["k"] = "v"
+	av.tpl.Upstream.Patch = nil
+	av.tpl.Upstream = nil
 	av.tpl = nil
 	av.tpl.FormatModels = map[domain.RequestFormat][]string{}
 }
@@ -173,8 +182,21 @@ func mutateAccount(acc *domain.Account) {
 	acc.Template = nil
 }
 
+func mutateAccountTwoHop(acc *domain.Account) {
+	acc.Template.Upstream.Paths["k"] = "v"
+	acc.Template.Upstream = nil
+}
+
+func readOnlyUpstream(av *accountView) *domain.TemplateUpstream {
+	_ = av.tpl.Upstream.Paths["k"]
+	return av.tpl.Upstream
+}
+
 func freshTemplate(t *domain.Template) {
 	t.Models = nil
+	d := &domain.Template{}
+	d.Upstream = &domain.TemplateUpstream{}
+	_ = d.Upstream
 	_ = map[int]string{1: "x"}
 }
 
@@ -193,20 +215,28 @@ func toDomainTemplate(t *domain.Template) *domain.Template {
 	for _, w := range got {
 		byFn[w.fn] = append(byFn[w.fn], w)
 	}
-	require.Len(t, byFn["mutateView"], 6, "视图侧：5 条字段写 + 1 条重绑：%v", got)
+	require.Len(t, byFn["mutateView"], 8,
+		"视图侧：7 条字段写（含 av.tpl.Upstream 两跳写）+ 1 条重绑：%v", got)
 	require.Len(t, byFn["mutateAccount"], 3, "账号侧：2 条字段写 + 1 条重绑：%v", got)
+	require.Len(t, byFn["mutateAccountTwoHop"], 2,
+		"账号侧两跳写（acc.Template.Upstream…）必须被认出：%v", got)
 	require.NotContains(t, byFn, "freshTemplate",
 		"新鲜模板的字段赋值不是别名写（构造，不是改写）；无关 map 字面量也不得误报：%v", got)
 	require.NotContains(t, byFn, "toDomainTemplate",
 		"工厂对本地新建模板的直写（d.<field>）是构造，不是别名写，不得误报：%v", got)
+	require.NotContains(t, byFn, "readOnlyUpstream",
+		"只读 av.tpl.Upstream（含索引读）不是写，不得误报：%v", got)
 
 	kinds := map[string]int{}
 	for _, w := range got {
 		kinds[w.kind]++
 	}
-	require.Equal(t, 7, kinds["field-write"], "字段写计数：%v", got)
+	require.Equal(t, 11, kinds["field-write"], "字段写计数：%v", got)
 	require.Equal(t, 2, kinds["rebind"], "重绑计数：%v", got)
-	for _, want := range []string{"av.tpl.Models", "(*av.tpl).Name", "av.tpl.UpstreamPaths", "acc.Template.Models"} {
+	for _, want := range []string{
+		"av.tpl.Models", "(*av.tpl).Name", "av.tpl.Upstream", "av.tpl.Upstream.Paths",
+		"av.tpl.Upstream.Patch", "acc.Template.Models", "acc.Template.Upstream.Paths",
+	} {
 		require.Contains(t, joinTemplateWrites(got), want, "写目标必须被渲染出来便于定位：%v", got)
 	}
 
@@ -276,6 +306,39 @@ func freshAccount(tpl *domain.Template) *domain.Account {
 	require.NotContains(t, factoryRendered, "d.Template.Models", "字段写豁免内的 X.Template.<field> 必须绿：%v", factoryRendered)
 	require.Contains(t, factoryRendered, "freshAccount rebind Template d.Template", "重绑豁免与字段写豁免互不顶替：%v", factoryRendered)
 	require.Contains(t, factoryRendered, "d.tpl", "`.tpl` 视图写永不被豁免，即使同函数登记了字段写：%v", factoryRendered)
+	// P2 两跳写（oracle I3）的**红/绿各一次**：旧判据只看外两层选择子，
+	// av.tpl.Upstream.Paths[...] / av.tpl.Upstream.Patch 会整体漏检；现在链上
+	// 任意一跳 .tpl/.Template 即命中（红），而同一指针的只读不报（绿）。
+	const twoHopFixture = `package scheduler
+
+func twoHopWrite(av *accountView) {
+	av.tpl.Upstream.Paths["k"] = "v"
+	av.tpl.Upstream.Patch = nil
+	av.tpl.Upstream = nil
+}
+
+func twoHopRead(av *accountView) *domain.TemplateUpstream {
+	_ = av.tpl.Upstream.Paths["k"]
+	return av.tpl.Upstream
+}
+`
+	fset4 := token.NewFileSet()
+	f4, err := parser.ParseFile(fset4, "internal/scheduler/twohop.go", twoHopFixture, parser.SkipObjectResolution)
+	require.NoError(t, err)
+	twoHopHits := scanTemplateWrites("internal/scheduler/twohop.go", fset4, f4)
+	byFn4 := map[string]int{}
+	for _, w := range twoHopHits {
+		byFn4[w.fn]++
+	}
+	require.Equal(t, 3, byFn4["twoHopWrite"],
+		"两跳写必须被认出（旧判据会漏成 0）：%v", twoHopHits)
+	require.NotContains(t, byFn4, "twoHopRead", "只读 Upstream（含索引读）不是写：%v", twoHopHits)
+	// `.tpl` 视图上的写永不被豁免（视图不拥有模板）⇒ 过滤后必须仍是非空违规。
+	twoHopOffending := filterExemptedTemplateWrites(twoHopHits, templateWrites, "internal/scheduler/twohop.go")
+	require.Len(t, twoHopOffending, 3,
+		"非 _test 文件里的两跳写必须红（可执行门禁；旧判据在这里会是 0 条）：%v", twoHopOffending)
+	require.Contains(t, joinTemplateWrites(twoHopOffending), "av.tpl.Upstream.Paths[]",
+		"两跳索引写的目标必须被渲染出来便于定位：%v", twoHopOffending)
 }
 
 // gateRepoRoot 由本文件的路径反推仓库根（internal/repository/ 上两级）。
@@ -362,17 +425,37 @@ func scanTemplateWrites(fileRel string, fset *token.FileSet, f *ast.File) []temp
 
 // templateWriteKind 判定 e 是不是"通过 .tpl / .Template 选择子"的写目标，并区分
 // 表达式形态（字段写 vs 重绑）与视图（tpl vs Template）。
+//
+// 判据沿**选择器链自外向内**走到根（任意跳数）：Template 有 Upstream 指针之后，
+// 写可以落在两跳之后（av.tpl.Upstream.Paths["k"] = … / av.tpl.Upstream.Patch = …）。
+// 旧实现只看"外两层选择子"，这类两跳写漏检（oracle I3）。新判据：
+//   - 写目标**本身**是 .tpl/.Template ⇒ 整视图重绑；
+//   - 链上任意一跳是 .tpl/.Template ⇒ 经视图写它指向/持有的对象 ⇒ 字段写。
+//
+// 只认这两个名字、不按类型做数据流分析：与旧判据同一前提（能编译就证明字段存在），
+// 别名逃逸（t := av.tpl; t.Models = …）依旧不在语法判据内（见文件头边界）。
 func templateWriteKind(e ast.Expr) (kind, view string, ok bool) {
 	sel, ok := stripWriteTarget(e).(*ast.SelectorExpr)
 	if !ok {
 		return "", "", false
 	}
-	if inner, ok := stripWriteTarget(sel.X).(*ast.SelectorExpr); ok &&
-		(inner.Sel.Name == "tpl" || inner.Sel.Name == "Template") {
-		return "field-write", inner.Sel.Name, true
+	// 链 = 写目标选择器 + 全部内层选择器（最外层在 [0]，根方向递增）。
+	chain := []*ast.SelectorExpr{sel}
+	for {
+		inner, ok := stripWriteTarget(sel.X).(*ast.SelectorExpr)
+		if !ok {
+			break
+		}
+		sel = inner
+		chain = append(chain, inner)
 	}
-	if sel.Sel.Name == "tpl" || sel.Sel.Name == "Template" {
-		return "rebind", sel.Sel.Name, true
+	if n := chain[0].Sel.Name; n == "tpl" || n == "Template" {
+		return "rebind", n, true
+	}
+	for _, s := range chain[1:] {
+		if n := s.Sel.Name; n == "tpl" || n == "Template" {
+			return "field-write", n, true
+		}
 	}
 	return "", "", false
 }

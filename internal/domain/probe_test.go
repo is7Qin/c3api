@@ -34,16 +34,30 @@ func TestResolveUpstreamPath(t *testing.T) {
 		require.False(t, len(tc.tail) > 2 && tc.tail[:3] == "v1/", "默认尾段不得含 v1 协议段")
 		require.NotEqual(t, '/', tc.tail[0], "默认尾段不得带前导斜杠")
 
-		// 非 custom：即使 map 里残留配置也回落内置端点。
+		paths := func(v string) *domain.TemplateUpstream {
+			return &domain.TemplateUpstream{Paths: map[string]string{string(tc.key): v}}
+		}
+		// 非 custom：即使快照里残留配置也回落内置端点。
 		require.Equal(t, "/v1/"+tc.tail,
-			domain.ResolveUpstreamPath(credential.TypeAPIKey, map[string]string{string(tc.key): "v1/x"}, tc.key, tc.tail),
+			domain.ResolveUpstreamPath(credential.TypeAPIKey, paths("v1/x"), tc.key, tc.tail),
 			"非 custom 必须忽略自定义路径")
 		require.Equal(t, "/v1/"+tc.tail,
-			domain.ResolveUpstreamPath(credential.TypeCustom, map[string]string{string(tc.key): ""}, tc.key, tc.tail),
+			domain.ResolveUpstreamPath(credential.TypeCustom, paths(""), tc.key, tc.tail),
 			"空值等同未配置")
+		// nil 安全在唯一实现里（spec §5.1）：nil TemplateUpstream / nil Paths /
+		// 非 custom 三种「未配置」形态都走默认分支，调用点零判断。
+		require.Equal(t, "/v1/"+tc.tail,
+			domain.ResolveUpstreamPath(credential.TypeCustom, nil, tc.key, tc.tail),
+			"nil TemplateUpstream 必须 nil 安全（custom 未配置 ext）")
+		require.Equal(t, "/v1/"+tc.tail,
+			domain.ResolveUpstreamPath(credential.TypeCustom, &domain.TemplateUpstream{Patch: &domain.RequestPatch{Headers: map[string]string{"X-A": "1"}}}, tc.key, tc.tail),
+			"只有 request_patch、无 Paths 时必须回落默认端点")
+		require.Equal(t, "/v1/"+tc.tail,
+			domain.ResolveUpstreamPath(credential.TypeAPIKey, nil, tc.key, tc.tail),
+			"非 custom + nil Upstream 不得 panic")
 		// custom：原样透传（不补 /v1、不改写）。
 		require.Equal(t, "v1/x",
-			domain.ResolveUpstreamPath(credential.TypeCustom, map[string]string{string(tc.key): "v1/x"}, tc.key, tc.tail))
+			domain.ResolveUpstreamPath(credential.TypeCustom, paths("v1/x"), tc.key, tc.tail))
 	}
 
 	for key, want := range map[string]domain.RequestFormat{

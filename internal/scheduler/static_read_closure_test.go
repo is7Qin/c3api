@@ -156,15 +156,18 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.Ext.CodexOAuthExpiresAt":    {staticPathField, "payloadDigest"},
 
 	// --- 模板侧源字段（候选指纹 I 不覆盖的那些） ---
-	"$S.tpl.ID":                      {staticPathField, "templateID"}, // 与 $S.acc.TemplateID 同源：加载器按 template_id 联结，键用账号侧拼写覆盖同一事实
-	"$S.tpl.BaseURL":                 {staticPathField, "baseURL"},
-	"$S.tpl.CredentialType":          {staticPathField, "credentialType"},
-	"$S.tpl.StripImageTools":         {staticPathField, "stripImageTools"},
-	"$S.tpl.Models":                  {staticPathField, "modelsDigest"},
-	"$S.tpl.FormatModels":            {staticPathField, "formatModelsKey"},
-	"$S.tpl.SupportedFormats":        {staticPathField, "supportedFormats"},
-	"$S.tpl.ModelMapping":            {staticPathField, "modelMappingKey"},
-	"$S.tpl.UpstreamPaths":           {staticPathField, "upstreamPathsKey"},
+	"$S.tpl.ID":               {staticPathField, "templateID"}, // 与 $S.acc.TemplateID 同源：加载器按 template_id 联结，键用账号侧拼写覆盖同一事实
+	"$S.tpl.BaseURL":          {staticPathField, "baseURL"},
+	"$S.tpl.CredentialType":   {staticPathField, "credentialType"},
+	"$S.tpl.StripImageTools":  {staticPathField, "stripImageTools"},
+	"$S.tpl.Models":           {staticPathField, "modelsDigest"},
+	"$S.tpl.FormatModels":     {staticPathField, "formatModelsKey"},
+	"$S.tpl.SupportedFormats": {staticPathField, "supportedFormats"},
+	"$S.tpl.ModelMapping":     {staticPathField, "modelMappingKey"},
+	// TemplateUpstream 整体（Paths + request_patch）在唯一构造函数里作为一个
+	// 指针交给 digestTemplateUpstream：摘要是**读回值**的函数（§17.2），内部
+	// 再读 up.Paths/up.Patch 属于纯函数形参、不是快照字段读，不产生 $S 路径。
+	"$S.tpl.Upstream":                {staticPathField, "upstreamPathsKey"},
 	"$S.tpl.CodexResponsesTransport": {staticPathField, "codexResponsesTransport"},
 
 	// --- 组归属 ---

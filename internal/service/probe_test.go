@@ -461,7 +461,7 @@ func TestProbeCustomExtMissing(t *testing.T) {
 	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
 	require.NoError(t, err)
 	require.True(t, res.Success)
-	require.Nil(t, prober.spec.UpstreamPaths, "ext 行缺失必须视为空覆盖")
+	require.Nil(t, prober.spec.Upstream, "ext 行缺失必须视为未配置")
 
 	// 非 NotFound 的读错误 → 500（原样上抛，由 httpface 默认分支映射）。
 	storeErr := errors.New("template ext read failed")
@@ -473,15 +473,20 @@ func TestProbeCustomExtMissing(t *testing.T) {
 }
 
 // TestProbeCustomExtWiring A21：custom ext 存在时 Prober 收到 override；ext 行
-// 缺失（ErrNotFound）→ UpstreamPaths 为空且不报错。
+// 缺失（ErrNotFound）→ Upstream 为 nil 且不报错。
+//
+// P2：路径与 request_patch 装进同一个 domain.TemplateUpstream（同源同门，
+// spec custom-request-patch §5.3）——service 必须把两者一起交给 Prober；
+// Patch 是 P5 数据面消费的输入，P2 只证明快照面装填正确。
 func TestProbeCustomExtWiring(t *testing.T) {
 	tpl := staticProbeTemplate()
 	tpl.CredentialType = credential.TypeCustom
 	acc := probeAccountFor(tpl)
 	override := map[string]string{string(domain.UpstreamPathChat): "v1/custom/chat?api-version=2024-10-21"}
+	patch := &domain.RequestPatch{Headers: map[string]string{"X-Call-Source": "probe"}}
 	store := &probeReadOnlyStore{
 		acc: acc,
-		ext: &domain.TemplateExt{TemplateID: tpl.ID, UpstreamPaths: override},
+		ext: &domain.TemplateExt{TemplateID: tpl.ID, UpstreamPaths: override, RequestPatch: patch},
 	}
 	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
 	svc := newProbeSvc(store, prober, nil)
@@ -490,15 +495,18 @@ func TestProbeCustomExtWiring(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, res.Success)
 	require.Equal(t, 1, prober.calls)
-	require.Equal(t, override, prober.spec.UpstreamPaths, "custom ext 存在时必须把 override 交给 Prober")
+	require.NotNil(t, prober.spec.Upstream, "custom ext 存在时必须把 TemplateUpstream 交给 Prober")
+	require.Equal(t, override, prober.spec.Upstream.Paths, "custom ext 存在时必须把 override 交给 Prober")
+	require.Same(t, patch, prober.spec.Upstream.Patch,
+		"request_patch 与路径必须同源同门交给探测执行（P5 数据面消费；P2 只证明装填）")
 
-	// ext 行缺失 → 空覆盖（nil/empty）且无错误。
+	// ext 行缺失 → 未配置（nil）且无错误。
 	store.ext = nil
 	res, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
 	require.NoError(t, err)
 	require.True(t, res.Success)
 	require.Equal(t, 2, prober.calls)
-	require.Empty(t, prober.spec.UpstreamPaths, "ext 行缺失必须视为空覆盖")
+	require.Nil(t, prober.spec.Upstream, "ext 行缺失必须视为未配置")
 }
 
 // TestProbeNoUpstreamTextLeakLog A19：service 日志同样只含固定分类文案；上游

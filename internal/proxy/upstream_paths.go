@@ -30,15 +30,16 @@ const (
 	defaultPathImagesEdits = domain.UpstreamDefaultTailImagesEdits
 )
 
-// targetPath 取该格式最终拼进 URL 的路径（热路径：一次 map 读 + 常量回落，
-// 不查 DB、不加锁、不复制 map；配置 map 在快照内不可变，此处只读）。语义与
-// 判定全部在 domain.ResolveUpstreamPath（含 custom 原样透传/非 custom 回落默认
-// 的唯一实现），本函数只做 Selection → 参数的搬运。
+// targetPath 取该格式最终拼进 URL 的路径（热路径：一次指针 + map 读 + 常量回落，
+// 不查 DB、不加锁、不复制 map；配置 map 在快照内不可变，此处只读）。语义与判定
+// 全部在 domain.ResolveUpstreamPath（含 custom 原样透传/非 custom 回落默认与
+// nil 安全 的**唯一实现**），本函数只做 Selection → 参数的搬运：nil Selection、
+// 非 custom、Upstream 为 nil/空 三种情况都走同一条默认分支，这里零判断。
 func targetPath(sel *api.Selection, key, tail string) string {
 	if sel == nil {
 		return domain.ResolveUpstreamPath("", nil, domain.UpstreamPathKey(key), tail)
 	}
-	return domain.ResolveUpstreamPath(sel.CredentialType, sel.UpstreamPaths, domain.UpstreamPathKey(key), tail)
+	return domain.ResolveUpstreamPath(sel.CredentialType, sel.Upstream, domain.UpstreamPathKey(key), tail)
 }
 
 // anthropicStreamingRequiredText anthropic-sdk-go v1.76.0 client.go:316 的原文。

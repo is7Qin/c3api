@@ -264,7 +264,7 @@ func TestFactsDigestInvariance(t *testing.T) {
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 			FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIResponses: {"m-a"}},
 			ModelMapping:     domain.ModelMapping{"a": {MappedModel: "b", Mode: domain.ModelMappingModeExplicit}},
-			UpstreamPaths:    map[string]string{"responses": "v1/responses"},
+			Upstream:         &domain.TemplateUpstream{Paths: map[string]string{"responses": "v1/responses"}},
 		}
 		pat := "pat-A"
 		a := domain.Account{
@@ -318,7 +318,7 @@ func TestFactsDigestInvariance(t *testing.T) {
 			tpl.SupportedFormats = []domain.RequestFormat{domain.FormatOpenAIChat}
 		}},
 		{"modelMappingKey", func(_ *domain.Account, tpl *domain.Template, _ *[]int64) { tpl.ModelMapping = nil }},
-		{"upstreamPathsKey", func(_ *domain.Account, tpl *domain.Template, _ *[]int64) { tpl.UpstreamPaths = nil }},
+		{"upstreamPathsKey", func(_ *domain.Account, tpl *domain.Template, _ *[]int64) { tpl.Upstream = nil }},
 		{"codexResponsesTransport", func(_ *domain.Account, tpl *domain.Template, _ *[]int64) {
 			tpl.CodexResponsesTransport = domain.CodexResponsesTransportWS
 		}},

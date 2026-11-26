@@ -163,10 +163,10 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		baseURL = *acc.BaseURL
 	}
 
-	// 模板扩展只有 custom 的 upstream_paths 与探测相关；account 读取不 JOIN ext，
-	// 因此单独读一次。ext 行缺失（repository.ErrNotFound）= 未配置（回落默认
-	// 路径），其他错误才 500。
-	var upstreamPaths map[string]string
+	// 模板扩展只有 custom 的 upstream（路径 + request_patch，同一结构体）与探测
+	// 相关；account 读取不 JOIN ext，因此单独读一次。ext 行缺失
+	// （repository.ErrNotFound）= 未配置（回落默认路径），其他错误才 500。
+	var upstream *domain.TemplateUpstream
 	if tpl.CredentialType == credential.TypeCustom {
 		ext, xerr := s.store.GetTemplateExt(pctx, tpl.ID)
 		// ext 的 ErrNotFound/其它错误同样不能掩盖已过期期限。
@@ -176,7 +176,9 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		switch {
 		case xerr == nil:
 			if ext != nil {
-				upstreamPaths = ext.UpstreamPaths
+				// 与快照 mapping 共用唯一装配入口（Paths/Patch 同源同门，
+				// 空 ⇒ nil）——探测不能自己手搓结构体。
+				upstream = domain.NewTemplateUpstream(ext.UpstreamPaths, ext.RequestPatch)
 			}
 		case errors.Is(xerr, repository.ErrNotFound):
 			// 无 ext 行 = 未配置。
@@ -336,7 +338,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		RequestedModel: model,
 		UpstreamModel:  upstreamModel,
 		BaseURL:        baseURL,
-		UpstreamPaths:  upstreamPaths,
+		Upstream:       upstream,
 		Credential:     token,
 		CodexAccountID: codexAccountID,
 		Egress:         egressSpec,
