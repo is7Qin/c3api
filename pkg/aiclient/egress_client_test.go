@@ -28,22 +28,22 @@ func TestRawPostRejectsNilEgressClient(t *testing.T) {
 	ctx := context.Background()
 	body := []byte(`{}`)
 
-	_, err := f.RawPost(ctx, 1, "http://127.0.0.1:1", "/v1/x", "Authorization", "Bearer k", body, nil, nil)
+	_, err := f.RawPost(ctx, 1, "http://127.0.0.1:1", "/v1/x", "Authorization", "Bearer k", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "RawPost: 缺出口 client 必须报契约错")
 
-	_, err = f.ChatCompletionRaw(ctx, 1, "http://127.0.0.1:1", "/v1/chat/completions", "k", body, nil, nil)
+	_, err = f.ChatCompletionRaw(ctx, 1, "http://127.0.0.1:1", "/v1/chat/completions", "k", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "ChatCompletionRaw: 缺出口 client 必须报契约错")
 
-	_, err = f.ResponseRaw(ctx, 1, "http://127.0.0.1:1", "/v1/responses", "k", body, nil, nil)
+	_, err = f.ResponseRaw(ctx, 1, "http://127.0.0.1:1", "/v1/responses", "k", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "ResponseRaw: 缺出口 client 必须报契约错")
 
-	_, err = f.SearchRaw(ctx, 1, "http://127.0.0.1:1", "/v1/alpha/search", "k", body, nil, nil)
+	_, err = f.SearchRaw(ctx, 1, "http://127.0.0.1:1", "/v1/alpha/search", "k", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "SearchRaw: 缺出口 client 必须报契约错")
 
-	_, err = f.AnthMessageRaw(ctx, 1, "http://127.0.0.1:1", "/v1/messages", "k", body, nil, nil)
+	_, err = f.AnthMessageRaw(ctx, 1, "http://127.0.0.1:1", "/v1/messages", "k", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "AnthMessageRaw: 缺出口 client 必须报契约错")
 
-	_, err = f.ImagesRaw(ctx, 1, "http://127.0.0.1:1", "/v1/images/generations", "k", "", body, nil, nil)
+	_, err = f.ImagesRaw(ctx, 1, "http://127.0.0.1:1", "/v1/images/generations", "k", "", body, nil, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient, "ImagesRaw: 缺出口 client 必须报契约错")
 }
 
@@ -52,7 +52,7 @@ func TestRawPostRejectsNilEgressClient(t *testing.T) {
 // 绑了代理的账号从本机 IP 拨号）。
 func TestResponsesWSDialRejectsNilEgressClient(t *testing.T) {
 	f := NewFactory(nil, Config{})
-	conn, resp, err := f.ResponsesWSDial(context.Background(), 1, "http://127.0.0.1:1", "/v1/responses", "k", http.Header{}, nil)
+	conn, resp, err := f.ResponsesWSDial(context.Background(), 1, "http://127.0.0.1:1", "/v1/responses", "k", http.Header{}, nil, nil)
 	require.ErrorIs(t, err, errNilEgressClient)
 	require.Nil(t, conn)
 	require.Nil(t, resp)
@@ -63,7 +63,7 @@ func TestResponsesWSDialRejectsNilEgressClient(t *testing.T) {
 func TestNilEgressClientIsNotPanic(t *testing.T) {
 	f := NewFactory(nil, Config{})
 	require.NotPanics(t, func() {
-		_, err := f.ChatCompletionRaw(context.Background(), 1, "http://127.0.0.1:1", "/p", "k", nil, nil, nil)
+		_, err := f.ChatCompletionRaw(context.Background(), 1, "http://127.0.0.1:1", "/p", "k", nil, nil, nil, nil)
 		require.True(t, errors.Is(err, errNilEgressClient))
 		require.Equal(t, "aiclient: nil egress client", err.Error())
 	})

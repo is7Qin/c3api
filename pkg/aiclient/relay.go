@@ -31,6 +31,14 @@ import (
 // 表：透传后上游回 gzip 裸流，setModel/usage 抽取/model 重写会静默拿到压缩
 // 字节 = 漏计费。
 //
+// ⚠ 两条不同的边界，别读成同一份清单（spec custom-request-patch §8）：
+//   - **入站**客户端头的 Accept-Encoding 由本 deny 表剔除（上面这条）；
+//   - **模板配置面**（custom 模板 request_patch）的出站 Accept-Encoding 由保存期
+//     400（domain.ParseRequestPatch 规范形比较）+ 运行期兜底（proxy 装饰器跳过、
+//     rawPostCT 装饰后 Del）保证。patch 是可信配置面、执行在 relayDeny **之后**，
+//     它不受本表约束，但响应编码不变量独立成立——不变量本体是「上游响应必须是
+//     明文」，不是「这份清单必须覆盖它」。
+//
 // 入站足迹类（spec §10，2026-09-16 增补）：这些头描述**入站**这条链——对端是谁、
 // 原始 host/scheme 是什么、沿途经过哪些节点——而出站的对端是网关自己、URL 还被
 // 重写。判据与 Host 同源，属结构判据而非语义级例外。关键事实：网关**不像正常

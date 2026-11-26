@@ -44,7 +44,12 @@ func AcceptResponsesWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn,
 // 它——`DialOptions.HTTPClient` 的 `Transport.Proxy` 是代理唯一的注入点
 // （coder/websocket 的握手走 `HTTPClient.Do`）。空值是跨包契约违例（同 rawPostCT
 // 的唯一防御点）：返回 errNilEgressClient，不 panic、不静默退回底座。
-func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, path, key string, header http.Header, hc *http.Client) (*websocket.Conn, *http.Response, error) {
+//
+// decorate 是 request_patch 的 WS 握手装饰缝（spec §7.2，P4 消费）：在网关的
+// Authorization / Responses-Websockets 之后调用，可改 DialOptions.HTTPHeader 与
+// DialOptions.Host（coder/websocket 仅在 Host 非空时覆盖）；nil = 快路径。
+// P3 只加参数，所有调用点显式传 nil（WS 帧 hook 是 P4）。
+func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, path, key string, header http.Header, hc *http.Client, decorate func(*websocket.DialOptions)) (*websocket.Conn, *http.Response, error) {
 	if hc == nil {
 		return nil, nil, errNilEgressClient
 	}
@@ -54,9 +59,13 @@ func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL
 	}
 	header.Set("Authorization", "Bearer "+key)
 	header.Set("Responses-Websockets", ResponsesWSBetaHeader)
-	return websocket.Dial(ctx, full.String(), &websocket.DialOptions{
+	opts := &websocket.DialOptions{
 		HTTPClient:      hc,
 		HTTPHeader:      header,
 		CompressionMode: websocket.CompressionContextTakeover,
-	})
+	}
+	if decorate != nil {
+		decorate(opts)
+	}
+	return websocket.Dial(ctx, full.String(), opts)
 }

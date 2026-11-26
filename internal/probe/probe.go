@@ -137,13 +137,17 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 		resp *http.Response
 		call error
 	)
+	// TODO(P5): probe 数据面——三处 decorate 实参由 P5 接线（headerDecorator 同款
+	// 语义，key 来源 spec.Credential 原值）并叠加 bodyPatch（payload 之后）。P3
+	// 阶段边界内显式传 nil；aiclient 签名已就位，AST 门禁把 probe 列为 pending
+	// （P5 接手时删 pending 条目并改为非 nil）。
 	switch spec.Format {
 	case domain.FormatOpenAIChat:
-		resp, call = p.factory.ChatCompletionRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc)
+		resp, call = p.factory.ChatCompletionRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
 	case domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS:
-		resp, call = p.factory.ResponseRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc)
+		resp, call = p.factory.ResponseRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
 	case domain.FormatAnthropic:
-		resp, call = p.factory.AnthMessageRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc)
+		resp, call = p.factory.AnthMessageRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
 	default:
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
