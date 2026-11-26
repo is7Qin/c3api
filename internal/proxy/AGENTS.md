@@ -26,6 +26,7 @@
   进程级计数 `convLocalRejects`）。
 - 续接：`continuation.go`（`contResolve` / `contPin` / `contEnqueue` / `contBind`）、
   `continuation_bind.go`（`ContBindWorker` 异步批量绑定）、`ws_relay.go`（WS 同步 ACK 闸门）。
+- 出站请求修饰（custom 模板 `request_patch`）：`request_patch.go` 的 `patchOf` / `headerDecorator` / `bodyPatch` / `wsHeaderDecorator` / `wsClientFrameHook`；头判据 HTTP 与 WS 握手共用 `applyPatchHeaders`，body 执行器在 `internal/domain`。
 - 常驻 worker：`ContBindWorker`（`cont-bind`）、`ConversationWorker`
   （`codex_conversation_worker.go`，`codex-conversation`）。
 
@@ -84,6 +85,7 @@
 - 客户端断连记 499，不进 failover 分类；上游错误原文不透给客户端；Codex WS 面不喂任何
   客户端头（握手头只来自 SDK）；客户端会话类头与体中的对话标识、`client_metadata` 不出网
   （`TestCodexClientIdentityNeverEgress`）。
+- **request_patch 接线顺序与零成本**（custom 模板出站修饰，spec `custom-request-patch`）：头装饰器在 aiclient 全部网关默认头之后执行，`bodyPatch` 严格在既有 body 变换（setModel / stripTier / 协议转换 / stripImageTools）之后、真正出网之前；WS 握手装饰在 Authorization / Responses-Websockets 之后，静态车道首帧只经 `relayWS` 写出、`clientFrameHook` 只 patch 客户端 `response.create` 帧（cancel 等控制帧字节不变）。无配置 helper 一律返回 nil/原切片（零闭包、零解析、零分配）；failover 每 attempt 重算（`{api_key}` 换号换值）。日志纪律：成功零 patch 日志；body sjson 残余失败固定文案限频 WARN（按 template_id+format，进程内 sync.Map，不打印 path/value/body、无计数器）；`{api_key}` 展开值与上游回显 key 在 err_logs/attempt_logs 落库前精确替换 `[redacted]`（客户端 4xx 原文面保持既有契约，不脱敏）。出站调用点由 `egress_call_sites_gate_test.go`（aiclient 方法枚举 + 11 出站 + 4 rawJSON 计数、nil 白名单为空集）与 `relayws_call_sites_gate_test.go`（生产 3 处）机械钉住，新增/删除调用点必须同步。
 - 测试：只用 require；禁 `t.Parallel`、禁 `time.Sleep`（用屏障或可确定观测，例如未 Start
   的 `ContBindWorker` 的 `Queued()`、会话簿存储替身的 SaveTurns channel）。
 

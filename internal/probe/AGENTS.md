@@ -21,6 +21,7 @@ latency_ms / status_code / 回显 model / 固定分类 error + 有限错误码 d
   （文本四格式）、`sdkbridge.GenerateImageOnce`（images）、`sdkbridge.SearchOnce`
   （search）；只搬运 SDK 机制。请求体、200 body 读取、SSE 终态、成功判定与预览
   全部在本包。**不走**生产 `sdkbridge.Codex` 条目/Auth/失败回调/轮转。
+- custom 模板的静态 key 族同时消费模板 `request_patch`（spec `custom-request-patch` §7.3）：`ProbeSpec.Upstream` 由 service 与逐格式路径同一处装填；5 个 factory 调用（`probe.go` 的 `ChatCompletionRaw`/`ResponseRaw`/`AnthMessageRaw` + `content.go` 的 `ImagesRaw`/`SearchRaw`）都带与 proxy 相同的头装饰器，body patch 在既有合成体之后、出站之前应用（复用唯一执行器 `domain.ApplyRequestBodyPatch`，不在本包复制判据）。格式键映射与上游路径同键（`openai-responses-ws` 探测实际走 HTTP responses 语义但键与 path 一致）；images 按 `ProbeSpec.ImageMode` 取 `openai-images.generations` / `.edits`，edits multipart **只注入头**（非 JSON 结构性跳过）；`{api_key}` 用 `ProbeSpec.Credential` 原始裸 key 展开。
 - 不落库、不计费、不改账号状态、不进调度/规则/失败统计。
 
 ## 格式与输入（account-probe-content）
@@ -133,6 +134,7 @@ latency_ms / status_code / 回显 model / 固定分类 error + 有限错误码 d
 13. **codex 新格式结论顺序**：ctx 取消/到期 > `ErrBodyTooLarge` > (status != 0
     且 err != nil → 按真实 HTTP 状态分类) > 传输分类（status=0）。201/204/206
     必须报 `upstream error` 而不是 `probe request failed`。
+14. **request_patch 不改变探测结论语义**：patch 只改出站头/体，探测的成功判定、固定分类词表、预览抽取与脱敏、错误不回显上游原文全部不变；`{api_key}` 值不进入结果/日志；images edits 的 multipart 只头不改 body。origin 锁定、不跟随重定向、2 MiB/8 MiB 上限、期限/准入边界均不受 patch 影响。
 
 ## 验证
 

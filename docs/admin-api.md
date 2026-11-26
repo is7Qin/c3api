@@ -201,7 +201,67 @@
 > 校验：路径先 trim、剥至多一个前导 `/`、限长 1..1024，再过白名单（拒 `\`、`;`、`#`、`@`、空格、控制字符、空段、`.`/`..` 段）；归一后的值落库，避免出现 `/v1/v1/...`。
 > 键必须属于上面 7 个之一。**键与 `supported_formats` 不联动**：收窄格式不会删除已存的键，它们成为死配置（对应格式不再被路由），重新放宽后自动生效，也不会让保存失败——控制台保存时原样带回这些键。
 
-> 模板变更（含 base_url / supported_formats / format_models / model_mapping / upstream_paths）通过 invalidate 回调即时生效于调度器快照（无需重启）。非流请求由网关自己直发上游、不再经厂商 SDK 客户端；流式与 WS 仍走客户端工厂，同样随 invalidate 重建。
+> 模板变更（含 base_url / supported_formats / format_models / model_mapping / upstream_paths / request_patch）通过 invalidate 回调即时生效于调度器快照（无需重启）。非流请求由网关自己直发上游、不再经厂商 SDK 客户端；流式与 WS 仍走客户端工厂，同样随 invalidate 重建。
+
+### 出站请求修饰器 request_patch（custom 专用）
+
+`template_exts.request_patch` 是 `custom` 模板的**出站请求修饰器**：在网关把请求构造完成、真正出网之前的最后一步，按模板配置覆盖/新增/删除 HTTP 头，并对 JSON 请求体执行 path 级 `set` / `delete`。HTTP 六个出站面（含协议转换车道、images、search）、Responses WS（握手头 + `response.create` 帧体）与单账号探测（probe）共用同一领域对象、同一执行器与同一套语义；与 `upstream_paths` 一样，只在 `credential_type=custom` 时生效；codex / BPS 的 SDK 车道不消费（无 custom 配置）。
+
+**配置形状（PUT body 的 `request_patch` 字段；GET 原样回显）：**
+
+```json
+{
+  "headers": {
+    "User-Agent": "vibe-code/1.0",
+    "x-call-source": "vibe_code",
+    "Authorization": "Bearer {api_key}"
+  },
+  "formats": {
+    "openai-responses": {
+      "headers": { "OpenAI-Beta": "responses=v2" },
+      "set": { "metadata.call_source": "vibe_code", "max_output_tokens": 4096 },
+      "delete": [ "metadata.client_field" ]
+    },
+    "anthropic": { "set": { "metadata.user_id": "vibe_code" } }
+  }
+}
+```
+
+| 字段 | 语义 |
+|---|---|
+| `headers` | 全局层头：键为 HTTP 头名；值非空 = Set（覆盖网关默认与客户端同名头），值 `""` = Del（删除该头） |
+| `formats` | 格式层：键 ∈ 七键（与 `upstream_paths` 同一词汇）`openai-chat` / `openai-responses` / `openai-responses-ws` / `anthropic` / `openai-search` / `openai-images.generations` / `openai-images.edits`；未知键 400 |
+| `formats.<key>.headers` | 格式层头：逐键覆盖全局层；值 `""` = Del（可覆盖全局层的 Set） |
+| `formats.<key>.set` | gjson path → 任意 JSON 值（如 `metadata.call_source`、`input.0.content`、`tools.-1`） |
+| `formats.<key>.delete` | gjson path 列表；解析期去重、执行期按 path 排序 |
+
+**语义要点**
+
+- 两层头：全局层 → 格式层逐键覆盖；同一层内归一后同名（`X-A` / `x-a`）是歧义配置 ⇒ 400；跨层同名不是歧义（格式层覆盖全局层）。
+- 头名先按 `http.CanonicalHeaderKey` 归一（保存期存规范形，重启后的所有比较也按规范形）；值卫生由 `pkg/headervalid.ValidHeaderValue`（全仓单源）判定：TAB 放行，CR/LF/NUL/DEL 等其他控制字节 400。
+- **Host 是特例**：只改 Host 请求头（HTTP 写 `req.Host`，WS 写握手 `DialOptions.Host`），不改 TLS SNI、连接目标与证书校验——上游可据此路由到另一虚拟主机，属配置面责任；空值 = 回落 URL.Host。
+- **`{api_key}` 占位符**：仅 header 值支持（全局层与格式层均可、可多次），出网前用当次 attempt 的账号上游 key 原值替换；配置只存占位符，**GET 原样回显占位符**（不替换/不掩码）；body 值不做替换（字面量）。其他 `{...}` 原样保留，没有转义机制。
+- body：只对 JSON 对象/数组生效；执行顺序 `delete`（路径排序）→ `set`（路径排序），同一 path 同时出现时 `set` 胜；非 JSON body（如 images edits 的 multipart）结构性跳过、不改写、不告警；JSON 但 sjson 残余失败时原 body 裸透传 + 固定文案限频 WARN（不打印 path/value/body），请求不中止。
+- **`Accept-Encoding` 是出站响应编码不变量**：任一层非空值保存期 400（空值/Del 允许），运行期读到脏库值也会跳过。它决定上游响应体编码——放行会让 SSE 中继/usage 抽取/响应转换拿到压缩字节，表现为静默漏计费或 500（与 `relayDeny` 剔除入站 `Accept-Encoding` 是两条独立边界，见根 `AGENTS.md`）。
+- 不设只读/禁改路径，也不设数量/长度/深度上限（除 admin API 既有 1 MiB 请求体上限）：`model` / `stream` / `tools` / `Authorization` 等都可被改写，后果由操作员承担（见「安全声明」）。
+
+**保存期校验与归一（非法 ⇒ 400）**
+
+- wire 合法性由 `domain.ParseRequestPatch` 唯一入口校验；service 只补 custom-only 策略面：非 `custom` 模板提交非空 `request_patch` ⇒ 400，且先于既有 409 出站传输降级门（与 `upstream_paths` 同一位置）。
+- 空层归一 nil：`headers` 空 / `formats` 空 / 单个 format patch 全空 ⇒ 删层；全空 ⇒ `null`（落库 NULL）。header 值为 JSON `null` 与 `""` 同义 = Del。
+- path 文法（保存期校验，不靠空文档试跑）：点分键 + 数组下标（可负）+ `\` 逐字节转义 + 可选首字符 `:` force-string-key；拒绝空 path、空段、悬垂转义、控制字节与 `|` `#` `@` `*` `?` `[` `]`（gjson 通配/过滤器/表达式）。**需要字面方括号键时用反斜杠转义**（如 `a\[b\]`）；未转义的 `[` / `]` 一律 400（sjson 会把它们当字面键，属静默语义歧义）。
+- `set` 值必须是合法 JSON，保存期做深归一（数字字面量逐字保留，嵌套对象键序/空白收敛），大整数不经 `float64`。**PUT 是全列替换**：`request_patch` 缺省或 `null` = 清空（与 `upstream_paths` 同语义），只想改其它 ext 字段时必须把 GET 到的值原样带回。
+- **jsonb 数字规范化**：指数写法落库再回显会展开成十进制（`1e18` → `1000000000000000000`，语义/精度不变）；`>2^53` 的整数字面量（如 `9007199254740993`）逐字保留。需要逐字精确的数值请直接走管理 API。
+- 读路径遇到存量脏值（手工改库导致 wire 语义非法）视为未配置：GET 正常返回、不 500、不半应用。
+
+**安全声明**
+
+- **这不是密钥保险箱**：值可为密钥（如 `Authorization: Bearer {api_key}`，或直接写明文 key），GET 原样回显、不做掩码；唯一保护是「仅管理面可见」——`/api/admin/*` 需要 platform_admin，`supplier` 不可达。未来若开放 supplier 自管模板，必须补独立敏感写权限。
+- `{api_key}` 只在内存中展开，**永不写日志 / `err_logs` / `usage_logs`、永不回显**；上游在错误报文里回显的账号 key 会在日志落库前被精确替换为 `[redacted]`；返回客户端的 4xx 原文面沿用既有 `transmit` 语义（与今天 `Authorization` 同类暴露，不因本功能扩大）。
+- **web 编辑器限制**：浏览器把 JSON 读成 JS number，`>2^53` 的整数在打开编辑器时已被四舍五入；web 对这类值**阻止保存**并提示改用管理 API（admin API 端点级 `UseNumber`，逐字精确）。指数写法在浏览器里的展示以 jsonb 读回值为准。
+- 与 `upstream_paths` 的关系：两者同属 `custom` 门（快照里 `Template.Upstream` 指针一次构造，Paths 与 Patch 同源）。模板类型从 `custom` 改成别的类型后，残留 ext 行的路径与修饰**整体失效**（不会静默作用于 api_key / responses-special 等模板）；改回 `custom` 后重新生效。
+
+> 生效链路与 `upstream_paths` 相同：PUT ext 后重建调度快照（`request_patch` 进 planKey ⇒ 新计划叶子），多实例经 NOTIFY 收敛；数据面只读快照里的不可变配置，热路径不重新解析配置。
 
 ---
 

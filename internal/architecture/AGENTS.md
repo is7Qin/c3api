@@ -91,7 +91,10 @@ allowed"时报 `kindRedundantLegacy` **变红**（"该边已符合目标方向�
   里加 import 时得到的是这条规则**明确的拒绝**，而不是被 `leafRule` 顺手放行 domain/credential/pkg
 - `domain` 侧留**类型别名** `type X = pkg.X`（不是新类型、不是包装），消费方零改动
 - 已有先例：`internal/modelmap`、`internal/identityenv`、`pkg/egressapi`、`internal/storeerr`、
-  `internal/paymenterr`、`internal/qualitymodel`、`internal/loadport`、`internal/identityfence`
+  `internal/paymenterr`、`internal/qualitymodel`、`internal/loadport`、`internal/identityfence`、`pkg/headervalid`
+- 最新一例（request_patch）：头 wire 判据从 `pkg/httpx` 下沉为 `pkg/headervalid`——`internal/domain` 想调两个纯函数，
+  不能为此 import 整个 `net/http` 传输装配；矩阵只给 `internal/domain` 的 `to` 加 `pkg/headervalid`（替换原 `pkg/httpx` 边），
+  并登记一条显式空 `to` 的 `pkg/headervalid` 规则（`pkg/*` 由硬规则短路，这条是声明式意图）。指纹随矩阵变更，见 archfix 报告。
 
 ### 证明"别名 vs 新类型"必须用无转换赋值
 

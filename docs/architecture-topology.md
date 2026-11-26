@@ -99,6 +99,7 @@ flowchart LR
 | `internal/snapshot` | 快照注册表（已合并）：Registry/ReloadAll/Status + scope 精确分发 | cmd/server 装配（dispatcher 消费） |
 | `internal/sdkbridge` | SDK 适配层，两条 prepared 入口：codex（生图/Responses/StreamBody/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`）与 BPS（`Prepare` → `*BPSPrepared`，`internal/sdkbridge/bps.go:99,131`） | proxy |
 | `pkg/aiclient` | openai/anthropic SDK 客户端懒构建工厂（**非唯一引用点**——proxy 各 caller 直接 import SDK 类型，第三 SDK codex-sdk 经 sdkbridge） | proxy |
+| `pkg/headervalid` | 出站 HTTP 头 wire 合法性判据的唯一单源（`ValidHeaderName` / `ValidHeaderValue`；stdlib-only 中立叶子包）。消费者横跨值类型层与可复用层：`internal/domain` 的 `ParseRequestPatch` 与 `pkg/aiclient` 的 `RelayHeaders`——判据从 `pkg/httpx` 下沉，是为了不让 `net/http` 传输装配进入 domain 的依赖图 | `internal/domain`、`pkg/aiclient` |
 | `pkg/httpx` | 共享上游 http.Transport（连接池参数；Proxy 默认 nil 直连） | main → aiclient/sdkbridge/pricing |
 | `pkg/sserelay` | 字节级 SSE relay（统一 Output：帧原样透传/协议转换 + 静默保活 + 写出前采样 seam） | proxy 流式路径 |
 | `pkg/redisx` | Redis 客户端（连接/哨兵/重连；**非缓存层**——只服务实例发现心跳与短时验证码） | main → discovery/proxy/scheduler |
@@ -147,6 +148,7 @@ flowchart LR
 2. **开关关闭 = 快照读 + 分支**：`protocol_convert=off` 不触达 protoconv（`internal/proxy/caller.go:244-260`）、`strip_image_tools` 关 = 布尔读 + 分支（`internal/proxy/caller_responses.go:37`、`internal/proxy/usage_extract.go:293`）、billing off = `BillingCapture` 恒 false（跳过余额预检 + billable 行出生即 `billed=true` 吸收态，`internal/proxy/forward.go:42` 注释——单写点后不再路由分流）。
 3. **开关开启 = bytes.Contains 预筛零解析**：图像 tool 剥离 `internal/proxy/strip_scan.go` 预筛（无 "image" 子串零解析，压测 ~1.5% QPS 差异）；转换走 gjson 预筛 + Raw 零拷贝（`internal/protoconv/jsraw.go:7-11`）。
 4. **永不阻塞投递**：usage.Record（`internal/usage/usage.go:157`）为无 channel 的锁内归并；**billing 已无内存 pending 队列**——改为账本游标消费（`usage_logs` 的 `billed=false` 行即队列，DB 即队列）；errlog 投递 select-default 非阻塞丢弃（`internal/usage/errlog.go:169-171`）。
+5. **出站修饰是最后一步、无配置零成本**：custom 模板的 `request_patch` 在既有头/body 变换之后、真正出网之前应用（`internal/proxy/request_patch.go`）；无配置 helper 返回 nil / 原切片（零闭包、零解析、零分配），有配置每 attempt 至多 1 枚闭包；出站 `Accept-Encoding` 由保存期 400 + 运行期跳过/剔除双保险（响应编码不变量）；成功路径零 patch 日志。详见 §4「出站请求修饰器 request_patch」。
 
 ## 4. 协议适配面
 
@@ -167,6 +169,18 @@ pkg 职责边界：
 - `pkg/httpx`：共享 `http.Transport`（连接池参数：max_idle_conns 8192、per_host 2048、force_http2、http2_shards 1（代码默认/部署模板；样例给 8；>1 且 force_http2 时按 `pkg/httpx/shard.go` 分片到 N 个独立连接池）、idle_conn_timeout 90s、dial_timeout 10s，`config.example.toml`）；openai-go/anthropic-sdk 共用同一 `*http.Client`（`cmd/server/main.go:244`）；**codex SDK 不另建 transport**：HTTP 与 WS 两条路径都注入出口池的 `eg.HTTP.Transport`（`internal/sdkbridge/codex.go`），故 `http2_shards`（以及代理出口）对它们同样生效；**httpx.Proxy 默认 nil 直连**（`pkg/httpx/httpx.go:24-28,33`——不再隐式 ProxyFromEnvironment 防 HTTP_PROXY 静默改道）。
 - `pkg/sserelay`：字节级 SSE relay——`Relay` 读循环（增量读帧/`Mapper` 挂载/写出前 `OnEvent` 采样 seam）+ 统一下行 owner `Output`（`pkg/sserelay/output.go`：自有写缓冲 + 自适应批量 Flush + 静默保活 `: keepalive\n` + 提交态/写失败/自取消态 + 终态错误帧 + 可返错 Flush）+ EOF 末帧 flush + deadline watcher（取消/超时联动写侧 deadline）+ `Config.Terminal`（正常 EOF 在 watcher 存活期内补写协议终止帧）+ normalize 错误分类 + relayBufio 池。
 - 凭据词表 `internal/credential`：只有类型 + 能力表（`Type` / `capsTable` / `ChannelOf`），**不承载凭据取值**；静态通道的 key 由 `internal/proxy` 的 `credentialFor` 按 `UsesStaticKey()` 直读 `Selection.UpstreamKey`，表外类型先按 `Valid()` 显式报错（不静默 fallback）；**codex/bps 复合凭据不走单字符串路径**——走 `sel.Ext` → AccountCredential 直供适配层（`caller.go:344-358` 注释，单字符串表达不了）。
+
+**出站请求修饰器 request_patch（custom 专用）**（历史 spec `custom-request-patch`；契约见 `docs/admin-api.md`）
+
+- 配置面：`template_exts.request_patch`（可空 jsonb）承载全局头 + 七键格式层的头/body `set`/`delete`；wire 合法性唯一入口 `domain.ParseRequestPatch`（头名规范形、同层歧义、`Accept-Encoding` 硬拒、七键、path 文法、三态归一、set 值深归一保大整数），service 只补 custom-only 策略面。读路径脏值视为未配置。
+- 快照面：repository 的 custom 门一次构造 `domain.TemplateUpstream{Paths, Patch}`（非 custom 或无 ext 行 ⇒ nil，Paths 与 Patch 同门）；`scheduler.digestTemplateUpstream` 把二者拼进既有 `upstreamPathsKey` 32B 槽（tplDigests 仍 5 项）⇒ 配置任一变化换 planKey 叶子；`api.Selection.Upstream` 是同一 8B 指针（Selection 仍 264B），数据面只读不复制不修改。
+- HTTP 数据面：`pkg/aiclient` 6 个 HTTP 出站方法 + `ResponsesWSDial` 末参是 decorate 装饰缝（nil = 快路径）；`rawPostCT` 的顺序为 `RelayHeaders → Content-Type → 鉴权头 → 缺省 Accept / Anthropic-Version → decorate → 强制 Del Accept-Encoding`。proxy 14 个接线点（10 直接出站 + 4 个 `rawJSON` 第 8 参）全部传非 nil 装饰器（`egress_call_sites_gate_test.go` 按「方法枚举 + 计数 golden」机械钉住）。body 面唯一执行器 `domain.ApplyRequestBodyPatch`（sjson 字节级 splice：delete 排序 → set 排序、set 胜、非 JSON 结构性跳过、残余失败原 body 返回），在既有变换之后最后一步。
+- WS 数据面：握手装饰 `wsHeaderDecorator`（两层头 + Host + `{api_key}`）在网关写完 Authorization / Responses-Websockets 之后执行；`relayWS` 增加 `clientFrameHook`，仅 patch 客户端→上游的 `response.create` 帧（零分配首键扫描），`response.cancel` 等控制帧原样转发；静态车道首帧只经 `relayWS` 写出。生产 3 个 `relayWS` 调用点显式 nil/hook，由 `relayws_call_sites_gate_test.go` 钉住。
+- probe 数据面：`ProbeSpec.Upstream` 由 service 与逐格式路径同一处装填；5 个静态 key 工厂调用（`probe.go` ×3、`content.go` ×2）与 proxy 共用同一份头判据与 body 执行器；格式键与上游路径同键（`openai-responses-ws` 探测实际走 HTTP responses 语义但键与 path 一致），images 按 `ImageMode` 取 `openai-images.generations` / `.edits`，edits multipart 只注入头。origin 锁定/不跟随重定向/2 MiB·8 MiB 上限/固定分类/只读预览等既有不变量不变。
+- 语义：两层头（格式层覆盖全局层，`""` = Del）、Host 三态（HTTP `req.Host` / WS `DialOptions.Host`；只改 Host 头，不改 TLS SNI / 连接目标）、`{api_key}` 仅 header 值且来自当次 attempt 原始 cred（failover 每 attempt 重算）、body 值不做替换。
+- 两条边界别混：`relayDeny` 只约束**入站客户端头**（不可被配置穿透）；`request_patch` 是**可信配置面**的模板声明，执行在 deny 之后。出站响应编码不变量独立成立——出站 `Accept-Encoding` 非空保存期 400，运行期即使读到脏值也跳过（不依赖 relayDeny 那份清单）。`{api_key}` 只在内存展开，永不写日志 / `err_logs` / `usage_logs`，展开后的 key 永不回显（GET 原样返回占位符）；上游回显的 key 在日志落库前按行级 attempt key 精确替换为 `[redacted]`，客户端 4xx 原文面沿用既有 `transmit` 语义。
+- 失败降级（历史 spec §7.4）：body 非 JSON 是设计性跳过（不 WARN、请求不中止）；JSON 但 sjson 残余失败 = 裸透传 + 固定文案限频 WARN（按 template_id+format，进程内 sync.Map，不打印 path/value/body，无计数器）。成功路径零 patch 日志；无配置零新增分配（bench 见 §14）。
+- 机械门禁：出站 AST 门禁（aiclient 出站方法动态枚举 + proxy 11 出站调用 + 4 `rawJSON` 计数、nil 白名单为空集）、relayWS 调用点门禁、`datapath_contract_gate_test.go` 的 Selection 读位点账面同步、以及 P2 既有尺寸门禁（264/288/328B、392/760B、tplDigests 5、22/7 项）均必须保持绿。
 
 加新格式 = 1 个 caller 文件 + `internal/proxy/forward.go:76-80,151-152` 注册表一行（callers + convCallers 六方向 + images/codexImages 双调用器）+ router.go 一个端点（现 8 端点，`router.go:19-57`）；images 同格式双端点 + codex 双调用器为既有格局之外的特例。
 
@@ -200,7 +214,7 @@ pkg 职责边界：
 | rules | rule.go | 规则引擎表（种子 + 自定义） |
 | settings | setting.go | 内置设置注册表（`internal/domain/settings.go:13-45` 类型化 key） |
 | temp_balances | temp_balance.go | 临时额度（FEFO 扣费） |
-| templates / template_exts | template.go / template_ext.go | 模板 + 类型化扩展（strip_image_tools 等开关） |
+| templates / template_exts | template.go / template_ext.go | 模板 + 类型化扩展（strip_image_tools 等开关；custom 的 `upstream_paths` 与 `request_patch` 两个可空 JSON 列，后者由 0004 迁移加列） |
 | users | user.go | 用户（balance/balance_warning_threshold/token_version/status/max_concurrency） |
 | **usage_logs** | usagelog.go | 计费明细（**分区表**；瘦身——无 status_code/error_message；含价格快照 `Price*Millis` + `billed` 出生定态列） |
 | **err_logs** | errlog.go | 错误审计明细（**分区表**；status_code integer + error_message） |
@@ -215,6 +229,12 @@ pkg 职责边界：
 - ent migrate 跳过分区表（`migrateHookExcludesPartitioned` `internal/repository/partition.go:660-676`——atlas 对分区表 diff 规划期必失败，真实 PG 实测结论）；表 DDL/索引由 bootstrap 独占管理（`ensureTablePartitioned` 族 `partition.go:469-503,566-571`：未分区 → DROP 重建表/序列/OWNED BY/索引，已分区 → 仅补当日/明日分区；幂等 + 42P07/42710/23505/42P01 容忍多实例并发）；**无补列路径**——表恒从零创建，schema 变更即全新建库（多实例并发 bootstrap 竞态由 `isBootstrapRaceError` `partition.go:404-416` 容忍）。
 - 关键索引（`internal/repository/partition.go:158-173`）：usage_logs `(created_at)` + `(group_id/account_id/user_id/key_id, created_at)` + **`usagelog_request_id_created_at` 唯一索引**（幂等键）+ **`usagelog_unbilled_id` 部分索引**（`WHERE NOT billed`——结算游标取批）；err_logs `(created_at)` + `(group_id/user_id, created_at)`；usage_stats 唯一索引 `(bucket_time, group_id, model)`（Upsert 冲突目标）；usage_entity_stats 唯一索引 `(bucket_time, entity_type, entity_id, model)` + 覆盖索引 `(entity_type, entity_id, bucket_time)`。
 - **stats_agg_watermark 辅助表**（`partition.go:481-491` DDL + `EnsureUsageStatsPartitioned` 内建）：单行 watermark（`CHECK (id = 1)`）——stats-agg worker 每周期读聚合位置、推进与 DELETE+INSERT 同事务。
+
+**schema 迁移水位与 baseline 冻结（`0004_custom_request_patch`）**：
+- `template_exts.request_patch jsonb NULL` 是 request_patch 的物理列。`0001_baseline` 一旦发布即不可变（checksum 漂移 ⇒ 启动门 `ModeReadonly`），所以 ent schema 加字段后**不重生成 0001**：手写 `internal/db/migrate/migrations/0004_custom_request_patch.{up,down}.sql`（expand-only 可空列；down 是 destructive，需 `-allow-destructive`，且只在旧版本 pod 全部退出后执行），head 快照 `testdata/0004.catalog.txt` 用 `-snapshot-head` 生成，0003 快照保留为历史冻结。
+- `repository.PostBaselineColumns()` 是「baseline 之后才加的列」的**唯一清单**；gen 的 `MigrateHookForBaseline()`（= 分区表过滤 ∘ 删列）据此从 0001 生成物裁列。两个 hook 必须分开：私有 `migrateHookExcludesPartitioned` 语义不变、继续服务 runtime automigrate（`NewWithPG(migrate=true)` 建**全列**，否则测试/demo/seed 的 `UpsertTemplateExt` 直接 42703）；只有 baseline 生成器用组合 hook。hook 用 ent 的 `schema.CopyTables` 在副本上裁列 ⇒ 幂等、不污染进程级 `ent/migrate.Tables`（两次 Run 输出逐字节一致）。
+- `migrate.RequiredVersion` 3 → **4**：ent client 恒带 `request_patch` 列，head=3 的库一触达 template_ext 就 42703 ⇒ 启动门 `Decide` 返回 `ModeReadonly`（进程存活但业务/写面全拒），fail-fast 而不是运行期 500。反向互锁：从 0004 up 解析出的 ADD COLUMN 集必须双向等于 `PostBaselineColumns()`，0001 逐字节不变由 `gen -check` 保证。
+- **gen 漂移检查是人工门**：CI 的 contract-gen 只跑 `go generate ./internal/handler/ ./internal/ent/`；`go run ./internal/db/migrate/gen/cmd -check`（含 baseline 逐字节比对与 0004 catalog）需要真实 PG，属本地/PR 必跑门。迁移文件（含注释）不可变：已应用文件的 checksum 漂移同样使二进制退出服务。
 
 **金额单位（两个面，勿混）**：
 - **明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs.cost` / `raw_cost`、`price_*_millis` 价格快照列（每 M token 毫分）、`keys.quota` / `quota_used`、routing frontier 的 `input_unit_cost`（毫分/1M 输入侧 token）；API 边界**原样下发不换算**。
@@ -242,6 +262,9 @@ pkg 职责边界：
 | pricing（`price_entries` + `price_variants` 双表） | `internal/service/pricing.go:33` ReloadPricingAndNotifyCompiler + `:59` ReloadPricingCtx | ReloadPricing（sync 成功 / 管理端改价后）+ NOTIFY Pricing → dispatcher 同步 ReloadPricingCtx（settings 同款，跨实例失效） |
 | balances（余额 + 倍率） | `internal/billing/balances.go:47`（atomic.Pointer，`Set` :132 原地 Store） | invalidate Users/Multipliers + BalanceRefreshInterval ticker（`internal/billing/flusher.go` `refreshLag`） |
 | settings | `internal/service/setting.go:109` ReloadSettings | invalidate Settings + 启动（**自身不进注册表**） |
+
+**custom 上游修饰进快照**：`domain.Template.Upstream`（`TemplateUpstream{Paths, Patch}`，custom 门内一次构造）随模板快照定型，非 custom ⇒ nil；`scheduler.digestTemplateUpstream` 把 Paths（键排序 + 长度前缀）与 `RequestPatch.CanonicalBytes()` 拼进既有 `upstreamPathsKey` 32B 槽（tplDigests 仍 5 项，planKey 392B / snapshotStatic 760B 不增）⇒ 任一变化 ⇒ planKey 变化 ⇒ 新计划叶子，旧计划不会继续带着旧 patch。
+`api.Selection.Upstream` 是同一对象的只读指针（8B，Selection 仍 264B）；failover 每次 attempt 读当次 selection，**不在 pipeline 一次性改写**（`{api_key}` 因此换号换值）。digest 必须用**读回/解析后**的 `CanonicalBytes`（jsonb 会把指数写法规范化，写入前字节与快照期字节可能不同；Parse 的深归一是幂等前提），否则同一配置会抖动换叶。
 
 **注册表装配**（`cmd/server/main.go:354-366` + `cmd/server/snapshots.go`）：五路注册 auth/scheduler/rules/pricing/balances（billing 关不注册 balances）；**启动首刷 = ReloadAll 单一入口**（`main.go:651`）。
 
@@ -323,7 +346,7 @@ flowchart LR
 | `/v1/*` | AI key 鉴权（proxy） | 8 端点：chat/anthropic/responses + WS + images×2 + search + models（`internal/proxy/router.go:19-57`）。**用 `Handle("/v1/*")` 而非 `Mount("/")`**（`internal/server/server.go:89-101`）——通配挂载会吞掉 SPA 深链 |
 | `/assets/*`、`/favicon.svg`、`/`、SPA fallback | 无 | 网关内嵌 web/dist（`internal/server/server.go:103-137` + `cmd/server/embed.go:15`） |
 
-- admin 组（`internal/handler/api.gen.go`，openapi 生成；BaseURL `/api/admin`，路由区 `:5825-6047`）：`/accounts`（含 `usage`、批量 batch-delete/batch-update、`batch-import-codex-oauth|pat`、`{id}/ext`、`{id}/groups`、`{id}/recover`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`、`{id}/balance-logs`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`）、`/keys`、`/prices`（`/prices/entry`、`/prices/variants`；model 在 query）、`/pricing/sync`（含 `/pricing/sync/preview`）、`/rules`、`/settings`、`/mail/templates`（含 `/mail/channel-test`）、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats/*`（trend/top/entity-trend/ttft）、`/routing/*`（plan/flow/frontier）、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:75`）。
+- admin 组（`internal/handler/api.gen.go`，openapi 生成；BaseURL `/api/admin`，路由区 `:5825-6047`）：`/accounts`（含 `usage`、批量 batch-delete/batch-update、`batch-import-codex-oauth|pat`、`{id}/ext`、`{id}/groups`、`{id}/recover`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`、`{id}/balance-logs`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`——custom 的 `upstream_paths` / `request_patch`）、`/keys`、`/prices`（`/prices/entry`、`/prices/variants`；model 在 query）、`/pricing/sync`（含 `/pricing/sync/preview`）、`/rules`、`/settings`、`/mail/templates`（含 `/mail/channel-test`）、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats/*`（trend/top/entity-trend/ttft）、`/routing/*`（plan/flow/frontier）、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:75`）。
 - user 组（`internal/handler/user/api.gen.go`，路径自带 `/api/user` 前缀）：`/api/user/auth/login|register|me|change-password|register-code|forgot-password|reset-password`、`/api/user/keys`（含 `{id}`、`{id}/rotate`）、`/api/user/groups`、`/api/user/usage_logs`、`/api/user/err_logs`、`/api/user/stats`（含 `/stats/ttft`）、`/api/user/redemptions`、`/api/user/temp-balances`、`/api/user/balance-warning-threshold`。
 - AI 组（`internal/proxy/router.go:19-57`）：`POST /v1/chat/completions`、`POST /v1/responses`（upgrade → WS）、`GET /v1/responses`（仅 upgrade 放行，否则 405）、`POST /v1/messages`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/alpha/search`（codex CLI web search 独立编排，`internal/proxy/forward_search.go:111`）、`GET /v1/models`（快照读零 DB，`internal/proxy/models.go:19`）。
 - **路由观测读面分页契约**（`/api/admin/routing/{plan,flow,frontier}`，详细契约见 `docs/admin-api.md`）：三处表格各自服务端分页（`offset`/`limit`，缺省 **0/20**、上限 **200**，与库内其余 `limit` 端点同约定；`/routing/plan` 另有每路由候选轴 `candidates_offset`/`candidates_limit`）。**`/routing/flow` 的 `lanes` 只是一页**，而守恒计数、`total_edges`/`stale_generation_present` 与 `sankey` 恒在**完整边集**上算（与当前页无关——否则徽标会随翻页闪烁）；`accounts` 只作用于桑基每层 top-N 折叠，折叠层 `chain_count` 守恒。旧代际徽标由服务端**精确布尔** `stale_generation_present` 决定（前端不再算占比：合并层一行聚合多代际的链，链次占比只能给出上界）。窗口起点早于观测保留截止（`routing.observation_retention_days`）时两端点**整窗 400**，不静默截断。
@@ -376,6 +399,7 @@ flowchart LR
   - 429 为种子 key 池在途门禁分摊（20k 并发 28.3%、25k 37.7%），非缺陷。
   - **时效注记**：上述数字为 w3 轮历史事实，基准后另有新轮次未收录（2026-08-13）：resp HTTP 10k 并发 33.5k→35.9k QPS、每请求 CPU -15~-17%；resp-ws 2000 连接 86k rounds/s、每轮 CPU 114µs、0 错误（`2026-08-13-resp-loadtest-retest.md`）；sdk-wiring chat 基线 51.5k QPS（落带 46.6-53.9k）、images 直连 70.0k/169µs、SDK 非流式 45-47k、流式 41k/344µs（`2026-08-13-sdk-wiring-loadtest.md`）。与 w3 数字不冲突（51.5k 落带含 w3 值），引用时勿当作最新。
 - **转换成本数据**：见 §5（off 基线 52.3k / 232.8µs；on 差距收敛 -10.9% QPS / +17.8% CPU；pprof 转换路径 22.6%→8.5%）。strip 预筛 ≈1.5% QPS / ~1% CPU 差异（`历史 spec 2026-08-11-w3-loadtest`）。
+- **request_patch 成本（2026-11-26，AMD Ryzen 7 7840H / Go 1.27.3，`-bench` 单次记录）**：无配置 HTTP helper 6.5 ns/op、0 allocs（WS 3.2 ns/op、0 allocs；无配置是**硬断言**，不靠 bench）；有配置头 321 ns/op、64 B/4 allocs（1 枚闭包 + Header.Set 固有成本）；有配置 body 3.3 µs/op、1433 B/17 allocs（排序 + sjson splice）；有配置 WS 非 `response.create` 帧 19 ns/op、0 allocs，命中 create 帧 1.9–2.1 µs/op、897 B/10 allocs。即：开关关闭与未引入本特性同档，只有配置存在且真正命中时才付解析成本。
 - **风暴教训**（压测 2026-08-11 修复链，`internal/billing/flusher.go` / `internal/repository/partition.go` 注释 + `历史 spec 2026-08-11-errlog-task`）：
   - **分区漂移**：price 快照列/ttft_ms 合入后旧分区表缺列 → 新二进制连旧库 INSERT 42703 全停；根治 = **全新建库**（无补列路径，schema 变更即重建）——存量漂移面由此不存在。
   - **巨批**：单用户积压 1M+ 行 → 单事务 2000+ 分片串行 8 分钟（xact_age 08:02 实证）+ 堆涨 4.6GB；修复 = 单用户拆事务 ≤10k 行/事务（`internal/billing/flusher.go`）。
@@ -397,3 +421,4 @@ flowchart LR
 7. **测试基座**：repository/service 测试 = 真实 PostgreSQL（独立库命名 `c3api_test_<任务名>` 避开并行竞争），不用 sqlite/pgxmock（pgxmock 仅存单测桥接）；必须 `-race` + gofmt 干净。
 8. **流程**：SDD 三件套——spec 先行（`.omo/plans/` 当日日期命名）→ spec review 通过才派实现 → 实现 → 内容评审（验收标准核对锚点/裁决清单）→ 合并 main（--no-ff）→ 清理 worktree/分支。commit 中文一句话。
 9. **文档纪律**：本文档锚点随代码漂移——以代码为准，行号仅作定位线索；合并时若 main 已前进需重核锚点。
+10. **改出站请求修饰（`request_patch`）**：读 §4——配置面唯一解析 `domain.ParseRequestPatch`、body 唯一执行器 `domain.ApplyRequestBodyPatch`、头 wire 判据唯一 `pkg/headervalid`、头装饰/帧 hook 只在 `internal/proxy/request_patch.go`；新增/删除出站调用点必须同步 `egress_call_sites_gate_test.go` 与 `relayws_call_sites_gate_test.go` 的计数；无配置零新增分配、出站 `Accept-Encoding` 不变量、`{api_key}` 永不落日志三条不得破。给 `template_exts` 加列走 §6 的 `PostBaselineColumns()` + 新 NNNN 迁移 + `RequiredVersion`，不重生成 0001。

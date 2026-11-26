@@ -12,7 +12,7 @@
 |---|---|
 | `aiclient.go` | `Factory` / `NewFactory` / `Config`（模板级客户端**双缓存**：client + URL） |
 | `relay.go` | `RelayHeaders` + **唯一一份** `relayDeny` |
-| `responses_ws.go` | `AcceptResponsesWS`（WS 升级判定） |
+| `responses_ws.go` | `AcceptResponsesWS`（WS 升级判定）+ `ResponsesWSDial`（上游拨号，含 request_patch 的握手装饰缝） |
 
 ## 不变量
 
@@ -26,6 +26,8 @@
   但**永不命中**。
 - **deny-list 不是安全边界**：`X-Client-IP` 等自定义键照旧达上游，**不得宣传为"防 IP 泄漏"**。
 - **codex WS 面不喂任何客户端头**：握手头仅来自 SDK。
+- **出站装饰缝 `decorate` 是可信配置面，不是入站透传**：6 个 HTTP 出站方法（`RawPost` / `ChatCompletionRaw` / `ResponseRaw` / `AnthMessageRaw` / `SearchRaw` / `ImagesRaw`）末参是 `func(*http.Request)`，`ResponsesWSDial` 末参是 `func(*websocket.DialOptions)`；`rawPostCT` 的契约顺序是 `RelayHeaders(in) → Content-Type → 鉴权头 → 缺省 Accept / Anthropic-Version → decorate → 强制 Del Accept-Encoding`。装饰器只由 proxy 构造（`headerDecorator` / `wsHeaderDecorator`），**本包不收 key**——`{api_key}` 由调用方闭包用当次 attempt 原始 cred 展开；nil = 无配置快路径（0 分配）。出站 `Accept-Encoding` 的强制剔除是响应编码不变量（上游必须回明文，否则 relay/usage/转换静默拿压缩字节），保存期已在 `domain.ParseRequestPatch` 400，这里是第二道。
+- 与 `relayDeny` 的分工：`relayDeny` 只剔**入站客户端头**（不可被配置穿透）；`decorate` 执行在它之后、是模板级可信配置（见根 ANTI-PATTERNS #2/#12）。
 
 ## 验证
 

@@ -41,7 +41,7 @@
 | 迁移 DDL 生成器 | `db/migrate/gen/AGENTS.md` |
 | 错误哨兵归属（该进哪个包） | `storeerr/AGENTS.md` / `paymenterr/AGENTS.md` |
 
-**中性叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv`。
+**中性叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据；`pkg/*` 侧无 legacy 通道）。
 **测试夹具特权**（`testFixtureAllow`，跨层是允许的）：`testsupport/`、`ent/`、`db/migrate`、
 `repository`、`rulepersist`、`sdkbridge`、`server`、`billing`。
 
@@ -51,7 +51,7 @@
 - **Redis 归 SDK**：`NewBPS(rdb, failureHandler)` 只接收现有 `redis.Client`；token record、key hashing、CAS/fence 在 `bps-sdk/redisstore`。c3api 不写 BPS token key，也不保存登录会话。
 - **profile 只写**：授权成功后由 SDK 生成并随 identity envelope 持久化；请求、响应、日志都没有 raw profile。
 - **身份组**：`credential.Type.IdentityGroup()` 是查重作用域的唯一来源（codex-oauth/codex-pat 同组，bps 独立）；`account_ext` 的唯一性由 `migrations/0002_account_ext_identity_group` 的部分唯一索引承载，Go 侧不再复制第二套类型判断。
-- **迁移**：已应用迁移不可变；schema 变更只新增 `internal/db/migrate/migrations/NNNN_*`，版本水位与 head 快照以迁移包自身为准，不在别处复写。
+- **迁移**：已应用迁移不可变；schema 变更只新增 `internal/db/migrate/migrations/NNNN_*`，版本水位与 head 快照以迁移包自身为准，不在别处复写。**baseline 表加列**还要登记 `repository.PostBaselineColumns()`（gen 的 `MigrateHookForBaseline` 据此从 0001 生成物裁列，物理列由新 NNNN 迁移 ADD COLUMN 补——0001 不重生成、runtime automigrate 仍建全列），并随依赖一起抬 `migrate.RequiredVersion`；先例见 `template_exts.request_patch` / `0004_custom_request_patch`（架构文档 §6）。
 - **出站传输**：`template_ext.codex_responses_transport` 对 Responses 原生 provider（codex/bps）同义；`ws` 只改上游车道，客户端 HTTP 仍收 SSE；catalog 恒为 HTTP，不是传输的前置条件。
 - **本地拒绝**：`sdkbridge.BPSLocalRejectMessage` 是唯一文案映射；只输出固定句或字段名，SDK 错误原文与上游 body 不出适配器。
 

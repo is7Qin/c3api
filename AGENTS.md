@@ -24,7 +24,7 @@ internal/
   billing/        # 计费游标消费者(ledger-cursor)：Cost 纯函数、Balances 快照、FlusherStats(lag 族)
   usage/          # usage_logs 唯一写点(InsertBatch)+在线配额累加+watermark 离线聚合
   pricing/ notify/ invalidate/ credential/ sdkbridge/ protoconv/ domain/ config/ worker/ snapshot/ auth/ server/
-pkg/              # 可复用层：aiclient(SDK 工厂)、sserelay(SSE 中继)、httpx、logx、cryptox
+pkg/              # 可复用层：aiclient(上游原始出栈+decorate 装饰缝)、sserelay(SSE 中继)、httpx、headervalid(头 wire 判据叶子包)、logx、cryptox
 web/              # React+TS+Vite+shadcn 控制台（见 web/AGENTS.md）
 tools/            # e2e(build tag e2e)、loadtest(+setup)、fakeupstream
 openapi/ deploy/ scripts/build.sh   # 无 Makefile
@@ -37,6 +37,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | 改 AI 格式路径 | `internal/proxy/forward_*.go`(HTTP 面) → `caller_*.go`(上游策略) → `pipeline.go`(守卫骨架) |
 | 协议转换 | `internal/protoconv`（六方向：chat↔resp/mess 四方向 + mess→chat / resp→chat；请求侧全字节级，响应侧除 chat→resp 外是 map-based） |
 | 上游客户端/鉴权注入 | `pkg/aiclient`（Factory 双缓存；`rawPostCT` 收 `in http.Header` 走 `RelayHeaders`，唯一剔除清单在 `relay.go` 的 `relayDeny`） |
+| 出站请求修饰（custom `request_patch`） | `internal/domain/request_patch.go`(唯一解析/Canonical) + `request_patch_apply.go`(body 执行器) → `internal/proxy/request_patch.go`(头装饰/bodyPatch/WS hook) → `pkg/aiclient`(decorate 缝) → `internal/probe`(5 个工厂调用) |
 | 新增管理端点 | `openapi/openapi.yaml` → 重生成 → `internal/handler/*.go` 实现 → `web` 跑 `pnpm gen:api` |
 | 扣费链路 | `internal/proxy/forward.go`(routeLog 出生定态) → `internal/repository/billing_cursor.go`(游标消费) → `internal/billing`(Cost 纯函数/Balances 快照) |
 | 定价 | `internal/pricing`（换算系 ×1e5 与 ×1e11 禁混用） |
@@ -51,6 +52,10 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | `guardPipeline` | method | internal/proxy/pipeline.go:43 | auth→quota→余额预检→两级并发门→限流 骨架 |
 | `handleFormat` | method | internal/proxy/caller.go:126 | 4 种 REST 格式共享入口（scanKeys 单遍提取） |
 | `UpstreamCaller` | iface | internal/proxy/caller.go:98 | 一格式一实现； owns 记录/failover 分类 |
+| `RequestPatch` / `TemplateUpstream` | struct | internal/domain/request_patch.go / template_upstream.go | custom 出站修饰值类型（头 + 七键 body 面）；`ParseRequestPatch` 唯一 wire 入口、`ApplyRequestBodyPatch` 唯一执行器；快照里只读共享指针 |
+| `headerDecorator` / `bodyPatch` / `wsHeaderDecorator` / `wsClientFrameHook` | func/method | internal/proxy/request_patch.go | `request_patch` 唯一数据面接线：无配置 nil/原切片（零分配）、`{api_key}` 闭包捕获当次原始 cred、残余失败限频 WARN（不打印 path/value/body） |
+| `decorate` 参数 | param | pkg/aiclient/aiclient.go / responses_ws.go | 6 个 HTTP 出站方法 + `ResponsesWSDial` 的装饰缝：在网关默认头之后、强制 `Del Accept-Encoding` 之前执行（nil = 快路径） |
+| `digestTemplateUpstream` | func | internal/scheduler/static_key.go | `TemplateUpstream`（Paths + Patch）合并进既有 32B 摘要槽（tplDigests 仍 5 项，planKey 392B 不变） |
 | `relayWS` / `wsRelayTransport` | method/iface | internal/proxy/ws_relay.go:54/:35 | WS 双向中继合一；5 方法隔离 responses vs codex |
 | `ConvertRequest`/`StreamMapper` | func/struct | internal/protoconv/protoconv.go | 请求转换六方向分发；流式逐帧零分配映射（chat 源两方向的帧由 `chat_stream.go` 自解析） |
 | `Factory` / `rawPostCT` | struct/method | pkg/aiclient/aiclient.go | 模板级客户端缓存+URL 缓存；HTTP 面走 `RelayHeaders`（default-allow + `relayDeny`） |
@@ -66,13 +71,14 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 - **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更
 - **测试**：testify **只 require 不 assert**；PG 测试真实 PostgreSQL（pgxmock 仅 5 个遗留/冒烟文件勿扩展：repository_test/rule_repo_test/pg_account_groups_test/signup_bootstrap_pg_test/notify publisher）；全仓 `t.Parallel()`=0 串行；固定 `time.Date(2026,8,...)` 注入时间；channel 屏障替代 sleep（参考 codex_test.go runWave）
+- **出站请求修饰（custom `request_patch`）= 可信配置面，不是入站透传**：`relayDeny` 只剔除客户端入站头；`request_patch` 执行在它之后（出网前最后一步），可覆盖网关默认头与 JSON body，唯一硬边界是出站 `Accept-Encoding`（保存期 400 + 运行期跳过——上游响应必须是明文，否则 relay/usage/转换静默拿压缩字节）。`{api_key}` 只在 header 值展开、来自当次 attempt 原始 cred（failover 每 attempt 重算）、**永不写日志/err/usage、GET 原样回显占位符**；无配置必须零新增分配（helper 返回 nil/原切片）。改出站调用点必须同步 AST 门禁（`egress_call_sites_gate_test.go` / `relayws_call_sites_gate_test.go`）。
 - **前端**：pnpm only（本机须 `--config.node-linker=hoisted`）；schema.d.ts 由 `pnpm gen:api` 生成禁手改
 - **commit**：标题一行英文(conventional 前缀)+正文中文；不擅自 push
 
 ## ANTI-PATTERNS（本项目明令禁止）
 
 1. 业务代码直接 import zap——日志只走 `pkg/logx`（logx.go:5）
-2. 网关做**配置驱动**的「客户端头→上游头」映射——透传 = default-allow + 全仓唯一一份 `relayDeny`（详见 `pkg/aiclient/relay.go`，不可被配置穿透，扩容须过同级评审）；必剔 `Authorization`/`X-Api-Key`/`Cookie`/`Accept-Encoding`（凭据/跨租户态/gzip 漏计费）与入站足迹族（`X-Forwarded-*`/`Forwarded`/`Via` 等——描述**入站**连接，网关亦不追加自身观测；写清单须用规范形 `X-Real-Ip`/`Cf-Connecting-Ip`/`True-Client-Ip`，常见写法能编译但永不命中）及 `Expect`（入站 100-continue 协商，客户端可注入的延迟放大器）/`X-Request-Id`（网关自己写过，递上游=泄漏内部关联 id 或让客户端注入未校验值）。deny-list 不是安全边界（`X-Client-IP` 等自定义键照旧达上游，不得宣传为「防 IP 泄漏」）。codex WS 面不喂任何客户端头（握手头仅来自 SDK，spec §12）。
+2. 网关做**配置驱动**的「客户端头→上游头」映射——透传 = default-allow + 全仓唯一一份 `relayDeny`（详见 `pkg/aiclient/relay.go`，不可被配置穿透，扩容须过同级评审）；必剔 `Authorization`/`X-Api-Key`/`Cookie`/`Accept-Encoding`（凭据/跨租户态/gzip 漏计费）与入站足迹族（`X-Forwarded-*`/`Forwarded`/`Via` 等——描述**入站**连接，网关亦不追加自身观测；写清单须用规范形 `X-Real-Ip`/`Cf-Connecting-Ip`/`True-Client-Ip`，常见写法能编译但永不命中）及 `Expect`（入站 100-continue 协商，客户端可注入的延迟放大器）/`X-Request-Id`（网关自己写过，递上游=泄漏内部关联 id 或让客户端注入未校验值）。deny-list 不是安全边界（`X-Client-IP` 等自定义键照旧达上游，不得宣传为「防 IP 泄漏」）。codex WS 面不喂任何客户端头（握手头仅来自 SDK，spec §12）。**例外边界**：custom 模板的 `request_patch` 是可信配置面的出站声明（不读客户端输入、无 passthrough 规则），执行在 `relayDeny` 之后，不属于本条禁止的「客户端头→上游头映射」（见 #12）。
 3. 未知账号类型静默 fallback 到 api_key——显式报错（forward.go:736）
 4. 裸写 scheduler 已发布快照视图——必须 copy-modify-Store（scheduler.go:921）；disabled 账号不得被在途事件复活
 5. 响应后副作用跑在请求 ctx 上——NOTIFY 发布/规则重载必须 `context.WithoutCancel`；但裸 WithoutCancel 无界，本地 Apply 包 30s 超时（setting.go:79）
@@ -82,6 +88,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 9. 测试 time.Sleep 掩盖竞态——用屏障/watchdog；CI 无 -race，别赌
 10. 手改生成物：`internal/ent/**`、`handler/*/api.gen.go`、`web/src/lib/api/schema.d.ts`
 11. 破坏 usage_logs 单写点——INSERT 仅 usage flusher InsertBatch（billing worker 只 UPDATE 标记）；billed 出生定态仅 routeLog 一处判定（forward.go:420-425）；扣费标记必经结算语句的 marked==batch 比对守卫（`errConcurrentMark`，billing_settle.go:174-188），绕开=丢并发双扣防御
+12. 把入站 `relayDeny` 与出站 `request_patch` 混为一谈，或把 `request_patch` 当「客户端头→上游头」透传 DSL——前者约束客户端头（不可被配置穿透），后者是可信配置面的模板声明（执行在 deny 之后；无客户端数据、无 passthrough/表达式规则，`{api_key}` 是唯一占位符）。同样禁止：热路径打印 patch 的 key/value/body、把 `{api_key}` 展开值或上游回显 key 写进日志/`err_logs`/`usage_logs`、无配置路径新增分配、出站 `Accept-Encoding` 放行（响应编码不变量，保存期必须 400）。
 
 ## COMMANDS
 
