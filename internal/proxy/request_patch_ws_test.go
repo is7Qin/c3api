@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/modelmap"
 	"github.com/is7qin/c3api/pkg/aiclient"
@@ -432,8 +433,14 @@ func TestRequestPatchWSIsResponseCreateFrame(t *testing.T) {
 //     映射）→ stripTier → bodyPatch（最后一步，操作员权威）；
 //   - 首帧只由 relayWS 写出一次（dial 不收首帧）：上游恰好收到 1 帧，且客户端看到
 //     的上游回声 = relayWS 实际写出的 patched 字节。
+//
+// 「不得双写」门禁（P4 fix1 momus Minor-1）：frameLimit 必须**大于 1**——旧夹具
+// frameLimit:1 时上游读满 1 帧就关，真写两次也只观察到 1 帧，断言恒真（momus M5
+// 变异未红）。现在上游持续读 8 帧 + echo，随后再发一帧控制帧做**读取进度屏障**：
+// 若首帧真被写两次，客户端读到的下一帧回声必然是重复首帧（TCP 有序——两次首帧写
+// 都先于控制帧），从而确定性变红，不依赖 echo 之后到快照之间的调度时机。
 func TestRequestPatchWSFirstFramePatchedOnce(t *testing.T) {
-	hooks := &patchWSHooks{echo: true, frameLimit: 1}
+	hooks := &patchWSHooks{echo: true, frameLimit: 8}
 	up := newPatchWSUpstream(t, hooks)
 	patch := `{"formats":{"openai-responses-ws":{"set":{"model":"patch-wins","requested_via":"patched"},"delete":["client_only"]}}}`
 	tpl := wsPatchTpl(t, up.URL, patch)
@@ -458,6 +465,59 @@ func TestRequestPatchWSFirstFramePatchedOnce(t *testing.T) {
 	require.Equal(t, "patched", got["requested_via"], "首帧 body set 生效")
 	_, hasClientOnly := got["client_only"]
 	require.False(t, hasClientOnly, "首帧 body delete 生效")
+
+	// 确定性双写门（momus Minor-1）：控制帧 = 上游读取进度屏障。单写时它逐字节
+	// 原样到上游（下一步回声 = 控制帧、上游共 2 帧）；双写时下一帧回声 = 重复
+	// 首帧（且上游 3 帧），两条断言都红。
+	control := []byte(`{"type":"response.cancel","response_id":"rsp_1"}`)
+	echo2 := relayedFrame(t, c, control)
+	require.Equal(t, control, echo2, "首帧之后上游收到的下一帧必须是客户端控制帧（首帧不得有第二副本）")
+	frames = hooks.snapshotFrames()
+	require.Len(t, frames, 2, "首帧 1 次 + 控制帧 1 次：上游共 2 帧")
+	require.Equal(t, frames[0], string(echo), "首帧字节在控制帧往返后不变")
+	require.Equal(t, frames[1], string(control), "控制帧逐字节原样转发")
+}
+
+// TestRequestPatchWSFirstFrameTierMapPatchOrder 首帧三重变换的**同帧顺序证据**
+// （spec §7.2/§11.5；P4 fix1 oracle Minor-3）：静态车道首帧在同一个字节序列上
+// 依次经过 wsFirstFrameForSel（模型映射 gpt-4o → gpt-4o-mapped）→ stripTier
+// （TierPolicy=strip 删 service_tier）→ bodyPatch（set model=patch-wins），最终
+// 上游收到的**同一帧**必须同时满足：
+//   - 不含 service_tier（stripTier 已执行）；
+//   - model == patch-wins（bodyPatch 在映射之后执行；若顺序反了会看到映射值
+//     gpt-4o-mapped，本断言即红）。
+//
+// 注：p.bill 只注入 TierPolicy（Resolver/Balances 不装配 ⇒ 计价/余额预检早退），
+// 目的是让首帧 service_tier 进入 strip 策略分支；不扩 newPatchProxy 签名。
+func TestRequestPatchWSFirstFrameTierMapPatchOrder(t *testing.T) {
+	hooks := &patchWSHooks{echo: true, frameLimit: 8}
+	up := newPatchWSUpstream(t, hooks)
+	patch := `{"formats":{"openai-responses-ws":{"set":{"model":"patch-wins","requested_via":"patched"},"delete":["client_only"]}}}`
+	tpl := wsPatchTpl(t, up.URL, patch)
+	tpl.ModelMapping = modelmap.ModelMapping{
+		"gpt-4o": {MappedModel: "gpt-4o-mapped", Mode: modelmap.ModelMappingModeExplicit},
+	}
+	p := newPatchProxy(t, tpl, nil, nil, &captureLogStore{}, "", nil)
+	p.bill = &BillingHooks{TierPolicy: func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyStrip }}
+	gw := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	t.Cleanup(gw.Close)
+	c := dialPatchWS(t, gw, nil)
+	t.Cleanup(func() { c.CloseNow() })
+
+	first := []byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi","client_only":1}`)
+	echo := relayedFrame(t, c, first)
+
+	frames := hooks.snapshotFrames()
+	require.Len(t, frames, 1, "首帧只写一次")
+	got := frames[0]
+	require.Equal(t, got, string(echo), "回声 = 上游实际收到的首帧字节")
+	require.NotContains(t, got, "service_tier", "同一帧内 stripTier 生效：service_tier 字段被删（逐字节）")
+	require.False(t, gjson.Get(got, "service_tier").Exists(), "service_tier 在 gjson 视角同样不存在")
+	require.Equal(t, "patch-wins", gjson.Get(got, "model").String(),
+		"bodyPatch 在 wsFirstFrameForSel 映射之后执行（最终 model 为 patch 值，不是映射值 gpt-4o-mapped）")
+	require.Equal(t, "patched", gjson.Get(got, "requested_via").String(), "同帧 body set 生效")
+	require.False(t, gjson.Get(got, "client_only").Exists(), "同帧 body delete 生效")
+	require.Equal(t, "hi", gjson.Get(got, "input").String(), "既有字段保真（未被 patch 波及）")
 }
 
 // TestRequestPatchWSSubsequentFramesOnlyCreate 后续客户端帧（spec §3 矩阵/§7.2）：
