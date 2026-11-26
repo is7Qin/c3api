@@ -212,3 +212,19 @@ func TestSnapshotStaticStaysInItsAllocationClass(t *testing.T) {
 	require.Greater(t, got, uintptr(class/2),
 		"尺寸掉了一半说明字段被删（本用例要防的是膨胀，但静默缩水同样是键掉了维度）")
 }
+
+// TestSnapshotStaticSizeStays760 钉住 snapshotStatic 的**精确**尺寸（P2 收口
+// Minor-1）：上一条用例只判 768 分配类上界，任何 728–760 之间的抖动都能溜过去；
+// request_patch 折叠进既有 32B 摘要槽（oracle N2）的机械证据是「760 一个字节都
+// 不动」，与 TestPlanKeySizeStays392 同风格。BASE 实测已是 760 B（P2 合并报告
+// 的历史文案「改前 728」是 payload_key_test.go 的旧静态日志，不是 P2 增长）。
+func TestSnapshotStaticSizeStays760(t *testing.T) {
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("64 位布局门禁")
+	}
+	// 用零值变量而非复合字面量：snapshot_static_ctor_gate_test.go 把任何
+	// snapshotStatic{...} 字面量都当绕过构造门禁（含测试探针）。
+	var leaf snapshotStatic
+	require.Equal(t, uintptr(760), unsafe.Sizeof(leaf),
+		"P2 不得改变 snapshotStatic 尺寸：request_patch 折叠进 upstreamPathsKey 槽位，不新增字段")
+}
