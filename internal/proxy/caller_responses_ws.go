@@ -301,8 +301,9 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			if peekErr != nil {
 				return 0, []byte(domain.TruncateErrMsg(peekErr.Error())), nil, false, peekErr
 			}
-			// first=nil：首帧已在上方转发（预读需要它先出网）
-			handled, fwErr := p.relayWS(st.client, buf, frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
+			// first=nil：首帧已在上方转发（预读需要它先出网）。clientFrameHook 显式
+			// nil：codex 面是 SDK 车道，不消费模板 request_patch（spec §3 矩阵）。
+			handled, fwErr := p.relayWS(st.client, buf, nil, frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
 			if handled {
 				return 0, nil, nil, true, nil
 			}
@@ -352,7 +353,9 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			}
 			return p.bpsWSError(reqID, sel, reqModel, dialErr)
 		}
-		handled, fwErr := p.relayWS(st.client, up, nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
+		// clientFrameHook / frameHook 均显式 nil：BPS 面是 SDK 车道，不消费模板
+		// request_patch（spec §3 矩阵），上游帧观测由 SDK 适配层自理。
+		handled, fwErr := p.relayWS(st.client, up, nil, nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
 		if handled {
 			return 0, nil, nil, true, nil
 		}
@@ -370,11 +373,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// r.Context() 同时取消 → 499 语义不变。每 attempt 一次（与 aiclient
 	// UpstreamTimeout wrap 同级），非每帧。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
-	// TODO(P4): WS 数据面——此处接 headerDecorator(sel, patchKeyResponsesWS, cred)
-	// 的 DialOptions 装饰（握手头 + Host + {api_key}）与帧 hook；P3 阶段边界内
-	// **显式 nil**（aiclient 签名已就位），由 AST 门禁白名单钉住，P4 接线时删除
-	// 白名单条目并改为非 nil 装饰器。
-	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP(), nil)
+	// 握手装饰（spec §7.2，P4）：全局层 → 格式层 openai-responses-ws 的头应用在
+	// aiclient 写完网关 Authorization / Responses-Websockets **之后**（wsHeaderDecorator
+	// 是 aiclient 的末步回调），Host 落 DialOptions.Host，{api_key} 用当次 attempt
+	// 原始 cred 展开。无配置返回 nil（快路径）；failover 每 attempt 重算。
+	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP(), wsHeaderDecorator(sel, patchKeyResponsesWS, cred))
 	cancel()
 	if dialErr == nil {
 		// 首帧模型改写与 stripTier 删除都在调用方预处理（relayWS 原样写出）：
@@ -387,7 +390,14 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 				first = nf
 			}
 		}
-		handled, fwErr := p.relayWS(st.client, newAiclientTransport(up), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
+		// 首帧 body patch（spec §7.2/§10 P4）：严格在既有变换（模型改写 / stripTier）
+		// **之后**、出网之前执行一次；静态车道首帧不参与 dial，这里改好的字节只由
+		// relayWS(first) 写出（不得双写/双 patch）。
+		first = p.bodyPatch(sel, patchKeyResponsesWS, first)
+		// clientFrameHook：仅后续客户端帧里的 response.create 才 body patch，
+		// response.cancel 等控制帧原样（nil = 无配置快路径）；frameHook（上游帧观测）
+		// 静态 key 面显式 nil——判死嗅探只属 codex 面。
+		handled, fwErr := p.relayWS(st.client, newAiclientTransport(up), p.wsClientFrameHook(sel), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
 		if handled {
 			return 0, nil, nil, true, nil
 		}

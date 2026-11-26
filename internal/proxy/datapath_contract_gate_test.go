@@ -37,8 +37,10 @@ const (
 	// P3（request_patch HTTP 数据面）新增非测试源 request_patch.go（helper +
 	// 限频 WARN + 脱敏）；同时新增 6 个 api.Selection 位点（patchOf / formatPatchFor /
 	// headerDecorator / bodyPatch / upstreamKeyOf / warnBodyPatchFailure）。
+	// P4（request_patch WS 数据面）未新增源文件，request_patch.go 追加 2 个
+	// api.Selection 位点（wsHeaderDecorator / wsClientFrameHook）⇒ 92 → 94。
 	datapathScanFiles     = 55
-	datapathContractSites = 92
+	datapathContractSites = 94
 	datapathReleaseSites  = 38
 	datapathHandleCalls   = 50
 	datapathContractFloor = 84 // V0 下限

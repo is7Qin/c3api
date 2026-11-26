@@ -180,7 +180,7 @@ func newRoundBillingEnv(t *testing.T, ft wsRelayTransport, first []byte, logPath
 			}
 		}()
 		defer leaseGuard(sel)
-		handled, fwErr := p.relayWS(client, ft, nil, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
+		handled, fwErr := p.relayWS(client, ft, nil, nil, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
 		out <- roundRelayOutcome{handled: handled, fwMsg: relayErrText(fwErr)}
 	}))
 	t.Cleanup(srv.Close)

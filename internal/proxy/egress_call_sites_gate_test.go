@@ -30,11 +30,10 @@ import (
 //     新增出站方法自动纳入，不改门禁即被测到）；
 //  2. 扫描 internal/proxy 全部生产源文件：这些方法的调用 + rawJSON（第 8 参装饰器）
 //     必须传够形参，且**最后一个实参不是 nil**；
-//  3. 显式 nil 只允许白名单（文件+函数+方法）：
-//     - caller_responses_ws.go / call / ResponsesWSDial —— P3 阶段边界（WS 数据面
-//     P4 接线；该文件必须保留 TODO(P4) 标记，删标记即红）；
-//     - codex/BPS 车道今天不调 aiclient（SDK/prepared 面），故白名单为空集——
-//     将来若某车道确需 nil，必须在此登记并写明理由；
+//  3. 显式 nil 只允许白名单（文件+函数+方法）：P4 把 WS 握手装饰器转正后**白名单
+//     为空集**——今天所有 aiclient 出站接线（含 caller_responses_ws.go 的
+//     ResponsesWSDial）都传非 nil 装饰器；codex/BPS 车道今天不调 aiclient
+//     （SDK/prepared 面），将来若某车道确需 nil，必须在此登记并写明理由；
 //  4. 计数 golden：proxy 侧 aiclient 出站调用 11 处（a 10 + c 1）+ rawJSON 4 处。
 //     新增/删除调用点必须同步改门禁（spec 明确要求「不改门禁即红」）。
 //
@@ -50,11 +49,11 @@ type outboundMethod struct {
 
 // egressCallSite 一次出站调用点（违规或统计用）。
 type egressCallSite struct {
-	file     string
-	fn       string
-	method   string
-	pos      token.Position
-	lastArg  ast.Expr
+	file    string
+	fn      string
+	method  string
+	pos     token.Position
+	lastArg ast.Expr
 }
 
 // isNilIdent 判定表达式是否是字面 nil。
@@ -70,15 +69,11 @@ type nilAllowKey struct {
 	method string
 }
 
-var egressNilAllowlist = map[nilAllowKey]string{
-	// P3 阶段边界：WS 握手装饰器（header + Host + {api_key}）与帧 hook 是 P4；
-	// 本阶段显式 nil，由文件内 TODO(P4) 注释标记。P4 接线时删除本条目。
-	{"caller_responses_ws.go", "call", "ResponsesWSDial"}: "P4",
-}
-
-// todoMarkerForStage 白名单阶段对应的 TODO 标记（文件里必须存在，防止「补了接线
-// 忘了删白名单」或「白名单留着但 TODO 丢了」两种静默漂移）。
-var todoMarkerForStage = map[string]string{"P4": "TODO(P4)"}
+// egressNilAllowlist 是「显式 nil 允许」白名单（空集 = 全部接线点必须传装饰器）。
+// P4 已把 WS 握手装饰器接上，P3 的阶段白名单条目（caller_responses_ws.go /
+// call / ResponsesWSDial）成对删除；将来若某车道确需 nil，必须在此登记
+// file+fn+method+**理由**（空理由会被门禁判红）。
+var egressNilAllowlist = map[nilAllowKey]string{}
 
 // expectedOutboundMethods 显式 pin 住今天应有的 7 个出站方法名（动态枚举之外的第二
 // 道锁：枚举逻辑本身失明时，数量断言仍会红）。
@@ -128,14 +123,11 @@ func TestEgressCallSitesDecorated(t *testing.T) {
 			require.NotNil(t, site.lastArg, "%s：调用点参数缺失（装饰器实参必须到位）", site.pos)
 			if isNilIdent(site.lastArg) {
 				key := nilAllowKey{file: base, fn: site.fn, method: site.method}
-				stage, ok := egressNilAllowlist[key]
+				reason, ok := egressNilAllowlist[key]
 				require.True(t, ok,
-					"%s：出站调用 %s 传了显式 nil——装饰器只有 P4/P5/白名单车道允许 nil；非白名单调用点必须传 headerDecorator(...) 闭包",
+					"%s：出站调用 %s 传了显式 nil——装饰器只有白名单车道允许 nil（P4 后为空集）；非白名单调用点必须传 headerDecorator(...) / wsHeaderDecorator(...) 闭包",
 					site.pos, site.method)
-				marker := todoMarkerForStage[stage]
-				require.Contains(t, string(src), marker,
-					"%s 被白名单放行（阶段 %s），但文件里没有 %s 标记——接线/白名单必须成对维护",
-					base, stage, marker)
+				require.NotEmpty(t, reason, "%s：nil 白名单条目必须写明理由（防「随手加白名单」）", base)
 			}
 		}
 	}
@@ -190,9 +182,10 @@ func TestEgressCallSitesGateRejectsBypass(t *testing.T) {
 	require.Equal(t, 1, nilCount, "非白名单函数里的 nil 实参必须可被识别（门禁不能空转）")
 	require.Equal(t, 2, decoratedCount)
 
-	_, ok := egressNilAllowlist[nilAllowKey{file: "caller_responses_ws.go", fn: "call", method: "ResponsesWSDial"}]
-	require.True(t, ok, "P4 阶段白名单必须存在（否则 P3 WS dial 显式 nil 会红）")
-	_, ok = egressNilAllowlist[nilAllowKey{file: "forward.go", fn: "rawJSON", method: "RawPost"}]
+	// P4 转正：WS 握手装饰器已接非 nil 实参，阶段白名单必须清空（否则就是
+	// 「白名单留着但接线已经做了」的静默漂移——门禁会继续放行假 nil）。
+	require.Empty(t, egressNilAllowlist, "P4 接线完成后 aiclient 出站白名单必须为空集（WS dial 已传 wsHeaderDecorator）")
+	_, ok := egressNilAllowlist[nilAllowKey{file: "forward.go", fn: "rawJSON", method: "RawPost"}]
 	require.False(t, ok, "rawJSON 内部 RawPost 透传不是白名单——它必须把实参原样传下去")
 
 	// 形参不足（「删一个实参」在 AST 上的等价形态）必须可识别：lastArg=nil 哨兵。

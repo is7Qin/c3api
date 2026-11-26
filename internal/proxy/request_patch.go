@@ -17,10 +17,13 @@ package proxy
 //     [redacted]（返回客户端的 4xx 原文面保持既有契约，不脱敏）。
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/is7qin/c3api/internal/api"
 	"github.com/is7qin/c3api/internal/domain"
@@ -91,37 +94,74 @@ func headerDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey stri
 		return nil
 	}
 	return func(req *http.Request) {
-		applyPatchHeaders(req, patch.Headers, apiKey)
+		applyPatchHeaders(req.Header, &req.Host, patch.Headers, apiKey)
 		if hasFormat {
-			applyPatchHeaders(req, formatHeaders.Headers, apiKey)
+			applyPatchHeaders(req.Header, &req.Host, formatHeaders.Headers, apiKey)
 		}
 	}
 }
 
-// applyPatchHeaders 应用**一层**头语义。头名在保存期已归一为规范形
-// （domain.ParseRequestPatch），此处直接比较，不再 CanonicalHeaderKey。
+// applyPatchHeaders 应用**一层**头语义——HTTP（req.Header / req.Host）与 WS 握手
+// （DialOptions.HTTPHeader / DialOptions.Host）的**唯一判据**：落点只有「头 map +
+// Host 字符串指针」两处差异，判据本身不复制第二份。
 //
-// Host 是**按层三态**（spec §2.4/§2.6；P3 评审 oracle I1）：非空值 ⇒
-// req.Host = 展开后的值；空值（Del）⇒ req.Host = ""（显式清除上一层/网关默认）。
-// req.Host 空 = 出站回退 URL.Host（HTTP 上"不设置 Host"），所以格式层 Host:""
+// 头名在保存期已归一为规范形（domain.ParseRequestPatch），此处直接比较，不再
+// CanonicalHeaderKey。每层：非空 Set、"" Del。
+//
+// Host 是**按层三态**（spec §2.4/§2.6/§7.1；P3 评审 oracle I1，P4 WS 同语义）：
+// 非空值 ⇒ *host = 展开后的值；空值（Del）⇒ *host = ""（显式清除上一层/网关
+// 默认）。HTTP 上 req.Host 空 = 出站回退 URL.Host；WS 上 DialOptions.Host 空 =
+// 握手回落 URL.Host（coder/websocket 仅在非空时覆盖）——因此格式层 Host:""
 // 能覆盖全局层 Host:Set，与普通头的逐层 Del 覆盖语义一致。
-func applyPatchHeaders(req *http.Request, headers map[string]string, apiKey string) {
+//
+// Accept-Encoding 运行期永不应用（保存期已 400，防御脏库值；响应编码不变量）。
+// 头值里的 {api_key} 用当次 attempt 原始 cred 展开。
+func applyPatchHeaders(header http.Header, host *string, headers map[string]string, apiKey string) {
 	for name, value := range headers {
 		switch name {
 		case "Host":
-			// Host 特例（spec §2.4/§7.1）：只改 Host 请求头，不改连接目标/TLS
-			// SNI；空值经 expandAPIKey 仍为 ""（= 清除 ⇒ 回退 URL.Host）。头值
-			// 占位符同样展开（同一层语义，不写 Header map）。
-			req.Host = expandAPIKey(value, apiKey)
+			// Host 特例：只改 Host 头，不改连接目标/TLS SNI（HTTP 与 WS 同一落法：
+			// 各自语言层的 Host 字段，绝不写 Header map）。
+			*host = expandAPIKey(value, apiKey)
 		case "Accept-Encoding":
 			// 运行期永不应用（响应编码不变量兜底；保存期已拒绝非空值）。
 			continue
 		default:
 			if value == "" {
-				req.Header.Del(name)
+				header.Del(name)
 				continue
 			}
-			req.Header.Set(name, expandAPIKey(value, apiKey))
+			header.Set(name, expandAPIKey(value, apiKey))
+		}
+	}
+}
+
+// wsHeaderDecorator 构造 ResponsesWSDial 的**握手**装饰器（spec §7.2/§10 P4）：
+//   - 无全局头且无该格式层头 ⇒ nil（aiclient 快路径，零分配）；
+//   - 否则返回闭包：全局层 → 格式层逐层应用（共用 applyPatchHeaders 的同一份
+//     判据；Host 落 DialOptions.Host，{api_key} 用闭包捕获的原值展开）。
+//
+// 调用时机由 aiclient.ResponsesWSDial 保证：网关的 Authorization /
+// Responses-Websockets 已写入 DialOptions.HTTPHeader **之后**才调本装饰器（后写
+// 覆盖赢，可覆盖/删除网关默认头）。apiKey 必须来自当次 attempt 的原始 cred
+// （credentialFor(sel)），不得从 Authorization 反解。
+func wsHeaderDecorator(sel *api.Selection, key domain.UpstreamPathKey, apiKey string) func(*websocket.DialOptions) {
+	patch := patchOf(sel)
+	if patch == nil {
+		return nil
+	}
+	formatHeaders, hasFormat := patch.Formats[key]
+	if len(patch.Headers) == 0 && (!hasFormat || len(formatHeaders.Headers) == 0) {
+		return nil
+	}
+	return func(opts *websocket.DialOptions) {
+		if opts.HTTPHeader == nil {
+			// 防御：aiclient 恒先建好 HTTPHeader；独立调用（测试/未来入口）也不 panic。
+			opts.HTTPHeader = make(http.Header)
+		}
+		applyPatchHeaders(opts.HTTPHeader, &opts.Host, patch.Headers, apiKey)
+		if hasFormat {
+			applyPatchHeaders(opts.HTTPHeader, &opts.Host, formatHeaders.Headers, apiKey)
 		}
 	}
 }
@@ -150,6 +190,48 @@ func (p *Proxy) bodyPatch(sel *api.Selection, key domain.UpstreamPathKey, body [
 		return body
 	}
 	return out
+}
+
+// responseCreateTypeBytes 是 WS 客户端请求帧的顶层 type（唯一 body patch 目标；
+// response.cancel 等控制帧永不改写，spec §3 矩阵/§7.2）。
+var responseCreateTypeBytes = []byte("response.create")
+
+// wsClientFrameHook 构造 relayWS 的**客户端→上游**帧 hook（spec §7.2/§7.4/§10 P4）：
+//   - 无该格式层或 body 面为空（无 set/delete）⇒ nil（relayWS 快路径，零成本）；
+//   - 返回闭包后逐帧先做**零分配首键字节扫描**（scanKeyValue，与
+//     isResponsesCompleted/isResponsesCreated 同款）判顶层 type == "response.create"；
+//     未命中（response.cancel / 其他控制帧 / 非 JSON）返回 nil = 原样转发，**字节
+//     不变、不复制帧、不解析帧**；
+//   - 命中才执行 body patch——**复用 bodyPatch**（domain.ApplyRequestBodyPatch 是
+//     唯一执行器：delete 排序→set 排序、set 胜、非 JSON 结构性跳过；sjson 残余
+//     失败 ⇒ bodyPatch 返回原 slice + 固定文案限频 WARN，此处随之裸透传，不中止
+//     会话、不改写帧）；
+//   - {api_key} 只用于握手头，body 值是字面量（spec §2.4）。
+//
+// 生命周期：每次 attempt 构造一次（有配置才分配 1 枚闭包），client-loop 单
+// goroutine 调用，无锁无全局查询；成功路径零日志。
+func (p *Proxy) wsClientFrameHook(sel *api.Selection) func([]byte) []byte {
+	fp, ok := formatPatchFor(sel, patchKeyResponsesWS)
+	if !ok || (len(fp.Set) == 0 && len(fp.Delete) == 0) {
+		return nil
+	}
+	return func(frame []byte) []byte {
+		if !isResponseCreateFrame(frame) {
+			return nil // 原样转发：response.cancel 等控制帧字节不变
+		}
+		return p.bodyPatch(sel, patchKeyResponsesWS, frame)
+	}
+}
+
+// isResponseCreateFrame 判定一帧是否是客户端 response.create 请求帧（顶层 type
+// 的裸字节精确匹配）。零分配、不反序列化：scanKeyValue 单遍字节扫描（type 通常
+// 为首键 ⇒ 与帧长无关的常数成本；非对象/结构非法返回 false）。
+func isResponseCreateFrame(frame []byte) bool {
+	start, end, ok := scanKeyValue(frame, typeKeyBytes)
+	if !ok || start >= len(frame) || frame[start] != '"' {
+		return false
+	}
+	return bytes.Equal(frame[start+1:end-1], responseCreateTypeBytes)
 }
 
 // bodyPatchWarnGate 是 sjson 残余失败的进程内限频表：键 = template_id+format，

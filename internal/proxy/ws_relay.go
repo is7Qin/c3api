@@ -26,10 +26,11 @@ import (
 )
 
 // --- resp-ws relay 合一骨架（relayWS：双传输面共用的并发状态机，传输差异抽
-// 到 5 方法 wsRelayTransport 接口 + 一个可选 frameHook） ---
+// 到 5 方法 wsRelayTransport 接口 + 两个可选 hook（clientFrameHook/frameHook）） ---
 // 双传输面差异只在传输层（上游具体类型/typ 语义/每帧判死钩子），状态机段（首帧
 // 改写 → 三向 goroutine relay → 分类 → 关闭传播 → 记录）逐字同款——骨架只合一
-// 逐字同款段，差异收口在 wsRelayTransport 5 方法 + 一个可选 frameHook。
+// 逐字同款段，差异收口在 wsRelayTransport 5 方法 + 两个可选 hook（客户端帧变换
+// clientFrameHook / 上游帧观测 frameHook）。
 
 // wsRelayTransport 双向 relay 传输面抽象（传输接口，5 方法）：
 // 语义与各实现逐方法对应；codex 实现（SDK 具体类型）对 typ 恒 MessageText
@@ -45,15 +46,22 @@ type wsRelayTransport interface {
 }
 
 // relayWS 合一骨架：首帧由调用方预处理（模型改写见 wsFirstFrameForSel——
-// ModelMapping 语义，与 setModel 同构；非 Codex 另有 stripTier）后原样转发
-// → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播
-// → usage 记录。返回 (handled, fwErr)：handled = 请求已处理完毕（成功/客户端断开/
-// 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwErr
-// 为原始错误（保留链），调用方截断成文本后按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
-// frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
-// usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
-// 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
-func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
+// ModelMapping 语义，与 setModel 同构；非 Codex 另有 stripTier / request_patch
+// bodyPatch）后原样转发 → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析
+// 零拷贝直转）→ 关闭/错误传播 → usage 记录。返回 (handled, fwErr)：handled =
+// 请求已处理完毕（成功/客户端断开/流中止已记录）；false = 首帧转发失败（上游未
+// 消费，记 not-sent 可重试），fwErr 为原始错误（保留链），调用方截断成文本后按
+// 连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
+//
+// 两个可选 hook（均 nil = 零开销快路径——指针比较，无参数装箱）：
+//   - clientFrameHook：客户端→上游方向，**client.Read 成功后、up.Write 之前**调用；
+//     返回 nil = 原样转发（帧字节不变、不复制）；非 nil = 用返回值写出。静态 key
+//     车道的 request_patch 帧 hook 即挂此处（仅 response.create 帧 body patch，
+//     spec §7.2；response.cancel 等控制帧原样）。codex/BPS 车道显式 nil。
+//   - frameHook：上游→客户端方向，**读帧成功后、usage 嗅探
+//     （sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex 路径的
+//     判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
+func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, clientFrameHook func([]byte) []byte, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
 	// first == nil：首个客户端帧**已由调用方转发**（codex 分支的"首帧判死预读"
 	// 需要先转发再预读——上游只有收到 create 才会回第一帧；见 wsAttempt）。
 	if first != nil {
@@ -190,6 +198,14 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				setErr(&clientErr, err)
 				exit()
 				return
+			}
+			// 客户端帧 hook（request_patch，静态 key 面）：Write 之前调用，nil 返回
+			// = 原样转发（控制帧字节不变）；只在命中 response.create 且配置存在时
+			// 改写。codex/BPS 车道传 nil（快路径零开销）。
+			if clientFrameHook != nil {
+				if patched := clientFrameHook(f); patched != nil {
+					f = patched
+				}
 			}
 			if err := up.Write(relayCtx, typ, f); err != nil {
 				// SDK 本地拒绝（§5.4，仅 Codex 传输会返回）：该帧未出网，连接完好——

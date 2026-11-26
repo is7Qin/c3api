@@ -474,7 +474,7 @@ func relayWSWithSel(t *testing.T, p *Proxy, sel *api.Selection, ft *fakeTranspor
 			return
 		}
 		defer client.CloseNow()
-		handled, fwErr := p.relayWS(client, ft, hook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, []byte(first))
+		handled, fwErr := p.relayWS(client, ft, nil, hook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, []byte(first))
 		out <- relayOutcome{handled: handled, fwMsg: relayErrText(fwErr)}
 		close(out)
 	}))

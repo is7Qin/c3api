@@ -46,9 +46,10 @@ func AcceptResponsesWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn,
 // 的唯一防御点）：返回 errNilEgressClient，不 panic、不静默退回底座。
 //
 // decorate 是 request_patch 的 WS 握手装饰缝（spec §7.2，P4 消费）：在网关的
-// Authorization / Responses-Websockets 之后调用，可改 DialOptions.HTTPHeader 与
-// DialOptions.Host（coder/websocket 仅在 Host 非空时覆盖）；nil = 快路径。
-// P3 只加参数，所有调用点显式传 nil（WS 帧 hook 是 P4）。
+// Authorization / Responses-Websockets 之后调用（后写覆盖赢），可改
+// DialOptions.HTTPHeader 与 DialOptions.Host（coder/websocket 仅在 Host 非空时
+// 覆盖，空 = 回落 URL.Host）；nil = 快路径。装饰闭包由 proxy 的 wsHeaderDecorator
+// 构造（{api_key} 展开在闭包内完成，本包不收 key）。
 func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, path, key string, header http.Header, hc *http.Client, decorate func(*websocket.DialOptions)) (*websocket.Conn, *http.Response, error) {
 	if hc == nil {
 		return nil, nil, errNilEgressClient

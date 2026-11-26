@@ -179,7 +179,9 @@ func newRelayWSTestHBI(t *testing.T, ft *fakeTransport, frameHook func([]byte), 
 			return
 		}
 		defer client.CloseNow()
-		handled, fwErr := p.relayWS(client, ft, frameHook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
+		// clientFrameHook 显式 nil：本文件测既有骨架状态机（request_patch 帧 hook
+		// 的行为面由 request_patch_ws_test.go 的真实代理由 HandleResponsesWS 端到端覆盖）。
+		handled, fwErr := p.relayWS(client, ft, nil, frameHook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
 		out <- relayOutcome{handled: handled, fwMsg: relayErrText(fwErr)}
 	}))
 	t.Cleanup(srv.Close)
