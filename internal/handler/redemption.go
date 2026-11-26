@@ -9,10 +9,10 @@ import (
 	"math"
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
 	"github.com/is7qin/c3api/internal/inputmodel"
-	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -23,7 +23,7 @@ import (
 // createdBy 取认证中间件注入的 platform_admin 用户 id（/admin JWT 路径）；
 // 静态 admin token 路径未注入 → 0（系统创建，决策 5）。
 func createdBy(r *http.Request) int64 {
-	id, _ := server.UserIDFromContext(r.Context())
+	id, _ := auth.UserIDFromContext(r.Context())
 	return id
 }
 
