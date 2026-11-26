@@ -2,20 +2,23 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-package httpx
-
-// 出站 HTTP 头的 wire 合法性判据的**全仓单源**（spec request_patch §2.6/§5.2）：
+// Package headervalid 是出站 HTTP 头 wire 合法性判据的**全仓单源**，也是一个
+// **只依赖 stdlib 的中立叶子包**（本包不得 import 除 stdlib 之外的任何东西）。
 //
-//   - pkg/aiclient 的 RelayHeaders 用它做入站头的值卫生（替换原私有 valueClean）；
-//   - internal/domain 的 ParseRequestPatch / service 的保存期校验用它做模板
-//     request_patch 的头名校验与值校验。
+// 存在理由（为什么判据不在 pkg/httpx）：消费者横跨值类型层与可复用层——
+// internal/domain 的 ParseRequestPatch 用它做模板 request_patch 的头名校验与
+// 头值卫生，pkg/aiclient 的 RelayHeaders 用它做入站头值卫生（spec request_patch
+// §2.6/§5.2）。pkg/httpx 同时承载 net/http 传输装配（TransportConfig /
+// NewTransport / NewClient / ShardedTransport），而 Go 的 import 粒度是**包**：
+// domain 只想调两个纯判据函数，却会把整棵传输装配拖进值类型层的依赖图。
 //
-// 放在 pkg 而不是 internal 的理由：三个消费者分属 pkg 与 internal，反向依赖
-// （pkg → internal）会造出环；pkg/httpx 是既有可复用层。判据本身不新增依赖。
-//
-// 本文件**只陈述 wire 合法性**，不携带任何策略：Accept-Encoding 的保存期拒绝
-// （响应编码不变量）、{api_key} 占位符、头名规范化都在请求 patches 的消费者里，
-// 这里不做（否则就成了「两份判据」里的另一份）。
+// 方向（硬约束）：
+//   - 本包**不得** import 任何 internal/*（架构门禁的 pkg/* 硬规则，零豁免）或
+//     pkg/httpx（否则等于把判据又绑回传输装配层，搬家的意义归零）；
+//   - 本包**只陈述 wire 合法性，不携带任何策略**：Accept-Encoding 的保存期拒绝
+//     （响应编码不变量）、{api_key} 占位符、头名规范化都在请求 patches 的消费者
+//     里，这里不做（否则就成了「两份判据」里的另一份）。
+package headervalid
 
 // ValidHeaderName 报告 s 是否是合法的 HTTP field-name（RFC 9110 §5.1 token）：
 // 非空且每个字节都是 tchar（ALPHA / DIGIT / "!#$%&'*+-.^_`|~"）。大小写不敏感，
@@ -44,7 +47,7 @@ func ValidHeaderName(s string) bool {
 // 允许可打印 ASCII、TAB 与 UTF-8 高位字节；拒绝 0x7f（DEL）与 <0x20 的非 TAB
 // 控制字节（CR/LF/NUL 等）。空串合法（空值在 request_patch 里另表 Del 语义）。
 //
-// 等价性的**冻结口径**：旧私有 valueClean 的判据只留在 header_test.go 的
+// 等价性的**冻结口径**：旧私有 valueClean 的判据只留在 headervalid_test.go 的
 // legacyValueClean（测试内的历史实现副本）里，表驱动等价测试对整个字节域
 // （0x00–0xff 单字节 + 边界组合）逐项比对；改判据会红。
 func ValidHeaderValue(s string) bool {

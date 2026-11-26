@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/is7qin/c3api/pkg/httpx"
+	"github.com/is7qin/c3api/pkg/headervalid"
 )
 
 // 出站请求修饰器（spec custom-request-patch §2/§5.1/§5.2）的**领域形状与唯一解析入口**。
@@ -64,10 +64,10 @@ type formatPatchWire struct {
 // 与 repo 读路径共用；spec §2.6/§5.2）。nil / JSON null / "{}" ⇒ (nil, nil)。
 //
 // 校验只针对 wire 合法性（不设策略限制），完整清单：
-//   - 头名：RFC 9110 token（pkg/httpx.ValidHeaderName，全仓单源）；一律先
+//   - 头名：RFC 9110 token（pkg/headervalid.ValidHeaderName，全仓单源）；一律先
 //     http.CanonicalHeaderKey 归一后存储；同一层内归一后同名（X-A / x-a）⇒ error
 //     （歧义配置）；跨层同名合法（格式层覆盖全局层）。
-//   - 头值：pkg/httpx.ValidHeaderValue（与本包其余保存期判据同源）；允许
+//   - 头值：pkg/headervalid.ValidHeaderValue（与本包其余保存期判据同源）；允许
 //     {api_key} 占位符（不展开，本轮不识别任何变量）；"" = Del。
 //   - Accept-Encoding（规范形）任意一层非空值 ⇒ error：**出站响应编码不变量**
 //     （spec §2.4 评审 oracle C1）——它是计费/明文响应体的机械前提，不是请求
@@ -129,7 +129,7 @@ func normalizePatchHeaders(in map[string]string) (map[string]string, error) {
 	}
 	out := make(map[string]string, len(in))
 	for rawName, value := range in {
-		if !httpx.ValidHeaderName(rawName) {
+		if !headervalid.ValidHeaderName(rawName) {
 			return nil, fmt.Errorf("invalid header name %q", rawName)
 		}
 		// 归一必须**先于**一切比较：Accept-Encoding 拒绝、Host 特例与运行期
@@ -141,7 +141,7 @@ func normalizePatchHeaders(in map[string]string) (map[string]string, error) {
 			// Set？）。值可能不同，消息不回显值。
 			return nil, fmt.Errorf("duplicate header %q after canonicalization", name)
 		}
-		if !httpx.ValidHeaderValue(value) {
+		if !headervalid.ValidHeaderValue(value) {
 			return nil, fmt.Errorf("invalid value for header %q", name)
 		}
 		if name == "Accept-Encoding" && value != "" {

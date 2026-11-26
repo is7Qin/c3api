@@ -255,7 +255,7 @@ func TestRequestPatchThreeStateNormalization(t *testing.T) {
 	}
 }
 
-// TestRequestPatchInvalidHeaderNameValue 头名/值 wire 合法性（pkg/httpx 单源）。
+// TestRequestPatchInvalidHeaderNameValue 头名/值 wire 合法性（pkg/headervalid 单源）。
 func TestRequestPatchInvalidHeaderNameValue(t *testing.T) {
 	invalid := []string{
 		`{"headers":{"Bad Name":"v"}}`,

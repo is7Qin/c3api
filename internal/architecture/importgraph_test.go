@@ -272,14 +272,33 @@ var allowRules = []allowRule{
 	{from: "internal/modelmap", to: []string{}},
 	{from: "internal/identityenv", to: []string{}},
 
+	// pkg/headervalid 是头 wire 合法性判据的**中立叶子包**（stdlib-only）：domain 的
+	// 保存期 request_patch 校验与 pkg/aiclient 的 RelayHeaders 值卫生共用同一份判据
+	// （spec request_patch §2.6）。此前判据寄居 pkg/httpx，把 net/http 传输装配整个
+	// 拖进值类型层的依赖图；下沉后 internal/domain -> pkg/httpx 那条生产越界消失。
+	//
+	// 写成显式空切片而不是裸规则：语义是"叶包不依赖任何包"，与 internal/modelmap /
+	// internal/identityenv 同口径。注意 judge() 对 from=pkg/* 的边先走硬规则短路
+	// （pkg/* 内部依赖放行），所以本规则**不参与边裁决**；它在这里的意义是把
+	// "本包只依赖 stdlib"写成一条被指纹覆盖的显式声明，而不是靠"没人往里加 import"
+	// 的运气。
+	{from: "pkg/headervalid", to: []string{}},
+
 	// pkg/egressapi 是出口值类型与归一化（Spec / Key / New）的**中立叶子包**：domain
 	// 的 Proxy.EgressSpec 要造一个规格值，凭此不再 import 实现层 pkg/egress（账本
 	// 原有的那条 P3 债因此消失）。方向固定：egressapi 只 import stdlib，绝不反向。
 	// R2-a 起多两条 internal/modelmap / internal/identityenv：ModelMapping 与
 	// IdentityEnvelope 的 canonical 定义已下沉到这两个叶子包，本包只留同名别名。
 	// 方向是"值类型层 → 叶子契约"，两个叶子都不 import 任何 internal/*，不可能成环。
+	//
+	// request_patch archfix 变更（1 条 to 白名单加宽，没有新增 all: true）：头 wire
+	// 合法性判据 ValidHeaderName / ValidHeaderValue 从 pkg/httpx 下沉到新的
+	// **stdlib-only 中立叶子包** pkg/headervalid，domain 的保存期 request_patch 校验
+	// 改为引用它。**这不是给 domain 加 pkg/httpx**——那条边是生产越界（值类型层认
+	// 识 net/http 传输装配），修法只能是判据搬家，不是放宽白名单。
 	{from: "internal/domain", to: []string{
 		"internal/credential", "pkg/egressapi", "internal/modelmap", "internal/identityenv",
+		"pkg/headervalid",
 	}},
 
 	// 生成代码：只允许自引用。ent 模型 / schema 复用 domain 枚举属于 Codegen 边界
@@ -551,6 +570,19 @@ var testFixtureAllow = []string{
 	// 与上面 internal/sdkbridge、internal/server 两条同型。
 	// testFixtureAllow 只加宽 TestImports / XTestImports 口径，不影响 Imports 口径。
 	"internal/billing",
+	// P6-archfix：request_patch 的 scheduler **外部测试**要挂真实 admin HTTP 面
+	// （handler.New + service.New + httpface.WriteErr 中间件）来验证"管理面写
+	// request_patch → PG jsonb 读回 → snapshot digest / planKey 槽"这类端到端行为，
+	// 用假替身测不到真实 SQL 与中间件路径（request_patch_admin_pg_test.go）。
+	// 该用例必须放外部测试包：handler → service → scheduler 的依赖方向会让内部测试
+	// 包成环（见该文件头注释）。
+	//
+	// 生产边仍由 productionLedger 管：scheduler 的**生产**代码没有这三条 import
+	// （规则里也没有）；testFixtureAllow 只加宽 TestImports / XTestImports 口径，
+	// 不影响 Imports 口径。
+	"internal/handler",
+	"internal/httpface",
+	"internal/service",
 	"pkg/",
 }
 
@@ -648,14 +680,24 @@ const (
 	//   handler → service → repository 是 service 自己引的（它还在用
 	//   repository.TxStore / Repository / ErrNotFound 等本单非目标的符号）。
 	//   本门禁用直接 Imports 口径裁决，故与 D1 不冲突。
-	// 前值：8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185（R1-c 之后）
+	// request_patch archfix 变更（1 条 to: 白名单加宽 + 1 条新增显式叶子规则，没有
+	// 新增 all: true；testFixtureAllow 与账本不参与指纹）：
+	//   1. internal/domain 的 to 加 pkg/headervalid（头 wire 判据从 pkg/httpx 下沉到
+	//      新的 stdlib-only 中立叶子包，domain 只依赖叶子契约，不再认识传输装配）；
+	//   2. 新增显式叶子规则 {from: "pkg/headervalid", to: []string{}}（judge 对
+	//      pkg/* 走硬规则短路，本规则不参与边裁决；它是被指纹覆盖的声明式意图）。
+	//   换来的是生产门禁里 internal/domain -> pkg/httpx 这条 new violation 的消失
+	//   （修法是判据搬家，不是把 pkg/httpx 加进 domain 的白名单）。scheduler 的
+	//   三条外部测试边改由 testFixtureAllow 承载，矩阵未为此加宽。
+	// 前值：0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664（本单之前）
+	// 再前值：8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185（R1-c 之后）
 	// 再前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
 	// 再前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
 	// 再前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664"
+	allowMatrixFingerprint = "6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -848,11 +890,17 @@ var productionLedger = ledger{
 
 var testLedger = ledger{
 	name:    "同包测试 TestImports",
-	debtMax: 5,
+	debtMax: 4,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/billing", "internal/usage", "billing 测试用 usage 组件落库构造误差日志夹具；P4 后改 repository 端口", phaseP4},
-		{"internal/verification", "internal/service", "verification 测试用 service.EmailCodeStore 做接口一致性断言；P4 把端口接口下沉", phaseP4},
+		// P6-archfix 删行（debtMax 5 → 4，只减不增）：internal/service 进了
+		// testFixtureAllow（scheduler 的 request_patch 外部测试要装配真实 admin
+		// HTTP 面，见 testFixtureAllow 里 handler/httpface/service 条目的理由）。
+		// 宽口径下 verification -> service 这条"测试用 service.EmailCodeStore 做
+		// 接口一致性断言"的边变成合法的测试夹具边 ⇒ 门禁按 shrink-only 要求删行
+		// 并同步减上限（redundant legacy）。该边本身就是夹具需求，与本单新增的
+		// 三条外部测试夹具边同型，不是"删债时偷加边"。
 		{"internal/handler", "internal/scheduler", "handler 测试直连 scheduler 构造路由视图；P6 后改 service 端口", phaseP6},
 		{"internal/handler", "internal/settingssnap", "handler 测试读 settingssnap 构造设置快照；P6 后由 service 提供", phaseP6},
 		{"internal/handler/payment", "internal/settingssnap", "支付回调测试用 settingssnap 构造设置；P6 后由 service 提供", phaseP6},

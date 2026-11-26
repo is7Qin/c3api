@@ -27,6 +27,9 @@
 ## 边界
 
 - 头策略（`relayDeny`、`Accept-Encoding` 剔除）在 `pkg/aiclient`，不在本包。
+- 头 wire 合法性判据（`ValidHeaderName` / `ValidHeaderValue`）不在本包：它们在
+  stdlib-only 的中立叶子包 `pkg/headervalid`（值类型层 `internal/domain` 也要用，
+  不能为此把 `net/http` 传输装配拖进 domain 的依赖图）。
 - 本包不知道 Codex、出口、账号；只提供底座与克隆能力。
 
 ## 验证
