@@ -13,6 +13,7 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
 import {
   CUSTOM_PATH_FIELDS,
+  assertRequestPatchSafe,
   emptyRequestPatchForm,
   extEchoBlocked as echoBlocked,
   extFormFields,
@@ -916,11 +917,11 @@ export default function Templates() {
     mutationFn: (vars: { confirmed: boolean }) => {
       const tpl = extTarget!
       // 不安全整数护栏：本对话框不编辑 request_patch、只原样带回，回显值经
-      // JSON.parse 已四舍五入；保存即静默改写。非空则提前抛错（不发 PUT）。
-      const unsafePaths = findUnsafeIntegerPaths(extRequestPatch)
-      if (unsafePaths.length > 0) {
-        throw new Error(tr('templates.ext.requestPatchUnsafeDesc', { paths: unsafePaths.join(', ') }))
-      }
+      // JSON.parse 已四舍五入；保存即静默改写。执行点收在共享纯函数里（命中即
+      // throw，不发 PUT）——与主表单 save 同一份语义，源码 tripwire 钉两处都调用。
+      assertRequestPatchSafe(findUnsafeIntegerPaths(extRequestPatch), paths =>
+        tr('templates.ext.requestPatchUnsafeDesc', { paths }),
+      )
       const body: TemplateExt = extWriteBody(
         {
           strip_image_tools: extStrip,
@@ -1032,11 +1033,11 @@ export default function Templates() {
         throw new Error(tr('templates.ext.requestPatchInvalidJson'))
       }
       // 不安全整数护栏（第二道，与 submit 的提前 return 同源）：>2^53-1 的整数经
-      // JSON.parse 已四舍五入，绝不能写回；直接抛错，任何写（模板或 ext）都不发生。
-      const unsafePaths = requestPatchUnsafeIntegerPathsFromForm(f.request_patch)
-      if (unsafePaths.length > 0) {
-        throw new Error(tr('templates.ext.requestPatchUnsafeDesc', { paths: unsafePaths.join(', ') }))
-      }
+      // JSON.parse 已四舍五入，绝不能写回。执行点走共享纯函数（命中即 throw），
+      // 任何写（模板或 ext）都不发生——与扩展对话框 extSave 同一份语义。
+      assertRequestPatchSafe(requestPatchUnsafeIntegerPathsFromForm(f.request_patch), paths =>
+        tr('templates.ext.requestPatchUnsafeDesc', { paths }),
+      )
       let id = saveTargetID(editing?.ID ?? null, pendingTemplateID)
       if (id === null) {
         const created = await api.createTemplate(toBody(f))

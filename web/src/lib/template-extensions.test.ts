@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import {
   CUSTOM_PATH_FIELDS,
   TRANSPORT_DOWNGRADE_CONFIRM,
+  assertRequestPatchSafe,
   emptyRequestPatchForm,
   extEchoBlocked,
   extFormFields,
@@ -565,6 +566,28 @@ describe('requestPatchUnsafeIntegerPathsFromForm', () => {
   })
 })
 
+describe('assertRequestPatchSafe', () => {
+  it("命中不安全整数直接 throw（throw 即中止 mutationFn，任何 PUT 都不发）", () => {
+    assert.throws(
+      () => assertRequestPatchSafe(["formats.openai-chat.set.big"], paths => `blocked: ${paths}`),
+      /blocked: formats\.openai-chat\.set\.big/,
+    )
+  })
+
+  it("空检测放行（不 throw）", () => {
+    assert.doesNotThrow(() => assertRequestPatchSafe([], paths => `blocked: ${paths}`))
+  })
+
+  it("消息进入 Error.message（页面据此展示可读提示）", () => {
+    try {
+      assertRequestPatchSafe(["x", "y"], paths => `unsafe: ${paths}`)
+      assert.fail("必须 throw")
+    } catch (e) {
+      assert.equal((e as Error).message, "unsafe: x, y")
+    }
+  })
+})
+
 // 接线 tripwire：护栏必须接在**回显检测**与**两处保存入口**上，否则「打开编辑→
 // 随便保存」仍会把四舍五入值静默写库（评审 momus I-1 的验收点）。
 describe('templates 页：request_patch 大整数护栏', () => {
@@ -594,6 +617,21 @@ describe('templates 页：request_patch 大整数护栏', () => {
     assert.notEqual(put, -1, "找不到 api.putTemplateExt")
     assert.ok(guard < put, "大整数护栏必须在 api.putTemplateExt 之前")
     assert.match(page, /extUnsafePaths\.length > 0/)
+  })
+
+  it("两个保存入口都调用共享护栏执行点（防止只删一半：删任一处即红）", () => {
+    const extSave = page.indexOf("const extSave = useMutation")
+    const save = page.indexOf("const save = useMutation")
+    const remove = page.indexOf("const remove = useMutation")
+    assert.notEqual(extSave, -1, "找不到 extSave = useMutation")
+    assert.notEqual(save, -1, "找不到 save = useMutation")
+    assert.notEqual(remove, -1, "找不到 remove = useMutation")
+    assert.match(page.slice(extSave, save), /assertRequestPatchSafe\(/,
+      "扩展对话框 extSave 必须调用共享护栏：这里把回显值原样带回，删掉护栏 = 四舍五入值静默写库")
+    assert.match(page.slice(save, remove), /assertRequestPatchSafe\(/,
+      "主表单 save 必须调用共享护栏：删掉护栏 = 链式写把四舍五入值写进 ext")
+    const calls = page.match(/assertRequestPatchSafe\(/g) ?? []
+    assert.ok(calls.length >= 2, "两个写面各调一次（实际 " + calls.length + " 处）")
   })
 
   it("两处写面都渲染醒目 warning（标题 + 管理 API 提示 + jsonb 说明）", () => {

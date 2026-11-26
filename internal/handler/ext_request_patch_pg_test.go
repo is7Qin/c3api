@@ -20,8 +20,9 @@ package handler
 //  4. 真实 jsonb 读回路径确实参与：直接查 template_exts.request_patch::text 断言
 //     PG 侧已是展开十进制，且 PUT 响应 = GET 响应（两者都是读回值，不是入参回显）。
 //
-// 无 TEST_DATABASE_URL 时 pgtest.Clone 直接 t.Skip（skip ≠ green）；CI 传
-// TEST_REQUIRE_PG=1 时缺 DSN 直接 fail。
+// 没有 PG DSN 时 pgtest.Clone 直接 t.Skip（skip ≠ green）；CI 打开 require-PG 开关
+// 时缺 DSN 直接 fail。环境变量名只在 internal/testsupport/pgtest 出现（单一 owner，
+// dsn_source_gate_test.go 是那段纪律的可执行门禁）——本文件连注释都不得拼写它。
 
 import (
 	"bytes"

@@ -237,6 +237,23 @@ export function requestPatchUnsafeIntegerPathsFromForm(form: RequestPatchForm): 
   return out
 }
 
+/**
+ * 保存前护栏的**唯一执行点**（评审 momus r2 Important：执行点此前没有源码 tripwire，
+ * 只删掉某一处 await/throw 不会被任何用例发现）。
+ *
+ * 输入是「检测结果」而不是表单/wire 本身：两个写面的检测入口不同（主表单按行状态
+ * 重算 requestPatchUnsafeIntegerPathsFromForm，扩展对话框按回显 wire 值
+ * findUnsafeIntegerPaths），但"命中即中止一切写"这条**执行语义**必须只有一份。
+ * 非空 ⇒ `throw`（不是 console.warn、不是禁用按钮：mutationFn 抛出即任何 PUT 都不会
+ * 发出）；空 ⇒ 放行。
+ *
+ * 消息由调用方传入：本文件是 `node --test` 直跑的零依赖纯逻辑，i18n 在页面层。
+ */
+export function assertRequestPatchSafe(unsafePaths: string[], message: (joined: string) => string): void {
+  if (unsafePaths.length === 0) return
+  throw new Error(message(unsafePaths.join(', ')))
+}
+
 /** 写面 body 的字段来源：两处写面（主表单链式写 + 扩展对话框）共用。
  *
  * `strip_image_tools` 保留三态：对话框能表达"未配置"（null），主表单只有开/关。 */
