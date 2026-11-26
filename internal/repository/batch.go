@@ -45,22 +45,15 @@ var ErrProviderNotWired = errors.New("repository: provider not wired")
 
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
-// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
-// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
-// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
-// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+// --- R1-c：输入契约类型的别名（canonical 在 internal/inputmodel）---
+//
+// 为什么是别名而不是新定义：写成 `type X inputmodel.X`（少了 `=`）会静默变成
+// "两份同形 struct"，跨包赋值与同一性判定全部失真。编译期双向可赋值断言
+// 在 inputmodel_identity.go（那里一处声明，九个类型全覆盖）。
 type TemplatePatch = inputmodel.TemplatePatch
 
-// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
-// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
-// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
-// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
 type AccountPatch = inputmodel.AccountPatch
 
-// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
-// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
-// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
-// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
 type GroupPatch = inputmodel.GroupPatch
 
 // AccountWriteResult 单账号一次写入的结果：新配置代际 C（客户端 CAS 令牌）与本次

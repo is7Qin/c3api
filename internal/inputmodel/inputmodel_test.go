@@ -76,16 +76,23 @@ func TestRepositoryAliasesAreSameType(t *testing.T) {
 	require.Equal(t, perM, *peAlias.InputPerM)
 }
 
-// TestReverseAssignmentCompiles 是反方向的同一性证明：从 repository 侧构造再赋回
-// canonical 类型。与上一测试合起来就是"双向可赋值"，缺任何一半都可能是碰巧同构。
+// TestReverseAssignmentCompiles 只覆盖 ListQuery：从 repository 侧构造再赋回 canonical 类型。
+//
+// ⚠ **完整的双向同一性并不靠这里**：它由生产代码
+// repository/inputmodel_identity.go 的赋值断言在**每次 go build** 时钉住（那才是全部 9 个类型）。
+// 本用例的价值在另一个方向：它从**测试包**视角证明 `repository.ListQuery` 这个别名真的存在且可用
+// （它只是个别名，删了就编译失败）。
 func TestReverseAssignmentCompiles(t *testing.T) {
 	back := repository.ListQuery{Offset: 40}
 	var canonical inputmodel.ListQuery = back
 	require.Equal(t, 40, canonical.Offset)
 }
 
-// TestZeroValueIsUsable 是文档性的形状断言：这些入参在无人构造时必须可零值使用
-// （handler 里大量 `inputmodel.X{}` 直接返回的场景依赖它）。
+// TestZeroValueIsUsable 是**文档性**断言，它的判别力很弱：对纯数据结构而言，
+// 零值可用是 Go 语言恒真的（所以它不会因业务改动而红）。
+// 保留它只为一件事：若将来把某个入参改成需要构造约束的类型（如带验证的
+// newtype），`var x T` 会编译失败，从而提醒评审。不要把它当成"字段没被改"
+// 的证据 —— 字段名负责由 repository 侧的 args 编译器校验。
 func TestZeroValueIsUsable(t *testing.T) {
 	var lq inputmodel.ListQuery
 	require.Zero(t, lq.Limit)

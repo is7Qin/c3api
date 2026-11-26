@@ -62,7 +62,12 @@ func assertInputContractIdentity() {
 }
 
 // assertInputContractIdentity 是否被调用不影响断言生效：**函数体本身**每次 go build
-// 都会做类型检查。`var _` 只是让它不被当成死代码删掉（同 routing.go 的先例）。
+// 都会做类型检查 —— 因为它的断言体是**赋值**（`a = A`），类型不一致就编译失败。
+// `var _` 只是让它不被当成死代码删掉。
+//
+// ⚠ 同样的手法对 **运行期**断言不成立（见下面 assertMerchantRefImmutable）：
+// `var _ = f` 只取函数值、**不调用**，所以 `if ... panic` 永远不执行。
+// 那类断言必须靠 init() 跑。
 var _ = assertInputContractIdentity
 
 // assertMerchantRefImmutable 钉住哨兵是**同一实例**且 `%w` 链未断。
@@ -81,5 +86,8 @@ func assertMerchantRefImmutable() {
 	}
 }
 
-// 同样只是让断言不被当成死代码删掉。
-var _ = assertMerchantRefImmutable
+// ⚠ **必须用 init() 调用**，不能写 `var _ = assertMerchantRefImmutable`：
+// 后者只取函数值、不执行函数体，而本函数的断言是 `if ... panic`（**运行期**，
+// 不像上面那类赋值会在编译期校验）。写成 `var _` 会让它静默失效：实测将别名换成
+// 另一枚同文案的 fmt.Errorf 后，build 绿、repository 测试也绿，断言从未发声。
+func init() { assertMerchantRefImmutable() }

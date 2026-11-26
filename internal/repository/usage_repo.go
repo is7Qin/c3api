@@ -24,10 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
-// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
-// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
-// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
-// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+// R1-c：canonical 在 internal/inputmodel；为何必须是别名（而非新定义）见 inputmodel_identity.go。
 type UsageQuery = inputmodel.UsageQuery
 
 type UsageRepo struct {
