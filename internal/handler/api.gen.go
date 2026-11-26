@@ -2711,13 +2711,13 @@ type TemplateExtCredentialType string
 
 // TemplateFormatPatch 单个出站格式的请求修饰（body 只对 JSON 请求体生效；非 JSON 结构性跳过）。
 type TemplateFormatPatch struct {
-	// Delete gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；不存在或不适用（body 非 JSON）时无操作。
+	// Delete gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；解析期去重、执行期按 path 排序；不存在或不适用（body 非 JSON）时无操作。需要**字面方括号**键时用反斜杠转义（如 a\[b\]）——未转义的 [ / ] 保存期 400（spec §5.2）。
 	Delete *[]string `json:"delete,omitempty"`
 
 	// Headers 格式层头：同名覆盖全局层；值 "" = 删除。
 	Headers *map[string]string `json:"headers,omitempty"`
 
-	// Set gjson path → 任意 JSON 值；字节级保存/回显（大整数与 1e18 不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。
+	// Set gjson path → 任意 JSON 值；保存/回显字节级保留大整数字面量（不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。path 里需要**字面方括号**键时用反斜杠转义（如 a\[b\]）——未转义的 [ / ] 一律保存期 400（sjson 会把它们当字面键，属静默语义歧义；spec §5.2）。落库经 PG jsonb（numeric）：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000），语义/精度不变；>2^53 整数字面量（如 9007199254740993）逐字保留。需要逐字精确的数值请直接走管理 API（web 编辑器会拦截 >2^53 的整数并提示，见 §17.3）。
 	Set *map[string]interface{} `json:"set,omitempty"`
 }
 
@@ -2741,7 +2741,7 @@ type TemplatePatch struct {
 // TemplatePatchSupportedFormats defines model for TemplatePatch.SupportedFormats.
 type TemplatePatchSupportedFormats string
 
-// TemplateRequestPatch custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。
+// TemplateRequestPatch custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。jsonb 数字规范化：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000，语义/精度不变），>2^53 整数字面量逐字保留；web 编辑器对不能安全表示的整数会阻止保存并提示改用管理 API。
 type TemplateRequestPatch struct {
 	// Formats 格式层：键 ∈ {openai-chat, openai-responses, openai-responses-ws, anthropic, openai-search, openai-images.generations, openai-images.edits}；未知键 400。格式层同名头覆盖全局层（值 "" = 删除，即覆盖为 Del）；层为 null/空对象 = 该层未配置。
 	Formats *map[string]TemplateFormatPatch `json:"formats,omitempty"`

@@ -21,6 +21,13 @@ import (
 //   - wire 非法（Accept-Encoding / 未知格式键 / 非法 path / 非法头名）⇒ 400，
 //     消息前缀 "invalid request_patch: "；
 //   - account ext 端点行为不变（本用例不触它，既有 TestAccountsIdExt 覆盖）。
+//
+// ⚠ 本用例用 **fakeStore**（内存替身）：它只证 **handler 端点级 UseNumber 通路**
+// （PUT 解码 → domain.ParseRequestPatch → CanonicalBytes 回显都在内存里），
+// **不代表真实 jsonb 回显**。真实链路 PUT→jsonb→GET 会经 PG numeric 规范化：
+// 指数写法 1e18 展开为 1000000000000000000（语义/精度不变）、>2^53 整数字面量
+// 9007199254740993 逐字保留。真实 PG 证据见 TestTemplatesIdExtRequestPatchPG
+// （spec §11.11 P1 erratum / §17.1）；本用例不得再被当作「真实链路逐字」的证据。
 func TestTemplatesIdExtRequestPatch(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
@@ -48,7 +55,9 @@ func TestTemplatesIdExtRequestPatch(t *testing.T) {
 	require.Equal(t, 200, rec.Code, "put request_patch: %s", rec.Body.String())
 	putResp := rec.Body.String()
 	require.Contains(t, putResp, "9007199254740993", "大整数不得被 float64 截断（UseNumber）")
-	require.Contains(t, putResp, "1e18", "指数字面量在 handler 层不得被改写")
+	// fakeStore 下 1e18 字面量原样；真实 jsonb 读回会展开成 1000000000000000000
+	// （语义等价）——真实链路口径见 PG 用例 TestTemplatesIdExtRequestPatchPG。
+	require.Contains(t, putResp, "1e18", "指数字面量在 handler 层不得被改写（fakeStore；真实 jsonb 会展开）")
 	require.Contains(t, putResp, "Bearer {api_key}", "占位符原样回显（不替换/不掩码）")
 	require.Contains(t, putResp, "v1/chat/completions", "upstream_paths 与新字段并存")
 
@@ -61,10 +70,11 @@ func TestTemplatesIdExtRequestPatch(t *testing.T) {
 	require.NotNil(t, ext.RequestPatch.Formats)
 	require.Contains(t, *ext.RequestPatch.Formats, "anthropic", "多格式层必须逐层回显")
 
-	// GET 回显与 PUT 响应逐字一致（同一规范形；只有请求/响应 envelope 无差异）。
+	// GET 回显与 PUT 响应逐字一致（fakeStore 下同一内存对象；真实 PG 读回见 PG 用例）。
 	rec = do(http.MethodGet, "/api/admin/templates/"+itoa64(tpl.ID)+"/ext", "")
 	require.Equal(t, 200, rec.Code, "get request_patch: %s", rec.Body.String())
-	require.Equal(t, putResp, rec.Body.String(), "GET 必须逐字回显 PUT 写入的 request_patch")
+	require.Equal(t, putResp, rec.Body.String(),
+		"fakeStore：GET 回显 == PUT 响应（同一内存对象）；真实 jsonb 读回见 TestTemplatesIdExtRequestPatchPG")
 
 	// 旧客户端：不带 request_patch ⇒ 清空（全列替换语义），且其余字段仍可写。
 	rec = do(http.MethodPut, "/api/admin/templates/"+itoa64(tpl.ID)+"/ext",

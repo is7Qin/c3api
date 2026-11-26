@@ -18,8 +18,10 @@ import {
   extFormFields,
   extWriteBody,
   extWriteConfirm,
+  findUnsafeIntegerPaths,
   isCodexCredentialType as isCodexCredential,
   requestPatchFromForm,
+  requestPatchUnsafeIntegerPathsFromForm,
   saveTargetID,
   shouldSyncEcho,
   type FormatPatchForm,
@@ -134,6 +136,11 @@ interface FormState {
   // custom 专用出站请求修饰（request_patch）的行编辑器状态：全局头 + 7 格式层
   // （头/body set/delete）。回显经 extFormFields 深拷贝填充；保存时转 wire 上送。
   request_patch: RequestPatchForm
+  // 回显时检测到的**不安全整数路径**（>2^53-1 的 JSON 整数）：GET 响应经
+  // JSON.parse 已经被四舍五入，原值不可能从 web 复原。非空即锁定保存，提示改用
+  // admin API（评审 momus I-1）。保存前还会按表单当前内容重算一次（用户改安全值/
+  // 删行后必须放行）。
+  requestPatchUnsafePaths: string[]
   // codex 出站传输（"" = 未配置 = 默认 http；"http" / "ws"）——编辑态经 ext 回显填充，
   // 保存时链式写 ext。表单里不提供修改入口（改它在「扩展配置」弹窗，需 409 确认流）。
   codex_responses_transport: string
@@ -150,6 +157,7 @@ const emptyForm = (): FormState => ({
   strip_image_tools: false,
   upstream_paths: {},
   request_patch: emptyRequestPatchForm(),
+  requestPatchUnsafePaths: [],
   codex_responses_transport: '',
 })
 
@@ -174,6 +182,7 @@ function toForm(t: Template): FormState {
     strip_image_tools: false,
     upstream_paths: {},
     request_patch: emptyRequestPatchForm(),
+    requestPatchUnsafePaths: [],
     codex_responses_transport: '',
   }
 }
@@ -481,7 +490,16 @@ function FormFields({
                 <Label>{t('templates.ext.requestPatch')}</Label>
                 <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchHint')}</p>
                 <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchSecretHint')}</p>
+                <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchNumericHint')}</p>
               </div>
+              {form.requestPatchUnsafePaths.length > 0 && (
+                <div role="alert" className="space-y-1 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive">
+                  <p className="text-sm font-medium">{t('templates.ext.requestPatchUnsafeTitle')}</p>
+                  <p className="text-xs">{t('templates.ext.requestPatchUnsafeDesc', { paths: form.requestPatchUnsafePaths.join(', ') })}</p>
+                  <p className="text-xs">{t('templates.ext.requestPatchUnsafeAdminApi')}</p>
+                  <p className="text-xs">{t('templates.ext.requestPatchUnsafeJsonb')}</p>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-xs">{t('templates.ext.requestPatchHeaders')}</Label>
                 <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchHeadersHint')}</p>
@@ -556,6 +574,7 @@ function FormFields({
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs">{t('templates.ext.requestPatchSet')}</Label>
+                          <p className="text-xs text-muted-foreground">{t('templates.ext.requestPatchPathHint')}</p>
                           {layer.set.map((row, i) => (
                             <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
                               <Input
@@ -853,6 +872,9 @@ export default function Templates() {
   // 但必须把回显值原样带回——漏一环 = 保存一次就把已有配置清空。
   const [extUpstreamPaths, setExtUpstreamPaths] = useState<Record<string, string>>({})
   const [extRequestPatch, setExtRequestPatch] = useState<TemplateRequestPatch>({})
+  // 回显的 request_patch 里若有 >2^53-1 整数（JSON.parse 已四舍五入），对话框原样
+  // 带回就会把损坏值静默写回——非空即禁止保存并提示改用 admin API（评审 momus I-1）。
+  const [extUnsafePaths, setExtUnsafePaths] = useState<string[]>([])
   // 409 二次确认：只有用户点头后重发才带 confirm（禁止无条件带）。
   const [extConfirmOpen, setExtConfirmOpen] = useState(false)
   const extQ = useQuery({
@@ -873,6 +895,7 @@ export default function Templates() {
     setExtTransport('')
     setExtUpstreamPaths({})
     setExtRequestPatch({})
+    setExtUnsafePaths([])
     setExtConfirmOpen(false)
   }
   useEffect(() => {
@@ -885,12 +908,19 @@ export default function Templates() {
     // 两种 custom 专有字段本弹窗不编辑，但写面是全列替换：原样带回回显值。
     setExtUpstreamPaths({ ...(extQ.data?.upstream_paths ?? {}) })
     setExtRequestPatch(extQ.data?.request_patch ?? {})
+    setExtUnsafePaths(findUnsafeIntegerPaths(extQ.data?.request_patch ?? null))
   }, [extTarget?.ID, extQ.isLoading, extQ.data])
   // 扩展对话框的写面：body 走唯一的组装点（与主表单链式写同一个 helper）。
   // mutationFn 的入参就是「用户是否已在 409 弹窗里确认」——确认才带令牌。
   const extSave = useMutation({
     mutationFn: (vars: { confirmed: boolean }) => {
       const tpl = extTarget!
+      // 不安全整数护栏：本对话框不编辑 request_patch、只原样带回，回显值经
+      // JSON.parse 已四舍五入；保存即静默改写。非空则提前抛错（不发 PUT）。
+      const unsafePaths = findUnsafeIntegerPaths(extRequestPatch)
+      if (unsafePaths.length > 0) {
+        throw new Error(tr('templates.ext.requestPatchUnsafeDesc', { paths: unsafePaths.join(', ') }))
+      }
       const body: TemplateExt = extWriteBody(
         {
           strip_image_tools: extStrip,
@@ -957,7 +987,10 @@ export default function Templates() {
     // ext 行 = 确实未配置 = 可以标记已同步）；未成功时传 undefined 表示「不知道」。
     const fields = extFormFields(templateExtEcho.isSuccess ? (templateExtEcho.data ?? null) : undefined)
     if (!fields) return // 没读到：保持表单原样，也不标记已同步
-    setForm(f => ({ ...f, ...fields }))
+    // 回显即检测 >2^53-1 的整数：JSON.parse 已经把它四舍五入，web 无法无损往返，
+    // 必须锁定保存并提示改用 admin API（评审 momus I-1）。
+    const unsafePaths = findUnsafeIntegerPaths(templateExtEcho.data?.request_patch ?? null)
+    setForm(f => ({ ...f, ...fields, requestPatchUnsafePaths: unsafePaths }))
     setExtSyncedFor(editingID)
   }, [editingID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])
 
@@ -997,6 +1030,12 @@ export default function Templates() {
       const requestPatch = requestPatchFromForm(f.request_patch)
       if (requestPatch.invalid) {
         throw new Error(tr('templates.ext.requestPatchInvalidJson'))
+      }
+      // 不安全整数护栏（第二道，与 submit 的提前 return 同源）：>2^53-1 的整数经
+      // JSON.parse 已四舍五入，绝不能写回；直接抛错，任何写（模板或 ext）都不发生。
+      const unsafePaths = requestPatchUnsafeIntegerPathsFromForm(f.request_patch)
+      if (unsafePaths.length > 0) {
+        throw new Error(tr('templates.ext.requestPatchUnsafeDesc', { paths: unsafePaths.join(', ') }))
       }
       let id = saveTargetID(editing?.ID ?? null, pendingTemplateID)
       if (id === null) {
@@ -1082,6 +1121,14 @@ export default function Templates() {
     }
     if (requestPatchFromForm(form.request_patch).invalid) {
       setValidationMsg(tr('templates.ext.requestPatchInvalidJson'))
+      return
+    }
+    // 不安全整数护栏（评审 momus I-1）：按**表单当前内容**重算，用户把值改成安全
+    // 范围或删掉该行后检测为空即放行；非空时禁止保存并列出路径（不发任何 PUT）。
+    const unsafePaths = requestPatchUnsafeIntegerPathsFromForm(form.request_patch)
+    if (unsafePaths.length > 0) {
+      setForm(f => ({ ...f, requestPatchUnsafePaths: unsafePaths }))
+      setValidationMsg(tr('templates.ext.requestPatchUnsafeDesc', { paths: unsafePaths.join(', ') }))
       return
     }
     save.mutate(form)
@@ -1377,6 +1424,13 @@ export default function Templates() {
                 <p className="text-xs text-muted-foreground">{tr('templates.ext.transportHint')}</p>
               </div>
             )}
+            {extUnsafePaths.length > 0 && (
+              <div role="alert" className="space-y-1 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive">
+                <p className="text-sm font-medium">{tr('templates.ext.requestPatchUnsafeTitle')}</p>
+                <p className="text-xs">{tr('templates.ext.requestPatchUnsafeDesc', { paths: extUnsafePaths.join(', ') })}</p>
+                <p className="text-xs">{tr('templates.ext.requestPatchUnsafeAdminApi')}</p>
+              </div>
+            )}
             {extQ.isError && (
               <p className="text-sm text-destructive">{tr('templates.ext.loadFailed', { message: (extQ.error as Error).message })}</p>
             )}
@@ -1387,7 +1441,7 @@ export default function Templates() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setExtTarget(null)} disabled={extSave.isPending}>{tr('common.cancel')}</Button>
             {/* 回显未成功时禁止保存：写面全列替换，没读回旧值就写＝把 ws 清回默认 */}
-            <Button onClick={() => extSave.mutate({ confirmed: false })} disabled={extSave.isPending || !extQ.isSuccess}>
+            <Button onClick={() => extSave.mutate({ confirmed: false })} disabled={extSave.isPending || !extQ.isSuccess || extUnsafePaths.length > 0}>
               {extSave.isPending ? tr('common.saving') : tr('common.save')}
             </Button>
           </DialogFooter>

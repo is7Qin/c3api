@@ -4142,7 +4142,7 @@ components:
     # 全局头 + 逐格式（七键）头/body set/delete。PUT 全列替换，缺省或 null = 清空。
     TemplateRequestPatch:
       type: object
-      description: "custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。"
+      description: "custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。jsonb 数字规范化：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000，语义/精度不变），>2^53 整数字面量逐字保留；web 编辑器对不能安全表示的整数会阻止保存并提示改用管理 API。"
       properties:
         headers:
           type: object
@@ -4163,11 +4163,11 @@ components:
         set:
           type: object
           additionalProperties: true
-          description: "gjson path → 任意 JSON 值；字节级保存/回显（大整数与 1e18 不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。"
+          description: "gjson path → 任意 JSON 值；保存/回显字节级保留大整数字面量（不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。path 里需要**字面方括号**键时用反斜杠转义（如 a\\[b\\]）——未转义的 [ / ] 一律保存期 400（sjson 会把它们当字面键，属静默语义歧义；spec §5.2）。落库经 PG jsonb（numeric）：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000），语义/精度不变；>2^53 整数字面量（如 9007199254740993）逐字保留。需要逐字精确的数值请直接走管理 API（web 编辑器会拦截 >2^53 的整数并提示，见 §17.3）。"
         delete:
           type: array
           items: { type: string }
-          description: "gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；不存在或不适用（body 非 JSON）时无操作。"
+          description: "gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；解析期去重、执行期按 path 排序；不存在或不适用（body 非 JSON）时无操作。需要**字面方括号**键时用反斜杠转义（如 a\\[b\\]）——未转义的 [ / ] 保存期 400（spec §5.2）。"
     AccountExt:
       type: object
       required: [credential_type]

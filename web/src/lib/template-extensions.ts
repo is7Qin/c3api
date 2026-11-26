@@ -175,6 +175,68 @@ export function requestPatchFromForm(form: RequestPatchForm): RequestPatchFromFo
   return { patch: isEmptyRequestPatch(patch) ? undefined : patch, invalid }
 }
 
+/**
+ * 找出对象/数组里所有**超出 JS 安全整数范围**的整数值路径（评审 momus I-1 护栏）。
+ *
+ * 为什么需要：GET /templates/{id}/ext 经 fetch 的 JSON.parse 读成 JS number 时，
+ * 绝对值超过 2^53-1 的整数**已经被四舍五入**；表单再 JSON.stringify 保存就是一次
+ * 静默改写（9007199254740993 → 9007199254740992）。服务端 admin API 用端点级
+ * UseNumber 精确保存，所以唯一安全修法是把这类值交给 admin API，web 端发现即
+ * **阻止保存**（见 templates.tsx 的两处写面门禁）。
+ *
+ * 判据：typeof number && Number.isInteger(n) && !Number.isSafeInteger(n)。字符串里
+ * 的数字、小数都不报（JSON.parse 不会改写它们——只有 numeric 整数值会丢精度）。
+ * 路径形如 `formats.openai-chat.set.big`、`formats.anthropic.set.nested.n`、
+ * `arr[0].id`；prefix 为空时路径就是顶层键名（根值是数字时回落 `<root>`）。
+ */
+export function findUnsafeIntegerPaths(value: unknown, prefix?: string): string[] {
+  const out: string[] = []
+  const walk = (v: unknown, path: string): void => {
+    if (typeof v === 'number') {
+      if (Number.isInteger(v) && !Number.isSafeInteger(v)) out.push(path || '<root>')
+      return
+    }
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => walk(item, path ? `${path}[${i}]` : `[${i}]`))
+      return
+    }
+    if (v && typeof v === 'object') {
+      for (const [key, child] of Object.entries(v as Record<string, unknown>)) {
+        walk(child, path ? `${path}.${key}` : key)
+      }
+    }
+  }
+  walk(value, prefix ?? '')
+  return out
+}
+
+/**
+ * 行编辑器状态 → 不安全整数路径（保存前护栏；与 requestPatchFromForm 同一份
+ * 「set 值是 JSON 文本」语义）。
+ *
+ * 以**表单当前内容**重算而不是沿用回显时刻的检测结果：用户把某行改成安全范围或
+ * 删掉该行之后必须立刻放行。空 path/空值与非法的 set 行在这里跳过（前者不是配置，
+ * 后者由 requestPatchFromForm 的 invalid 分支拦住并提示）。
+ */
+export function requestPatchUnsafeIntegerPathsFromForm(form: RequestPatchForm): string[] {
+  const out: string[] = []
+  for (const [key, layer] of Object.entries(form.formats)) {
+    for (const row of layer.set) {
+      const path = row.path.trim()
+      const raw = row.value.trim()
+      if (!path || !raw) continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      out.push(...findUnsafeIntegerPaths(parsed, `formats.${key}.set.${path}`))
+    }
+  }
+  return out
+}
+
 /** 写面 body 的字段来源：两处写面（主表单链式写 + 扩展对话框）共用。
  *
  * `strip_image_tools` 保留三态：对话框能表达"未配置"（null），主表单只有开/关。 */

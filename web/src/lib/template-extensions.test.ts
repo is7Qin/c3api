@@ -15,11 +15,13 @@ import {
   extFormFields,
   extWriteBody,
   extWriteConfirm,
+  findUnsafeIntegerPaths,
   isEmptyRequestPatch,
   isCodexCredentialType,
   nonEmptyPaths,
   requestPatchFromForm,
   requestPatchToForm,
+  requestPatchUnsafeIntegerPathsFromForm,
   saveTargetID,
   shouldSyncEcho,
 } from './template-extensions.ts'
@@ -466,6 +468,142 @@ describe('request_patch 回显与写面', () => {
   })
 })
 
+
+// —— 大整数护栏（评审 momus I-1）——
+// 链路：GET/echo 经 fetch JSON.parse 读成 JS number（>2^53-1 已被四舍五入）→ 表单
+// 转 JSON 文本 → 保存原样写回 =「打开编辑后任意保存即静默损坏」。纯函数是护栏的
+// 判据来源；页面接线见文末 tripwire。
+describe('findUnsafeIntegerPaths', () => {
+  it("安全整数与 ±(2^53-1) 边界不报", () => {
+    assert.deepEqual(findUnsafeIntegerPaths({ a: 0, b: 1, c: -1, d: 9007199254740991, e: -9007199254740991 }), [])
+    assert.deepEqual(findUnsafeIntegerPaths(0), [])
+    assert.deepEqual(findUnsafeIntegerPaths(Number.MAX_SAFE_INTEGER), [])
+  })
+
+  it("2^53 / 2^53+1 / -1e18 报出路径", () => {
+    assert.deepEqual(findUnsafeIntegerPaths({ big: 2 ** 53 }), ["big"], "2^53 已不能安全表示")
+    // 2^53+1 在 JS 里只能表示成 9007199254740992（同样是不安全整数）；用表达式
+    // 而不是超界字面量，避免 lint 的 no-loss-of-precision 噪音。
+    assert.deepEqual(findUnsafeIntegerPaths({ big: 2 ** 53 + 1 }), ["big"])
+    assert.deepEqual(findUnsafeIntegerPaths({ neg: -1e18 }), ["neg"])
+    assert.deepEqual(findUnsafeIntegerPaths({ safe: 1, big: 1e18 }), ["big"])
+  })
+
+  it("嵌套对象与数组给出完整路径（request_patch 的 set 形状）", () => {
+    assert.deepEqual(
+      findUnsafeIntegerPaths({
+        "formats": {
+          "openai-chat": { set: { nested: { n: Number.MAX_SAFE_INTEGER + 2 }, arr: [1, { id: 1e18 }] } },
+        },
+      }),
+      ["formats.openai-chat.set.nested.n", "formats.openai-chat.set.arr[1].id"],
+    )
+    assert.deepEqual(findUnsafeIntegerPaths([9007199254740992, 1]), ["[0]"])
+  })
+
+  it("小数/字符串/布尔/null 不误报（JSON.parse 不改写它们）", () => {
+    assert.deepEqual(
+      findUnsafeIntegerPaths({ a: 1.5, b: -0.25, c: 1e-7, d: "9007199254740993", e: true, f: null }),
+      [],
+    )
+  })
+
+  it("prefix 直接作为路径前缀（表单 set 行检测用）", () => {
+    assert.deepEqual(
+      findUnsafeIntegerPaths(Number.MAX_SAFE_INTEGER + 2, "formats.openai-chat.set.big"),
+      ["formats.openai-chat.set.big"],
+    )
+    assert.deepEqual(findUnsafeIntegerPaths(1e18), ["<root>"], "根值是数字时回落 <root>")
+    assert.deepEqual(findUnsafeIntegerPaths("x"), [])
+    assert.deepEqual(findUnsafeIntegerPaths(null), [])
+  })
+})
+
+describe('requestPatchUnsafeIntegerPathsFromForm', () => {
+  it("set 行 JSON 文本里的不安全整数给出 formats.<key>.set.<path> 路径", () => {
+    const form = emptyRequestPatchForm()
+    form.formats["openai-chat"] = {
+      headers: [],
+      set: [
+        { path: "big", value: "9007199254740993" },
+        { path: "metadata.id", value: "9007199254740992" },
+        { path: "ok", value: "42" },
+      ],
+      delete: [],
+    }
+    assert.deepEqual(requestPatchUnsafeIntegerPathsFromForm(form), [
+      "formats.openai-chat.set.big",
+      "formats.openai-chat.set.metadata.id",
+    ])
+  })
+
+  it("安全值/字符串/小数/空行/非法 JSON 不误报", () => {
+    const form = emptyRequestPatchForm()
+    form.formats.anthropic = {
+      headers: [],
+      set: [
+        { path: "safe", value: "9007199254740991" },
+        { path: "str", value: "\"9007199254740993\"" },
+        { path: "dec", value: "1.5" },
+        { path: "blank", value: "   " },
+        { path: "", value: "9007199254740993" },
+        { path: "bad", value: "{not-json" },
+      ],
+      delete: [],
+    }
+    assert.deepEqual(requestPatchUnsafeIntegerPathsFromForm(form), [])
+  })
+
+  it("删行/改成安全值后检测为空（护栏放行）", () => {
+    const form = emptyRequestPatchForm()
+    form.formats.anthropic = { headers: [], set: [{ path: "big", value: "9007199254740993" }], delete: [] }
+    assert.equal(requestPatchUnsafeIntegerPathsFromForm(form).length, 1)
+    form.formats.anthropic.set[0].value = "4096"
+    assert.deepEqual(requestPatchUnsafeIntegerPathsFromForm(form), [], "改成安全范围必须立刻放行")
+    form.formats.anthropic.set = []
+    assert.deepEqual(requestPatchUnsafeIntegerPathsFromForm(form), [], "删掉该行必须立刻放行")
+  })
+})
+
+// 接线 tripwire：护栏必须接在**回显检测**与**两处保存入口**上，否则「打开编辑→
+// 随便保存」仍会把四舍五入值静默写库（评审 momus I-1 的验收点）。
+describe('templates 页：request_patch 大整数护栏', () => {
+  const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')
+
+  it("FormState 携带 requestPatchUnsafePaths，空表单/编辑态都初始化", () => {
+    assert.match(page, /requestPatchUnsafePaths: string\[\]/)
+    assert.match(page, /requestPatchUnsafePaths: \[\]/)
+  })
+
+  it("回显 effect 用 findUnsafeIntegerPaths 检测 GET 响应", () => {
+    assert.match(page, /findUnsafeIntegerPaths\(templateExtEcho\.data\?\.request_patch \?\? null\)/)
+  })
+
+  it("主表单保存：按表单当前内容重算，且护栏在 save.mutate 之前（提前 return，不发 PUT）", () => {
+    const guard = page.indexOf("requestPatchUnsafeIntegerPathsFromForm(form.request_patch)")
+    const mutate = page.indexOf("save.mutate(form)")
+    assert.notEqual(guard, -1, "主表单保存入口必须引用大整数护栏")
+    assert.notEqual(mutate, -1, "找不到 save.mutate(form)")
+    assert.ok(guard < mutate, "大整数护栏必须在 save.mutate 之前（否则 PUT 已发出）")
+  })
+
+  it("扩展对话框：护栏在 api.putTemplateExt 之前，且按钮在不安全时禁用", () => {
+    const guard = page.indexOf("findUnsafeIntegerPaths(extRequestPatch)")
+    const put = page.indexOf("api.putTemplateExt(tpl.ID, body, extWriteConfirm")
+    assert.notEqual(guard, -1, "extSave 入口必须引用大整数护栏")
+    assert.notEqual(put, -1, "找不到 api.putTemplateExt")
+    assert.ok(guard < put, "大整数护栏必须在 api.putTemplateExt 之前")
+    assert.match(page, /extUnsafePaths\.length > 0/)
+  })
+
+  it("两处写面都渲染醒目 warning（标题 + 管理 API 提示 + jsonb 说明）", () => {
+    const titles = page.match(/requestPatchUnsafeTitle/g) ?? []
+    assert.ok(titles.length >= 2, "warning 必须同时出现在主表单与扩展对话框")
+    assert.match(page, /requestPatchUnsafeAdminApi/)
+    assert.match(page, /requestPatchUnsafeJsonb/)
+    assert.equal(page.includes("role=\"alert\""), true, "warning 必须是可读的 alert 区域")
+  })
+})
 // 接线 tripwire：全列替换下两个写面都必须把 request_patch 带回（漏一个就清空）。
 describe('templates 页：request_patch 两个写面', () => {
   const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')

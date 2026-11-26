@@ -3245,7 +3245,7 @@ export interface components {
             } | null;
             request_patch?: components["schemas"]["TemplateRequestPatch"] | null;
         };
-        /** @description custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。 */
+        /** @description custom 模板出站请求修饰器。只校验 wire 合法性，不限制可改的头/path；运行期在网关全部变换之后、真正出网前应用。jsonb 数字规范化：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000，语义/精度不变），>2^53 整数字面量逐字保留；web 编辑器对不能安全表示的整数会阻止保存并提示改用管理 API。 */
         TemplateRequestPatch: {
             /** @description 全局层头：键为 HTTP 头名（服务端先按 http.CanonicalHeaderKey 归一；同层归一后同名 → 400）；值 "" = 删除该头；值可含 {api_key} 占位符（运行期用当前账号上游 key 替换，配置只存占位符原文）。Host 可覆盖：只改 Host 请求头，不改连接目标/TLS SNI。Accept-Encoding 非空值保存期 400（响应编码不变量，空值/Del 允许）。 */
             headers?: {
@@ -3262,11 +3262,11 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
-            /** @description gjson path → 任意 JSON 值；字节级保存/回显（大整数与 1e18 不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。 */
+            /** @description gjson path → 任意 JSON 值；保存/回显字节级保留大整数字面量（不经过 float64）。执行期先 delete 再 set（各自按 path 排序），同一 path 同时出现时 set 胜。path 里需要**字面方括号**键时用反斜杠转义（如 a\[b\]）——未转义的 [ / ] 一律保存期 400（sjson 会把它们当字面键，属静默语义歧义；spec §5.2）。落库经 PG jsonb（numeric）：GET 回显会把指数写法展开成十进制（1e18 → 1000000000000000000），语义/精度不变；>2^53 整数字面量（如 9007199254740993）逐字保留。需要逐字精确的数值请直接走管理 API（web 编辑器会拦截 >2^53 的整数并提示，见 §17.3）。 */
             set?: {
                 [key: string]: unknown;
             };
-            /** @description gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；不存在或不适用（body 非 JSON）时无操作。 */
+            /** @description gjson path 列表（简单路径：点分键 + 数组下标 + 基本转义；不允许空段/通配/过滤器）；解析期去重、执行期按 path 排序；不存在或不适用（body 非 JSON）时无操作。需要**字面方括号**键时用反斜杠转义（如 a\[b\]）——未转义的 [ / ] 保存期 400（spec §5.2）。 */
             delete?: string[];
         };
         AccountExt: {

@@ -101,6 +101,30 @@ func TestRequestPatchCanonicalBytesDeterministic(t *testing.T) {
 	require.Nil(t, empty.CanonicalBytes())
 }
 
+// TestRequestPatchDeleteDedup delete 列表解析期去重（spec §17.4 / 评审 momus m3）：
+// 重复项不产生不同配置，且与「本来就无重复」的配置规范字节完全相同（P2 digest
+// 不因书写重复换 key）；首次出现顺序保留，CanonicalBytes 仍统一排序。
+func TestRequestPatchDeleteDedup(t *testing.T) {
+	dup, err := ParseRequestPatch(json.RawMessage(
+		`{"formats":{"anthropic":{"delete":["b.c","a.b","b.c","a.b"]}}}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"b.c", "a.b"}, dup.Formats[UpstreamPathAnthropic].Delete,
+		"重复 delete 项必须去重（保留首次出现顺序）")
+
+	uniq, err := ParseRequestPatch(json.RawMessage(
+		`{"formats":{"anthropic":{"delete":["a.b","b.c"]}}}`))
+	require.NoError(t, err)
+	require.Equal(t, string(uniq.CanonicalBytes()), string(dup.CanonicalBytes()),
+		"去重后与无重复配置规范字节相同（digest 不因书写重复换 key）")
+
+	// 重复项不是空层：其他字段为空时该层仍应保留（去重不得顺手删层）。
+	single, err := ParseRequestPatch(json.RawMessage(
+		`{"formats":{"anthropic":{"delete":["a.b","a.b"]}}}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"a.b"}, single.Formats[UpstreamPathAnthropic].Delete)
+	require.NotNil(t, single)
+}
+
 // TestRequestPatchCanonicalBytesPreservesBigNumbers 大整数/1e18 不经过 float64：
 // set 值原字节逐字保留（spec §5.1「RawMessage 保 JSON 值原样」、§11.11）。
 func TestRequestPatchCanonicalBytesPreservesBigNumbers(t *testing.T) {

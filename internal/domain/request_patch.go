@@ -42,7 +42,7 @@ type FormatPatch struct {
 	Headers map[string]string
 	// Set gjson path → 原始 JSON 值（json.RawMessage 保原字面量，大整数不丢精度）。
 	Set map[string]json.RawMessage
-	// Delete 待删除的 gjson path 列表（执行期排序，保存期只校验文法）。
+	// Delete 待删除的 gjson path 列表（解析期去重、执行期排序，保存期只校验文法）。
 	Delete []string
 }
 
@@ -75,6 +75,8 @@ type formatPatchWire struct {
 //     防御性跳过（脏库值），保存期这里是第一道门。
 //   - formats 键必须属于七键（domain.UpstreamPathFormat 的 ok），未知键 ⇒ error。
 //   - set 值必须 json.Valid；set/delete 的 path 过 ValidateSJSONPath 文法校验。
+//   - delete 列表解析期去重（保留首次出现顺序；spec §17.4 / 评审 momus m3）——
+//     重复项运行期无副作用，但会让 P2 digest 因书写重复算出不同 key。
 //   - 空层归一 nil（见类型注释）。
 //
 // 错误消息**只含字段名/path，不含 header 值或 body 值**：配置值可能是密钥
@@ -173,12 +175,22 @@ func normalizeFormatPatch(key string, w formatPatchWire) (FormatPatch, error) {
 		out.Set = set
 	}
 	if len(w.Delete) > 0 {
+		// 解析期去重（spec §17.4 / 评审 momus m3）：运行期重复 delete 无副作用，
+		// 但 P2 digest 会把「重复项」与「去重后语义相同」的配置算成不同 key。
+		// 保留首次出现顺序（CanonicalBytes 再统一排序）。
+		seen := make(map[string]struct{}, len(w.Delete))
+		del := make([]string, 0, len(w.Delete))
 		for _, path := range w.Delete {
 			if err := ValidateSJSONPath(path); err != nil {
 				return FormatPatch{}, fmt.Errorf("formats.%s.delete: %w", key, err)
 			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			del = append(del, path)
 		}
-		out.Delete = w.Delete
+		out.Delete = del
 	}
 	return out, nil
 }
@@ -223,11 +235,20 @@ func (p *RequestPatch) IsEmpty() bool {
 //
 // 规范化规则：
 //   - headers / formats / set 的键按字典序（encoding/json 对 map 唯一排序）；
-//   - set 值用**原始字节**（json.RawMessage 直通 + compact；大整数 1e18 /
-//     9007199254740993 不经过 float64，逐字保留）；
-//   - delete 排序后输出；
+//   - set 值**不是**原样直通：ParseRequestPatch 已在解析期做深归一
+//     （canonicalJSONValue：UseNumber 保数字字面量 + 嵌套键序/空白/HTML 转义
+//     一次收敛），本函数再按 JSON 编码形状紧凑输出——大整数 1e18 /
+//     9007199254740993 不经过 float64，逐字保留；
+//   - delete 排序后输出（解析期已去重，重复项不会产生不同摘要）；
 //   - 不转义 HTML 字符（SetEscapeHTML(false)：值按 json.Compact 原字节，而不是
 //     把 & < > 变成 \u00XX——回显与摘要都以「原字节」为准）。
+//
+// **落库/读回边界（P2 digest 必读）**：本函数只对**内存中解析后的值**保证
+// 确定性；jsonb 读回会再规范化数字字面量——指数写法 1e18 展开成
+// 1000000000000000000（语义/精度不变），>2^53 的整数字面量逐字保留。因此 P2 的
+// digestTemplateUpstream 必须用**读回/解析后**的 Patch.CanonicalBytes()，不能用
+// 写入前的 bytes，否则同一配置在「写后」与「快照期」会得到不同摘要
+// （spec §17.2）。
 //
 // 空层不输出（omitempty）：CanonicalBytes 是落库/digest 的规范形，不是回显协议。
 func (p *RequestPatch) CanonicalBytes() []byte {
