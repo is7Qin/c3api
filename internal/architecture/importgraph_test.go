@@ -540,6 +540,17 @@ var testFixtureAllow = []string{
 	// 与上面 internal/sdkbridge 那条同型（测试要真实装配，生产不需要）。
 	// testFixtureAllow 只加宽 TestImports 口径，不影响 Imports 口径。
 	"internal/server",
+	// P4-c-2：repository 的 PG 集成测试要装配**真实**的计费组件
+	// （billing.NewBalances / NewFlusher）来验证余额告警、计费游标三车道
+	// 这类"扣费事务与游标推进"的端到端行为——那是 billing 的语义，
+	// 用假替身测不到真实 SQL 路径（pg_balance_warning_test.go /
+	// pg_billing_cursor_test.go / pg_multiplier_test.go）。
+	//
+	// 这不再是 productionLedger 的债：本单已把 AssignmentKey 下沉到 domain，
+	// repository 的生产代码不再 import billing。剩下的纯是测试装配需求——
+	// 与上面 internal/sdkbridge、internal/server 两条同型。
+	// testFixtureAllow 只加宽 TestImports / XTestImports 口径，不影响 Imports 口径。
+	"internal/billing",
 	"pkg/",
 }
 
@@ -820,11 +831,10 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 6,
+	debtMax: 5,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
-		{"internal/repository", "internal/billing", "repository 反向依赖 billing 的账务类型；P4 把账务读写抽成端口", phaseP4},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},
 		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},

@@ -742,6 +742,20 @@ type ManagementKeyMeta struct {
 	Status ManagementKeyStatus
 }
 
+// AssignmentKey 用户-组关联键（用户专属倍率按组挂载——用户在不同组可有
+// 不同倍率；billing.EffectiveMultiplier 按 (userID, groupID) 查专属倍率）。
+//
+// 它住在值类型层而不是计费层：**存储层要按这个二元组聚合**
+// （repository.LoadAssignmentMultipliers 返回 map[AssignmentKey]int），让
+// repository 为了一个纯二元组反向依赖计费包是没有道理的。
+//
+// 字段顺序有语义：`map[AssignmentKey]int{{1, 2}: ...}` 这类**位置字面量**
+// 在两个字段同为 int64 时不会因对调而编译报错，只会静默错位。不得重排。
+type AssignmentKey struct {
+	UserID  int64
+	GroupID int64
+}
+
 // GroupAssignment private 组的授予记录（用户 ↔ 组多对多）。
 // PriceMultiplier 该用户在该组的专属价格倍率（万分数 修正：按组——
 // 用户在不同组可有不同倍率）；nil = 未设置 → 用组倍率；0 = 免费。

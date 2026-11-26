@@ -10,15 +10,14 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// AssignmentKey 用户-组关联键（用户专属倍率按组挂载——用户在不同
-// 组可有不同倍率；EffectiveMultiplier 按 (userID, groupID) 查专属倍率）。
-type AssignmentKey struct {
-	UserID  int64
-	GroupID int64
-}
+// AssignmentKey 见 domain.AssignmentKey。保留别名使本包内部与既有消费方
+// 零改动：它是**同一类型**（`=`），不是新类型，所以 map[AssignmentKey]int
+// 与 map[domain.AssignmentKey]int 可以互相赋值。
+type AssignmentKey = domain.AssignmentKey
 
 // BalanceLoader 余额 + 倍率快照数据源（repository.Repository 门面实现：
 // LoadBalances 委托 Users，LoadGroupMultipliers / LoadAssignmentMultipliers
