@@ -6,7 +6,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 
-	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/identityenv"
 )
 
 // AccountExt 账号类型化鉴权扩展（1:1 边缘表）。credential_type 及列组约束
@@ -21,7 +21,7 @@ func (AccountExt) Fields() []ent.Field {
 		field.Int64("account_id"),
 		field.String("credential_type"),
 		// Provider identity envelope, preserving fields not owned by this writer.
-		field.JSON("codex_identity", &domain.IdentityEnvelope{}).Optional(),
+		field.JSON("codex_identity", &identityenv.IdentityEnvelope{}).Optional(),
 		// —— 凭据列组（按 credential_type 约束：oauth 只允许 codex_oauth_*；pat 只允许 codex_pat_key）——
 		field.String("codex_oauth_token").Optional().Nillable(),
 		field.String("codex_oauth_refresh_token").Optional().Nillable(),

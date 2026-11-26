@@ -12,11 +12,11 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
+	"github.com/is7qin/c3api/internal/modelmap"
 )
 
 // TemplateUpdate is the builder for updating Template entities.
@@ -105,7 +105,7 @@ func (_u *TemplateUpdate) SetFormatModels(v map[string][]string) *TemplateUpdate
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_u *TemplateUpdate) SetModelMapping(v domain.ModelMapping) *TemplateUpdate {
+func (_u *TemplateUpdate) SetModelMapping(v modelmap.ModelMapping) *TemplateUpdate {
 	_u.mutation.SetModelMapping(v)
 	return _u
 }
@@ -498,7 +498,7 @@ func (_u *TemplateUpdateOne) SetFormatModels(v map[string][]string) *TemplateUpd
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_u *TemplateUpdateOne) SetModelMapping(v domain.ModelMapping) *TemplateUpdateOne {
+func (_u *TemplateUpdateOne) SetModelMapping(v modelmap.ModelMapping) *TemplateUpdateOne {
 	_u.mutation.SetModelMapping(v)
 	return _u
 }

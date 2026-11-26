@@ -257,14 +257,40 @@ var allowRules = []allowRule{
 
 	// 纯类型层：只依赖凭据模型。
 	{from: "internal/credential"},
+
+	// R2-a：两个**中立叶子包**承载"纯序列化契约"，让 ent 生成代码不必反向依赖
+	// domain 值类型层（账本里 `internal/ent → internal/domain` 的那条 P3 债因此消失）。
+	//   - internal/modelmap：模板 model_mapping 的值类型与校验；
+	//   - internal/identityenv：account_ext.codex_identity 的信封与规范化 JSON。
+	// 两者都只 import stdlib，domain 侧保留同名别名（`type X = pkg.X` /
+	// `var F = pkg.F`），消费方零改动。
+	//
+	// to 写成显式空切片而不是裸规则：裸规则命中后 fallback（leafRule）完全不生效，
+	// 会让本包所有边被拒——那是"靠零依赖的运气"而不是声明。显式 `to: []string{}`
+	// 表达的是同一条语义（叶包不依赖任何内部包），但将来有人往里加 import 时，
+	// 得到的是这条规则明确的拒绝，而不是 leafRule 顺手放行 domain/credential/pkg。
+	{from: "internal/modelmap", to: []string{}},
+	{from: "internal/identityenv", to: []string{}},
+
 	// pkg/egressapi 是出口值类型与归一化（Spec / Key / New）的**中立叶子包**：domain
 	// 的 Proxy.EgressSpec 要造一个规格值，凭此不再 import 实现层 pkg/egress（账本
 	// 原有的那条 P3 债因此消失）。方向固定：egressapi 只 import stdlib，绝不反向。
-	{from: "internal/domain", to: []string{"internal/credential", "pkg/egressapi"}},
+	// R2-a 起多两条 internal/modelmap / internal/identityenv：ModelMapping 与
+	// IdentityEnvelope 的 canonical 定义已下沉到这两个叶子包，本包只留同名别名。
+	// 方向是"值类型层 → 叶子契约"，两个叶子都不 import 任何 internal/*，不可能成环。
+	{from: "internal/domain", to: []string{
+		"internal/credential", "pkg/egressapi", "internal/modelmap", "internal/identityenv",
+	}},
 
 	// 生成代码：只允许自引用。ent 模型 / schema 复用 domain 枚举属于 Codegen 边界
 	// 尚未抽离的债务，登记在 legacy(P3)；绝不把整棵生成代码树做成永久豁免。
-	{from: "internal/ent", to: []string{"internal/ent/"}},
+	//
+	// R2-a 起多两条 internal/modelmap / internal/identityenv：两个 JSON 字段的值类型
+	// （Template.ModelMapping、AccountExt.CodexIdentity）下沉到中立叶子包，生成代码
+	// 改为引用它们，`internal/ent → internal/domain` 那条 P3 债随之消失。
+	// 注意本条**无尾斜杠**前缀会命中整棵 internal/ent 子树，所以 internal/ent/schema
+	// 自动获得这两个目标，无需单独为它写规则。
+	{from: "internal/ent", to: []string{"internal/ent/", "internal/modelmap", "internal/identityenv"}},
 
 	// 存储层：允许 ent 与 domain/credential。
 	//
@@ -601,13 +627,14 @@ const (
 	//   handler → service → repository 是 service 自己引的（它还在用
 	//   repository.TxStore / Repository / ErrNotFound 等本单非目标的符号）。
 	//   本门禁用直接 Imports 口径裁决，故与 D1 不冲突。
-	// 前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
+	// 前值：8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185（R1-c 之后）
+	// 再前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
 	// 再前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
 	// 再前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185"
+	allowMatrixFingerprint = "0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -783,11 +810,10 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 8,
+	debtMax: 7,
 	keepMax: 2,
 	debt: []legacyRow{
-		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
-		{"internal/ent/schema", "internal/domain", "手写 schema 字段直接用 domain 枚举；P3 归入中立类型后，schema 只依赖 ent 自带类型", phaseP3},
+		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
 		{"internal/repository", "internal/billing", "repository 反向依赖 billing 的账务类型；P4 把账务读写抽成端口", phaseP4},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},

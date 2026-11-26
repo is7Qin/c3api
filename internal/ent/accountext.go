@@ -10,9 +10,9 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
+	"github.com/is7qin/c3api/internal/identityenv"
 )
 
 // AccountExt is the model entity for the AccountExt schema.
@@ -25,7 +25,7 @@ type AccountExt struct {
 	// CredentialType holds the value of the "credential_type" field.
 	CredentialType string `json:"credential_type,omitempty"`
 	// CodexIdentity holds the value of the "codex_identity" field.
-	CodexIdentity *domain.IdentityEnvelope `json:"codex_identity,omitempty"`
+	CodexIdentity *identityenv.IdentityEnvelope `json:"codex_identity,omitempty"`
 	// CodexOauthToken holds the value of the "codex_oauth_token" field.
 	CodexOauthToken *string `json:"codex_oauth_token,omitempty"`
 	// CodexOauthRefreshToken holds the value of the "codex_oauth_refresh_token" field.

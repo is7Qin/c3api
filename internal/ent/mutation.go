@@ -12,7 +12,6 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/balancelog"
@@ -44,6 +43,8 @@ import (
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 	"github.com/is7qin/c3api/internal/ent/user"
+	"github.com/is7qin/c3api/internal/identityenv"
+	"github.com/is7qin/c3api/internal/modelmap"
 )
 
 const (
@@ -1997,7 +1998,7 @@ type AccountExtMutation struct {
 	typ                       string
 	id                        *int64
 	credential_type           *string
-	codex_identity            **domain.IdentityEnvelope
+	codex_identity            **identityenv.IdentityEnvelope
 	codex_oauth_token         *string
 	codex_oauth_refresh_token *string
 	codex_oauth_expires_at    *time.Time
@@ -2189,12 +2190,12 @@ func (m *AccountExtMutation) ResetCredentialType() {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (m *AccountExtMutation) SetCodexIdentity(de *domain.IdentityEnvelope) {
-	m.codex_identity = &de
+func (m *AccountExtMutation) SetCodexIdentity(ie *identityenv.IdentityEnvelope) {
+	m.codex_identity = &ie
 }
 
 // CodexIdentity returns the value of the "codex_identity" field in the mutation.
-func (m *AccountExtMutation) CodexIdentity() (r *domain.IdentityEnvelope, exists bool) {
+func (m *AccountExtMutation) CodexIdentity() (r *identityenv.IdentityEnvelope, exists bool) {
 	v := m.codex_identity
 	if v == nil {
 		return
@@ -2205,7 +2206,7 @@ func (m *AccountExtMutation) CodexIdentity() (r *domain.IdentityEnvelope, exists
 // OldCodexIdentity returns the old "codex_identity" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldCodexIdentity(ctx context.Context) (v *domain.IdentityEnvelope, err error) {
+func (m *AccountExtMutation) OldCodexIdentity(ctx context.Context) (v *identityenv.IdentityEnvelope, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldCodexIdentity is only allowed on UpdateOne operations")
 	}
@@ -2697,7 +2698,7 @@ func (m *AccountExtMutation) SetField(name string, value ent.Value) error {
 		m.SetCredentialType(v)
 		return nil
 	case accountext.FieldCodexIdentity:
-		v, ok := value.(*domain.IdentityEnvelope)
+		v, ok := value.(*identityenv.IdentityEnvelope)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
@@ -26605,7 +26606,7 @@ type TemplateMutation struct {
 	models                  *[]string
 	appendmodels            []string
 	format_models           *map[string][]string
-	model_mapping           *domain.ModelMapping
+	model_mapping           *modelmap.ModelMapping
 	updated_at              *time.Time
 	deleted_at              *time.Time
 	created_at              *time.Time
@@ -26972,12 +26973,12 @@ func (m *TemplateMutation) ResetFormatModels() {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (m *TemplateMutation) SetModelMapping(dm domain.ModelMapping) {
-	m.model_mapping = &dm
+func (m *TemplateMutation) SetModelMapping(mm modelmap.ModelMapping) {
+	m.model_mapping = &mm
 }
 
 // ModelMapping returns the value of the "model_mapping" field in the mutation.
-func (m *TemplateMutation) ModelMapping() (r domain.ModelMapping, exists bool) {
+func (m *TemplateMutation) ModelMapping() (r modelmap.ModelMapping, exists bool) {
 	v := m.model_mapping
 	if v == nil {
 		return
@@ -26988,7 +26989,7 @@ func (m *TemplateMutation) ModelMapping() (r domain.ModelMapping, exists bool) {
 // OldModelMapping returns the old "model_mapping" field's value of the Template entity.
 // If the Template object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *TemplateMutation) OldModelMapping(ctx context.Context) (v domain.ModelMapping, err error) {
+func (m *TemplateMutation) OldModelMapping(ctx context.Context) (v modelmap.ModelMapping, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldModelMapping is only allowed on UpdateOne operations")
 	}
@@ -27410,7 +27411,7 @@ func (m *TemplateMutation) SetField(name string, value ent.Value) error {
 		m.SetFormatModels(v)
 		return nil
 	case template.FieldModelMapping:
-		v, ok := value.(domain.ModelMapping)
+		v, ok := value.(modelmap.ModelMapping)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
