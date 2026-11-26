@@ -41,11 +41,17 @@ var ErrInvalidSort = errors.New("invalid sort field")
 // 故返回无名类型（编译验证通过）。
 // 白名单外 sort → ErrInvalidSort；order 非 ""/asc/desc → "invalid order"；order 空 = desc。
 //
-// 为什么是**包级函数**而不是方法（R1-c）：ListQuery 现在是 internal/inputmodel 的
-// **别名**，而 Go 不允许在非本地类型上定义方法。这是别名方案唯一的代价——本包是
-// 唯一需要该行为的包（排序白名单是 ent 列名，属于存储实现细节，不该进契约包），
-// 所以保留在这里、显式收 q。语义与原先的方法逐字相同：形参按值传入，函数内对
-// q.Sort 的缺省改写原本也只影响副本。
+// 为什么是**包级函数**而不是方法（R1-c）——两条约束合在一起：
+//  1. 方法体要 entgo.io/ent/dialect/sql（返回 func(*sql.Selector)），而 ListQuery 住在
+//     internal/inputmodel——那个包必须是只依赖 domain 的叶子，装不下这个依赖；
+//  2. Go 不允许在别人的类型上定义方法，所以也不能在本包写
+//     func (q inputmodel.ListQuery) sortOrder(...)。
+//
+// （注意：别名**本身是能带方法的**，真正的阻碍是上面两条。）
+//
+// 本包是唯一需要该行为的包（排序白名单是 ent 列名，属于存储实现细节，
+// 不该进契约包），所以保留在这里、显式收 q。语义与原先的方法逐字相同：
+// 形参按值传入，函数内对 q.Sort 的缺省改写原本也只影响副本。
 func sortOrder(q ListQuery, sortFields map[string]string) (func(*sql.Selector), error) {
 	if q.Sort == "" {
 		q.Sort = "id"
