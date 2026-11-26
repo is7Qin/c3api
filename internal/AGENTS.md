@@ -15,6 +15,36 @@
 | `probe/` | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
 | 领域件：`billing` `scheduler` `domain` `rule` `usage` `protoconv` `sdkbridge` `pricing` `notify` `server` `auth` `invalidate` `credential` `config` `snapshot` `worker` | 各自职责见上表与包内 AGENTS.md |
 
+## 包内 AGENTS.md 索引
+
+大部分包有自己的 `AGENTS.md`（"为什么有这个包 / 职责入口 / 不变量 / 验证"四段）。
+下表只列**改动前该先读**的那几个；其余同名文件在包目录下直接可读。
+
+| 你想改… | 先读 |
+|---|---|
+| **任何跨包 import** | `architecture/AGENTS.md` — allow 矩阵 / 加债四步 / 三本账 / 指纹 / 中性叶子包范式 |
+| 值类型层（`Selection` / `AttemptPlan` 契约） | `api/AGENTS.md` |
+| 认证 / 鉴权 / ctx 里的用户 id | `auth/AGENTS.md` |
+| 计费（成本纯函数 / 余额快照 / 游标） | `billing/AGENTS.md` |
+| 协议转换（六方向 / 能力表 / 丢弃计数） | `protoconv/AGENTS.md` |
+| 质量折叠 | `quality/AGENTS.md` |
+| 供应商收益 / 解冻 | `supplier/AGENTS.md` |
+| `usage_logs` 写入 / 分区 / 离线聚合 | `usage/AGENTS.md` |
+| 定价与换算系 | `pricing/AGENTS.md` |
+| 规则引擎 | `rule/AGENTS.md` |
+| 路由装配 / 中间件 | `server/AGENTS.md` |
+| 多实例广播 | `notify/AGENTS.md` |
+| 去抖失效 | `invalidate/AGENTS.md` |
+| codex 会话池 | `identitypool/AGENTS.md` |
+| **ent schema（唯一该手改的 ent 位置）** | `ent/schema/AGENTS.md` |
+| **跑 PG 集成测试** | `testsupport/AGENTS.md` + `testsupport/pgtest/AGENTS.md` |
+| 迁移 DDL 生成器 | `db/migrate/gen/AGENTS.md` |
+| 错误哨兵归属（该进哪个包） | `storeerr/AGENTS.md` / `paymenterr/AGENTS.md` |
+
+**中性叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv`。
+**测试夹具特权**（`testFixtureAllow`，跨层是允许的）：`testsupport/`、`ent/`、`db/migrate`、
+`repository`、`rulepersist`、`sdkbridge`、`server`、`billing`。
+
 ## BPS 接入边界
 
 - **独立 provider**：BPS 的端点、凭据、device profile、Responses/WS 车道全归 `bps-sdk`；c3api 只在 `internal/sdkbridge` 适配。`boundary_gate_test.go` 守门：proxy/service/repository 不得直接 import SDK。
