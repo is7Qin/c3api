@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 
@@ -51,6 +52,12 @@ func (_c *TemplateExtCreate) SetNillableStripImageTools(v *bool) *TemplateExtCre
 // SetUpstreamPaths sets the "upstream_paths" field.
 func (_c *TemplateExtCreate) SetUpstreamPaths(v map[string]string) *TemplateExtCreate {
 	_c.mutation.SetUpstreamPaths(v)
+	return _c
+}
+
+// SetRequestPatch sets the "request_patch" field.
+func (_c *TemplateExtCreate) SetRequestPatch(v jsontext.Value) *TemplateExtCreate {
+	_c.mutation.SetRequestPatch(v)
 	return _c
 }
 
@@ -178,6 +185,10 @@ func (_c *TemplateExtCreate) createSpec() (*TemplateExt, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.UpstreamPaths(); ok {
 		_spec.SetField(templateext.FieldUpstreamPaths, field.TypeJSON, value)
 		_node.UpstreamPaths = value
+	}
+	if value, ok := _c.mutation.RequestPatch(); ok {
+		_spec.SetField(templateext.FieldRequestPatch, field.TypeJSON, value)
+		_node.RequestPatch = value
 	}
 	if value, ok := _c.mutation.CodexResponsesTransport(); ok {
 		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)
@@ -312,6 +323,24 @@ func (u *TemplateExtUpsert) ClearUpstreamPaths() *TemplateExtUpsert {
 	return u
 }
 
+// SetRequestPatch sets the "request_patch" field.
+func (u *TemplateExtUpsert) SetRequestPatch(v jsontext.Value) *TemplateExtUpsert {
+	u.Set(templateext.FieldRequestPatch, v)
+	return u
+}
+
+// UpdateRequestPatch sets the "request_patch" field to the value that was provided on create.
+func (u *TemplateExtUpsert) UpdateRequestPatch() *TemplateExtUpsert {
+	u.SetExcluded(templateext.FieldRequestPatch)
+	return u
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (u *TemplateExtUpsert) ClearRequestPatch() *TemplateExtUpsert {
+	u.SetNull(templateext.FieldRequestPatch)
+	return u
+}
+
 // SetCodexResponsesTransport sets the "codex_responses_transport" field.
 func (u *TemplateExtUpsert) SetCodexResponsesTransport(v string) *TemplateExtUpsert {
 	u.Set(templateext.FieldCodexResponsesTransport, v)
@@ -439,6 +468,27 @@ func (u *TemplateExtUpsertOne) UpdateUpstreamPaths() *TemplateExtUpsertOne {
 func (u *TemplateExtUpsertOne) ClearUpstreamPaths() *TemplateExtUpsertOne {
 	return u.Update(func(s *TemplateExtUpsert) {
 		s.ClearUpstreamPaths()
+	})
+}
+
+// SetRequestPatch sets the "request_patch" field.
+func (u *TemplateExtUpsertOne) SetRequestPatch(v jsontext.Value) *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetRequestPatch(v)
+	})
+}
+
+// UpdateRequestPatch sets the "request_patch" field to the value that was provided on create.
+func (u *TemplateExtUpsertOne) UpdateRequestPatch() *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateRequestPatch()
+	})
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (u *TemplateExtUpsertOne) ClearRequestPatch() *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.ClearRequestPatch()
 	})
 }
 
@@ -737,6 +787,27 @@ func (u *TemplateExtUpsertBulk) UpdateUpstreamPaths() *TemplateExtUpsertBulk {
 func (u *TemplateExtUpsertBulk) ClearUpstreamPaths() *TemplateExtUpsertBulk {
 	return u.Update(func(s *TemplateExtUpsert) {
 		s.ClearUpstreamPaths()
+	})
+}
+
+// SetRequestPatch sets the "request_patch" field.
+func (u *TemplateExtUpsertBulk) SetRequestPatch(v jsontext.Value) *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetRequestPatch(v)
+	})
+}
+
+// UpdateRequestPatch sets the "request_patch" field to the value that was provided on create.
+func (u *TemplateExtUpsertBulk) UpdateRequestPatch() *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateRequestPatch()
+	})
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (u *TemplateExtUpsertBulk) ClearRequestPatch() *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.ClearRequestPatch()
 	})
 }
 

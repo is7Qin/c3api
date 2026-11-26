@@ -2,7 +2,9 @@
 //
 // 单一建表真相原则：本生成器不复制任何列定义——
 //   - ent 侧：`migrate.NewSchema(drv).WriteTo(…)` 直接问 ent 要 DDL（钩子
-//     repository.MigrateHookExcludesPartitioned 让 ent 跳过分区父表）；
+//     repository.MigrateHookForBaseline 让 ent 跳过分区父表，并裁掉
+//     repository.PostBaselineColumns 声明"baseline 之后才加"的列——这些列由后续
+//     NNNN 迁移 ALTER 建立，不得进冻结的 0001）；
 //   - 分区/静态表侧：repository.MigrationBaselineDDLs() 返回由既有事实源
 //     （partitionedCreateDDL / *ColumnDefs / *IndexDDLs / statsAggWatermarkDDL /
 //     routingFlowSnapshotStateDDL）拼出的 DDL；
@@ -425,7 +427,7 @@ func serverVersionNum(ctx context.Context, db *sql.DB) (int, error) {
 func entDDL(ctx context.Context, db *sql.DB) (string, error) {
 	var sb strings.Builder
 	drv := entsql.OpenDB(dialect.Postgres, db)
-	if err := entmigrate.NewSchema(drv).WriteTo(ctx, &sb, repository.MigrateHookExcludesPartitioned()); err != nil {
+	if err := entmigrate.NewSchema(drv).WriteTo(ctx, &sb, repository.MigrateHookForBaseline()); err != nil {
 		return "", fmt.Errorf("gen: ent schema WriteTo: %w", err)
 	}
 	return sb.String(), nil

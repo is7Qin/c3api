@@ -4,11 +4,13 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/template"
@@ -85,6 +87,24 @@ func (_u *TemplateExtUpdate) SetUpstreamPaths(v map[string]string) *TemplateExtU
 // ClearUpstreamPaths clears the value of the "upstream_paths" field.
 func (_u *TemplateExtUpdate) ClearUpstreamPaths() *TemplateExtUpdate {
 	_u.mutation.ClearUpstreamPaths()
+	return _u
+}
+
+// SetRequestPatch sets the "request_patch" field.
+func (_u *TemplateExtUpdate) SetRequestPatch(v jsontext.Value) *TemplateExtUpdate {
+	_u.mutation.SetRequestPatch(v)
+	return _u
+}
+
+// AppendRequestPatch appends value to the "request_patch" field.
+func (_u *TemplateExtUpdate) AppendRequestPatch(v jsontext.Value) *TemplateExtUpdate {
+	_u.mutation.AppendRequestPatch(v)
+	return _u
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (_u *TemplateExtUpdate) ClearRequestPatch() *TemplateExtUpdate {
+	_u.mutation.ClearRequestPatch()
 	return _u
 }
 
@@ -179,6 +199,17 @@ func (_u *TemplateExtUpdate) sqlSave(ctx context.Context) (_node int, err error)
 	}
 	if _u.mutation.UpstreamPathsCleared() {
 		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.RequestPatch(); ok {
+		_spec.SetField(templateext.FieldRequestPatch, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedRequestPatch(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, templateext.FieldRequestPatch, value)
+		})
+	}
+	if _u.mutation.RequestPatchCleared() {
+		_spec.ClearField(templateext.FieldRequestPatch, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.CodexResponsesTransport(); ok {
 		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)
@@ -289,6 +320,24 @@ func (_u *TemplateExtUpdateOne) SetUpstreamPaths(v map[string]string) *TemplateE
 // ClearUpstreamPaths clears the value of the "upstream_paths" field.
 func (_u *TemplateExtUpdateOne) ClearUpstreamPaths() *TemplateExtUpdateOne {
 	_u.mutation.ClearUpstreamPaths()
+	return _u
+}
+
+// SetRequestPatch sets the "request_patch" field.
+func (_u *TemplateExtUpdateOne) SetRequestPatch(v jsontext.Value) *TemplateExtUpdateOne {
+	_u.mutation.SetRequestPatch(v)
+	return _u
+}
+
+// AppendRequestPatch appends value to the "request_patch" field.
+func (_u *TemplateExtUpdateOne) AppendRequestPatch(v jsontext.Value) *TemplateExtUpdateOne {
+	_u.mutation.AppendRequestPatch(v)
+	return _u
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (_u *TemplateExtUpdateOne) ClearRequestPatch() *TemplateExtUpdateOne {
+	_u.mutation.ClearRequestPatch()
 	return _u
 }
 
@@ -413,6 +462,17 @@ func (_u *TemplateExtUpdateOne) sqlSave(ctx context.Context) (_node *TemplateExt
 	}
 	if _u.mutation.UpstreamPathsCleared() {
 		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.RequestPatch(); ok {
+		_spec.SetField(templateext.FieldRequestPatch, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedRequestPatch(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, templateext.FieldRequestPatch, value)
+		})
+	}
+	if _u.mutation.RequestPatchCleared() {
+		_spec.ClearField(templateext.FieldRequestPatch, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.CodexResponsesTransport(); ok {
 		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)

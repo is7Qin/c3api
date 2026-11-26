@@ -46,7 +46,10 @@ func TestDecideFourStates(t *testing.T) {
 	})
 
 	t.Run("database ahead of binary serves with a warning", func(t *testing.T) {
-		d := Decide(Verdict{DBHead: 3, DBContract: 0, BinaryHead: 1, BinaryContract: 0, Ahead: []int64{3}})
+		// 库比二进制新：DBHead 必须仍 ≥ RequiredVersion（否则先被「库落后」判 readonly，
+		// 这条用例就不再证明「回退可服务」）。用 RequiredVersion 推导，提高水位时自动跟随。
+		aheadHead := RequiredVersion + 1
+		d := Decide(Verdict{DBHead: aheadHead, DBContract: 0, BinaryHead: RequiredVersion, BinaryContract: 0, Ahead: []int64{aheadHead}})
 		require.Equal(t, ModeServe, d.Mode)
 		require.True(t, d.Ready())
 		require.Empty(t, d.Reason)
@@ -87,8 +90,9 @@ func TestRequiredVersionIsTheBaseline(t *testing.T) {
 	head, _ := Head()
 	require.LessOrEqual(t, RequiredVersion, head,
 		"RequiredVersion 不能超过本二进制的迁移 head：否则二进制要求一个它自己都建不出来的版本")
-	// 两条理由都写在这里，是因为水位是**累积**的：升到 3 的二进制同时需要 2 与 3。
-	require.Equal(t, int64(3), RequiredVersion,
+	// 理由都写在这里，是因为水位是**累积**的：升到 4 的二进制同时需要 2、3、4。
+	require.Equal(t, int64(4), RequiredVersion,
 		"0002 把导入幂等键按凭据类型收窄（Codex/BPS 同一上游账号可并存）；"+
-			"0003 = attempt_logs 写路径 + err_logs.attempt_ordinal，缺了是 42P01/42703")
+			"0003 = attempt_logs 写路径 + err_logs.attempt_ordinal，缺了是 42P01/42703；"+
+			"0004 = template_exts.request_patch（ent client 恒带该列，head<4 的库读 template_ext 会 42703）")
 }

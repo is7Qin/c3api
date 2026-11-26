@@ -98,6 +98,12 @@ func Head() (version int64, phase string) {
 //     ——那是**启动期就该拦住**的失败，不是运行期 500。注意判据的方向：仓库里
 //     多一条 expand 迁移本身并不提高水位（旧代码照样能跑新 schema），这里提高
 //     是因为本二进制真的开始依赖它。
+//   - 4 = `0004_custom_request_patch`（template_exts.request_patch）。
+//     理由与 3 同一判据：ent client 恒带 request_patch 列（P1 起读写该列；
+//     即使 P0 阶段只读其它列，ent 的 SELECT 也展开全部 schema 列），head=3 的库
+//     一旦触达 template_ext 就 42703。缺它必须 fail-fast 成 ModeReadonly，而不是
+//     运行期 500。注意 0001 冻结：本列不进 baseline（见
+//     repository.PostBaselineColumns），只能靠本迁移补。
 //
 // 「保留期要删 attempt_logs 的分区」**不算**依赖新结构：少删一张不存在的表只是
 // 清理少一项，请求路径不会崩。水位只跟着**请求路径**真正读写的表/列走——所以
@@ -106,7 +112,7 @@ func Head() (version int64, phase string) {
 //
 // 将来某个二进制读了新迁移建的列，它必须把这行改成那一版，否则
 // `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
-const RequiredVersion int64 = 3
+const RequiredVersion int64 = 4
 
 // LegacyFixture 是「老路径建出来的 schema」冻结快照的文件名（testdata/legacy 下）。
 // 它不是内嵌资源：只在 PG 用例里由 database/sql 直接执行，不进二进制。
@@ -115,7 +121,8 @@ const LegacyFixture = "aba8042e.sql"
 // Snapshot 返回内嵌的静态指纹快照（testdata/<tag>.catalog.txt）。tag 是四位版本号：
 //   - "0001" 是 0001 单独建出来的老库基线（legacy 收养用）；
 //   - "0002" 是 0002 跑到 head 的形状（0001 + 身份组索引拆分，用户那条独立迁移）；
-//   - "0003" 是当前 head 的完整 shape（0001 + 0002 + 0003）。
+//   - "0003" 是 0003 跑完时的历史冻结 shape（0001 + 0002 + 0003）；
+//   - "0004" 是当前 head 的完整 shape（0001 + 0002 + 0003 + 0004）。
 func Snapshot(tag string) (catalog.Manifest, error) {
 	body, err := snapshotFS.ReadFile(path.Join("testdata", tag+".catalog.txt"))
 	if err != nil {
@@ -254,7 +261,7 @@ func Decide(v Verdict) Decision {
 // AdoptOptions 是 baseline 收养的参数（spec §2.8）。
 type AdoptOptions struct {
 	// Snapshot 是已知发布版本的指纹 tag（"0001" 老库基线、"0002" 0002 head、
-	// "0003" 当前 head）：
+	// "0003" 0003 历史冻结、"0004" 当前 head）：
 	// 账本空 + 有 schema 时，当前 catalog 必须与该快照逐对象相等。
 	Snapshot string
 	// SchemaVersion 是 settings.schema_version 的期望值。非空且库里存了别的值
@@ -311,7 +318,7 @@ func Up(ctx context.Context, db *sql.DB, opts UpOptions) (Result, error) {
 
 // UpFS 是 Up 的「可注入迁移集」版本（fsys == nil ⇒ 内嵌迁移集，与 Up 等价）。
 //
-// 它存在只为造证据：生产迁移集当前**全是 expand**（0001/0002/0003），而「contract 阶段
+// 它存在只为造证据：生产迁移集当前**全是 expand**（0001/0002/0003/0004），而「contract 阶段
 // 默认拒跑、且拒绝发生在任何写入之前」这条 CLI 级契约必须有一条真的 contract
 // 迁移才能演出来。生产路径恒走 Up，命令行也只在拿不到内嵌集时才用本变体。
 func UpFS(ctx context.Context, db *sql.DB, fsys fs.FS, opts UpOptions) (Result, error) {

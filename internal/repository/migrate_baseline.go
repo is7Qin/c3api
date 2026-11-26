@@ -1,17 +1,127 @@
 package repository
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"entgo.io/ent/dialect/sql/schema"
 )
 
-// MigrateHookExcludesPartitioned 导出 migrateHookExcludesPartitioned，仅供
-// 0001 baseline 生成器（internal/db/migrate/gen）使用：分区父表由
-// partitionedCreateDDL 建表，ent 不得 diff 它们（见 migrateHookExcludesPartitioned
-// 注释）。生产启动路径不得调用本函数——M0b 之后启动不再跑 ent 自动迁移。
-func MigrateHookExcludesPartitioned() schema.MigrateOption {
-	return migrateHookExcludesPartitioned()
+// PostBaselineColumn 是「ent schema 里有、但 0001 baseline 里**没有**」的一列：
+// baseline 生成时必须从 ent 的建表 DDL 里裁掉，由后续 NNNN 迁移 ADD COLUMN 补上。
+type PostBaselineColumn struct {
+	// Table 是不带 schema 限定的 ent 表名（schema.Table.Name）。
+	Table string
+	// Column 是不带引号的列名。
+	Column string
+}
+
+// PostBaselineColumns 是 baseline 生成器的**显式**删列清单（spec §4.2 的唯一清单，
+// 当前只有 template_exts.request_patch）。规则：
+//
+//   - 0001_baseline 一旦发布即不可变（checksum 漂移 ⇒ 启动门 NotReady）。ent schema
+//     继续加列时，不能让 gen 重写 0001；把「baseline 之后的列」显式登记在这里，
+//     gen 的 MigrateHookForBaseline 会从 ent 的建表输出里裁掉它们；物理列由后续
+//     迁移（0004_custom_request_patch）ADD COLUMN 建立。
+//   - 这是 **baseline 生成关注点，不是 runtime schema 关注点**：runtime automigrate
+//     （repository.NewWithPG(migrate=true)）仍然建**全列**（request_patch 在内），
+//     测试/工具/demo/seed 路径不会 42703。看到本清单不要顺手把它加进 runtime hook。
+//   - 清单项不得被 ent 表的 Indexes / ForeignKeys / PrimaryKey 引用：atlas 的列来自
+//     Columns，索引/FK 来自各自的 Columns 字段——只删列会让索引 DDL 引用缺失列。
+//     该结构约束由 TestTemplateExtPostBaselineShape 用 entmigrate.Tables 断言。
+//   - 新增项必须同时新增一条 ADD COLUMN 迁移；反向互锁（0004 up 的 ADD COLUMN 集
+//     == 本清单）由 internal/db/migrate/gen 的测试双向断言（多/少都红）。
+func PostBaselineColumns() []PostBaselineColumn {
+	return []PostBaselineColumn{
+		{Table: "template_exts", Column: "request_patch"},
+	}
+}
+
+// MigrateHookForBaseline = migrateHookExcludesPartitioned ∘ PostBaselineColumns 删列，
+// **仅供 0001 baseline 生成器**使用（gen.go 的 entDDL）。
+//
+// 为什么必须是两个 hook 而不是直接扩私有 hook（评审 momus C3 / oracle I1）：私有
+// hook 有两个消费者——runtime automigrate 与 gen。把删列塞进私有 hook 会让
+// automigrate 建出的库缺 request_patch 列（demo/seed 的 UpsertTemplateExt 直接
+// 42703），而 baseline 生成又必须缺这一列。所以导出的是组合版，私有 hook 语义不变。
+//
+// 幂等/不污染全局表：ent 的 Tables 是进程级全局对象，hook 收到的 *schema.Table 就是
+// 它们。实现用 ent 自带的 schema.CopyTables 先整批复制、再在**副本**上重建
+// Columns slice，绝不原地改全局表——同进程连续两次 Create/WriteTo 输出逐字节一致，
+// 全局表列集合不变（TestGenerateIsDeterministic 断言）。
+//
+// 为什么不是「复制 table 结构体」的浅拷贝：schema.Table 内嵌 sync.Mutex 且带未导出
+// 的关系索引 map，按值复制既是 go vet 的 copylocks 违规，也会让副本与全局表共享
+// 索引/FK 关系；schema.CopyTables 是 ent 官方为此场景（「迁移前复制 Tables」）提供
+// 的复制入口，语义更强。本路径只在 gen 里跑一次，复制成本不在热路径。
+func MigrateHookForBaseline() schema.MigrateOption {
+	index := make(map[string]map[string]bool, 1)
+	for _, column := range PostBaselineColumns() {
+		if index[column.Table] == nil {
+			index[column.Table] = make(map[string]bool, 1)
+		}
+		index[column.Table][column.Column] = true
+	}
+	return schema.WithHooks(
+		hookExcludesPartitionedTables(),
+		hookExcludesColumns(index),
+	)
+}
+
+// hookExcludesColumns 返回「裁掉 index 里声明列」的 schema.Hook；index 在 hook
+// 构造时固化（同一迁移清单内的两次 Create 不重新解析）。
+func hookExcludesColumns(index map[string]map[string]bool) schema.Hook {
+	return func(next schema.Creator) schema.Creator {
+		return schema.CreateFunc(func(ctx context.Context, tables ...*schema.Table) error {
+			kept, err := withoutColumns(tables, index)
+			if err != nil {
+				return err
+			}
+			return next.Create(ctx, kept...)
+		})
+	}
+}
+
+// withoutColumns 返回「已裁掉 index 声明列」的表集合。没有任何表命中时原样返回
+// （不复制）；命中时用 schema.CopyTables 整批复制后在副本上重建 Columns slice，
+// 全局表对象一个字节都不改。错误只可能来自 ent 的复制校验（FK 引用表不在本次
+// Create 集合里）——那种情况必须 fail-fast，静默跳过等于生成坏 baseline。
+func withoutColumns(tables []*schema.Table, index map[string]map[string]bool) ([]*schema.Table, error) {
+	hit := false
+	for _, table := range tables {
+		if len(index[table.Name]) > 0 {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return tables, nil
+	}
+	// 深拷贝：schema.Table 含 sync.Mutex 与未导出关系 map，按值复制是 copylocks
+	// 违规；CopyTables 是 ent 官方「迁移前复制 Tables」入口。
+	clones, err := schema.CopyTables(tables)
+	if err != nil {
+		return nil, fmt.Errorf("repository: copy ent tables for baseline hook: %w", err)
+	}
+	out := make([]*schema.Table, 0, len(clones))
+	for _, table := range clones {
+		declared := index[table.Name]
+		if len(declared) == 0 {
+			out = append(out, table)
+			continue
+		}
+		columns := make([]*schema.Column, 0, len(table.Columns))
+		for _, column := range table.Columns {
+			if declared[column.Name] {
+				continue
+			}
+			columns = append(columns, column)
+		}
+		table.Columns = columns
+		out = append(out, table)
+	}
+	return out, nil
 }
 
 // BaselineTable 是 baseline 迁移里的一张「不由 ent 生成」的表。

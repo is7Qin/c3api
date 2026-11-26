@@ -188,6 +188,16 @@ func UpstreamPathsNotNil() predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldNotNull(FieldUpstreamPaths))
 }
 
+// RequestPatchIsNil applies the IsNil predicate on the "request_patch" field.
+func RequestPatchIsNil() predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldIsNull(FieldRequestPatch))
+}
+
+// RequestPatchNotNil applies the NotNil predicate on the "request_patch" field.
+func RequestPatchNotNil() predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldNotNull(FieldRequestPatch))
+}
+
 // CodexResponsesTransportEQ applies the EQ predicate on the "codex_responses_transport" field.
 func CodexResponsesTransportEQ(v string) predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldEQ(FieldCodexResponsesTransport, v))

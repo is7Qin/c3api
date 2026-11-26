@@ -4,6 +4,7 @@ package ent
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 
@@ -26,6 +27,8 @@ type TemplateExt struct {
 	StripImageTools *bool `json:"strip_image_tools,omitempty"`
 	// UpstreamPaths holds the value of the "upstream_paths" field.
 	UpstreamPaths map[string]string `json:"upstream_paths,omitempty"`
+	// RequestPatch holds the value of the "request_patch" field.
+	RequestPatch jsontext.Value `json:"request_patch,omitempty"`
 	// CodexResponsesTransport holds the value of the "codex_responses_transport" field.
 	CodexResponsesTransport string `json:"codex_responses_transport,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -59,7 +62,7 @@ func (*TemplateExt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case templateext.FieldUpstreamPaths:
+		case templateext.FieldUpstreamPaths, templateext.FieldRequestPatch:
 			values[i] = new([]byte)
 		case templateext.FieldStripImageTools:
 			values[i] = new(sql.NullBool)
@@ -113,6 +116,14 @@ func (_m *TemplateExt) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.UpstreamPaths); err != nil {
 					return fmt.Errorf("unmarshal field upstream_paths: %w", err)
+				}
+			}
+		case templateext.FieldRequestPatch:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field request_patch", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.RequestPatch); err != nil {
+					return fmt.Errorf("unmarshal field request_patch: %w", err)
 				}
 			}
 		case templateext.FieldCodexResponsesTransport:
@@ -175,6 +186,9 @@ func (_m *TemplateExt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("upstream_paths=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UpstreamPaths))
+	builder.WriteString(", ")
+	builder.WriteString("request_patch=")
+	builder.WriteString(fmt.Sprintf("%v", _m.RequestPatch))
 	builder.WriteString(", ")
 	builder.WriteString("codex_responses_transport=")
 	builder.WriteString(_m.CodexResponsesTransport)

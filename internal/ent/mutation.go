@@ -27648,6 +27648,8 @@ type TemplateExtMutation struct {
 	credential_type           *string
 	strip_image_tools         *bool
 	upstream_paths            *map[string]string
+	request_patch             *jsontext.Value
+	appendrequest_patch       jsontext.Value
 	codex_responses_transport *string
 	clearedFields             map[string]struct{}
 	template                  *int64
@@ -27931,6 +27933,71 @@ func (m *TemplateExtMutation) ResetUpstreamPaths() {
 	delete(m.clearedFields, templateext.FieldUpstreamPaths)
 }
 
+// SetRequestPatch sets the "request_patch" field.
+func (m *TemplateExtMutation) SetRequestPatch(j jsontext.Value) {
+	m.request_patch = &j
+	m.appendrequest_patch = nil
+}
+
+// RequestPatch returns the value of the "request_patch" field in the mutation.
+func (m *TemplateExtMutation) RequestPatch() (r jsontext.Value, exists bool) {
+	v := m.request_patch
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestPatch returns the old "request_patch" field's value of the TemplateExt entity.
+// If the TemplateExt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TemplateExtMutation) OldRequestPatch(ctx context.Context) (v jsontext.Value, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestPatch is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestPatch requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestPatch: %w", err)
+	}
+	return oldValue.RequestPatch, nil
+}
+
+// AppendRequestPatch adds j to the "request_patch" field.
+func (m *TemplateExtMutation) AppendRequestPatch(j jsontext.Value) {
+	m.appendrequest_patch = append(m.appendrequest_patch, j...)
+}
+
+// AppendedRequestPatch returns the list of values that were appended to the "request_patch" field in this mutation.
+func (m *TemplateExtMutation) AppendedRequestPatch() (jsontext.Value, bool) {
+	if len(m.appendrequest_patch) == 0 {
+		return nil, false
+	}
+	return m.appendrequest_patch, true
+}
+
+// ClearRequestPatch clears the value of the "request_patch" field.
+func (m *TemplateExtMutation) ClearRequestPatch() {
+	m.request_patch = nil
+	m.appendrequest_patch = nil
+	m.clearedFields[templateext.FieldRequestPatch] = struct{}{}
+}
+
+// RequestPatchCleared returns if the "request_patch" field was cleared in this mutation.
+func (m *TemplateExtMutation) RequestPatchCleared() bool {
+	_, ok := m.clearedFields[templateext.FieldRequestPatch]
+	return ok
+}
+
+// ResetRequestPatch resets all changes to the "request_patch" field.
+func (m *TemplateExtMutation) ResetRequestPatch() {
+	m.request_patch = nil
+	m.appendrequest_patch = nil
+	delete(m.clearedFields, templateext.FieldRequestPatch)
+}
+
 // SetCodexResponsesTransport sets the "codex_responses_transport" field.
 func (m *TemplateExtMutation) SetCodexResponsesTransport(s string) {
 	m.codex_responses_transport = &s
@@ -28028,7 +28095,7 @@ func (m *TemplateExtMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TemplateExtMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.template != nil {
 		fields = append(fields, templateext.FieldTemplateID)
 	}
@@ -28040,6 +28107,9 @@ func (m *TemplateExtMutation) Fields() []string {
 	}
 	if m.upstream_paths != nil {
 		fields = append(fields, templateext.FieldUpstreamPaths)
+	}
+	if m.request_patch != nil {
+		fields = append(fields, templateext.FieldRequestPatch)
 	}
 	if m.codex_responses_transport != nil {
 		fields = append(fields, templateext.FieldCodexResponsesTransport)
@@ -28060,6 +28130,8 @@ func (m *TemplateExtMutation) Field(name string) (ent.Value, bool) {
 		return m.StripImageTools()
 	case templateext.FieldUpstreamPaths:
 		return m.UpstreamPaths()
+	case templateext.FieldRequestPatch:
+		return m.RequestPatch()
 	case templateext.FieldCodexResponsesTransport:
 		return m.CodexResponsesTransport()
 	}
@@ -28079,6 +28151,8 @@ func (m *TemplateExtMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldStripImageTools(ctx)
 	case templateext.FieldUpstreamPaths:
 		return m.OldUpstreamPaths(ctx)
+	case templateext.FieldRequestPatch:
+		return m.OldRequestPatch(ctx)
 	case templateext.FieldCodexResponsesTransport:
 		return m.OldCodexResponsesTransport(ctx)
 	}
@@ -28117,6 +28191,13 @@ func (m *TemplateExtMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstreamPaths(v)
+		return nil
+	case templateext.FieldRequestPatch:
+		v, ok := value.(jsontext.Value)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestPatch(v)
 		return nil
 	case templateext.FieldCodexResponsesTransport:
 		v, ok := value.(string)
@@ -28164,6 +28245,9 @@ func (m *TemplateExtMutation) ClearedFields() []string {
 	if m.FieldCleared(templateext.FieldUpstreamPaths) {
 		fields = append(fields, templateext.FieldUpstreamPaths)
 	}
+	if m.FieldCleared(templateext.FieldRequestPatch) {
+		fields = append(fields, templateext.FieldRequestPatch)
+	}
 	return fields
 }
 
@@ -28184,6 +28268,9 @@ func (m *TemplateExtMutation) ClearField(name string) error {
 	case templateext.FieldUpstreamPaths:
 		m.ClearUpstreamPaths()
 		return nil
+	case templateext.FieldRequestPatch:
+		m.ClearRequestPatch()
+		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt nullable field %s", name)
 }
@@ -28203,6 +28290,9 @@ func (m *TemplateExtMutation) ResetField(name string) error {
 		return nil
 	case templateext.FieldUpstreamPaths:
 		m.ResetUpstreamPaths()
+		return nil
+	case templateext.FieldRequestPatch:
+		m.ResetRequestPatch()
 		return nil
 	case templateext.FieldCodexResponsesTransport:
 		m.ResetCodexResponsesTransport()

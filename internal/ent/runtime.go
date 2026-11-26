@@ -411,7 +411,7 @@ func init() {
 	templateextFields := schema.TemplateExt{}.Fields()
 	_ = templateextFields
 	// templateextDescCodexResponsesTransport is the schema descriptor for codex_responses_transport field.
-	templateextDescCodexResponsesTransport := templateextFields[5].Descriptor()
+	templateextDescCodexResponsesTransport := templateextFields[6].Descriptor()
 	// templateext.DefaultCodexResponsesTransport holds the default value on creation for the codex_responses_transport field.
 	templateext.DefaultCodexResponsesTransport = templateextDescCodexResponsesTransport.Default.(string)
 	usageentitystatFields := schema.UsageEntityStat{}.Fields()

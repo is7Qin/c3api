@@ -20,6 +20,8 @@ const (
 	FieldStripImageTools = "strip_image_tools"
 	// FieldUpstreamPaths holds the string denoting the upstream_paths field in the database.
 	FieldUpstreamPaths = "upstream_paths"
+	// FieldRequestPatch holds the string denoting the request_patch field in the database.
+	FieldRequestPatch = "request_patch"
 	// FieldCodexResponsesTransport holds the string denoting the codex_responses_transport field in the database.
 	FieldCodexResponsesTransport = "codex_responses_transport"
 	// EdgeTemplate holds the string denoting the template edge name in mutations.
@@ -42,6 +44,7 @@ var Columns = []string{
 	FieldCredentialType,
 	FieldStripImageTools,
 	FieldUpstreamPaths,
+	FieldRequestPatch,
 	FieldCodexResponsesTransport,
 }
 

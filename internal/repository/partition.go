@@ -1140,7 +1140,19 @@ func (r *PartitionRepo) DeleteRedemptionUsesBefore(ctx context.Context, cutoff t
 // 在 Create 前过滤这些表，ent 永不 diff/DDL 分区表；表的存在性/列结构/索引
 // 完全由 bootstrap 维护（与 ent schema 列定义一致，见 partitionedCreateDDL）。
 func migrateHookExcludesPartitioned() schema.MigrateOption {
-	return schema.WithHooks(func(next schema.Creator) schema.Creator {
+	return schema.WithHooks(hookExcludesPartitionedTables())
+}
+
+// hookExcludesPartitionedTables 是分区排除的**唯一实现**：只过滤分区父表，
+// 其余表对象原样透传（不克隆、不改列）。它被两个 hook 复用（spec §4.2）：
+//   - migrateHookExcludesPartitioned（runtime automigrate，repository.NewWithPG）；
+//   - MigrateHookForBaseline（gen-only：本 hook + PostBaselineColumns 删列）。
+//
+// 返回 schema.Hook 而不是 MigrateOption：MigrateHookForBaseline 需要用
+// schema.WithHooks 把两个 hook 组合进同一次 Create 链，MigrateOption 是
+// func(*Atlas) 无法相互组合。
+func hookExcludesPartitionedTables() schema.Hook {
+	return func(next schema.Creator) schema.Creator {
 		return schema.CreateFunc(func(ctx context.Context, tables ...*schema.Table) error {
 			kept := make([]*schema.Table, 0, len(tables))
 			for _, t := range tables {
@@ -1150,5 +1162,5 @@ func migrateHookExcludesPartitioned() schema.MigrateOption {
 			}
 			return next.Create(ctx, kept...)
 		})
-	})
+	}
 }

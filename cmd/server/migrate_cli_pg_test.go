@@ -96,7 +96,7 @@ func TestMigrateFlagGates(t *testing.T) {
 
 // TestMigrateUpBootstrapsEmptyDatabasePG 是「空库跑一次 up 就够」的完整证据：
 // 36 张业务表（27 ent + 7 分区父表（0001 六张 + 0003 的 attempt_logs）+ 2 静态表）
-// + 账本（head 行：0001/0002/0003）+ 七张父表的当日/明日分区，再跑一次不产生任何变化。
+// + 账本（head 行：0001/0002/0003/0004）+ 七张父表的当日/明日分区，再跑一次不产生任何变化。
 func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 	ctx := context.Background()
 	db, dsn := openProbeDBWithDSN(t)
@@ -106,8 +106,8 @@ func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 
 	head, _ := migrate.Head()
 	require.Equal(t, 36, countBusinessTables(t, db),
-		"0001+0002+0003 建 36 张业务表（27 ent + 7 分区父表 + 2 静态表；用户那条 0002 只拆索引，不加表）")
-	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable), "账本恰 head 行（0001/0002/0003）")
+		"0001+0002+0003+0004 建 36 张业务表（27 ent + 7 分区父表 + 2 静态表；用户那条 0002 只拆索引、0004 只加 template_exts.request_patch 列，都不加表）")
+	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable), "账本恰 head 行（0001/0002/0003/0004）")
 	requirePartitionHorizon(t, db)
 
 	// 幂等：第二次 up 不应用任何版本，也不改变对象数。
@@ -117,7 +117,7 @@ func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 
 	ledger, err := migrate.Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, ledger.Applied, int(head), "账本三行：0001/0002/0003")
+	require.Len(t, ledger.Applied, int(head), "账本 head 行：0001/0002/0003/0004")
 	require.Empty(t, ledger.Pending)
 	require.Empty(t, ledger.Mismatches)
 }

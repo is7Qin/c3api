@@ -11,8 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"entgo.io/ent/dialect/sql/schema"
 	"github.com/stretchr/testify/require"
 
+	entmigrate "github.com/is7qin/c3api/internal/ent/migrate"
 	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
@@ -80,9 +82,18 @@ func TestPatchOnlyWarnings(t *testing.T) {
 
 // TestGenerateIsDeterministic 连跑两次生成器：产物必须逐字节相同（排序稳定、
 // 无 oid/随机量渗入）。
+//
+// 同时钉住 hook 拆分的两条纪律（spec §4.2；评审 momus C3 / oracle I1）：
+//   - hook 幂等：ent 的 Tables 是进程级全局对象，两次 Run 必须输出逐字节相同；
+//   - hook 不污染全局表：Run 前后 ent 全局 Tables 的 Columns 逐表逐列不变
+//     （实现只做浅拷贝 + 重建 Columns slice，原地删列会在这里红）；
+//   - 列排除只属于 baseline 生成：request_patch 在 ent schema 里（runtime
+//     automigrate 建全列），但**不得**进冻结的 0001 生成物。
 func TestGenerateIsDeterministic(t *testing.T) {
 	dsn := pgtest.DSN(t)
 	ctx := context.Background()
+
+	before := entColumnSnapshot()
 	first, err := Run(ctx, Config{DSN: dsn})
 	require.NoError(t, err)
 	second, err := Run(ctx, Config{DSN: dsn})
@@ -91,6 +102,44 @@ func TestGenerateIsDeterministic(t *testing.T) {
 	require.Equal(t, first.DownSQL, second.DownSQL)
 	require.Equal(t, first.CatalogTxt, second.CatalogTxt)
 	require.Equal(t, first.Stats, second.Stats)
+
+	require.Equal(t, before, entColumnSnapshot(),
+		"MigrateHookForBaseline 不得改写 ent 全局 Tables 的 Columns（只允许克隆）")
+	templateExts := entTableByName(t, "template_exts")
+	require.Contains(t, tableColumnNames(templateExts), "request_patch",
+		"ent schema 必须保留 request_patch：runtime automigrate 建全列（列排除只属 baseline 生成）")
+	require.NotContains(t, first.UpSQL, "request_patch",
+		"post-baseline 列不得进冻结的 0001 生成物（应由 0004 迁移 ADD COLUMN）")
+}
+
+// entTableByName 从 ent 的全局 Tables 里按表名取表（只读）。
+func entTableByName(t *testing.T, name string) *schema.Table {
+	t.Helper()
+	for _, table := range entmigrate.Tables {
+		if table.Name == name {
+			return table
+		}
+	}
+	require.FailNow(t, "ent 全局 Tables 里没有表 "+name)
+	return nil
+}
+
+// tableColumnNames 返回表的列名（按 ent 定义顺序）。
+func tableColumnNames(table *schema.Table) []string {
+	names := make([]string, 0, len(table.Columns))
+	for _, column := range table.Columns {
+		names = append(names, column.Name)
+	}
+	return names
+}
+
+// entColumnSnapshot 拍一张「表名 → 列名」的快照，用于断言 hook 未污染全局表。
+func entColumnSnapshot() map[string][]string {
+	out := make(map[string][]string, len(entmigrate.Tables))
+	for _, table := range entmigrate.Tables {
+		out[table.Name] = tableColumnNames(table)
+	}
+	return out
 }
 
 // TestGeneratedSQLHonoursExportPolicy 覆盖 spec §2.2 的导出策略：只留两条 SET、
