@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/cryptox"
@@ -96,7 +97,7 @@ func (s *Service) checkGroupEligible(ctx context.Context, userID, groupID int64)
 // 视角（不限归属用户）+ name/user_id/group_id 筛选 + sort 白名单
 // id/name/created_at。脱敏在 handler 转换面（AdminKey 无 key 明文字段——
 // 明文绝不下发管理端）。
-func (s *Service) ListAdminKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error) {
+func (s *Service) ListAdminKeys(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Key, int64, error) {
 	if err := validateListQuery(q, listSortFields["admin_keys"]); err != nil {
 		return nil, 0, err
 	}
@@ -109,7 +110,7 @@ func (s *Service) GetKey(ctx context.Context, userID, keyID int64) (*domain.Key,
 }
 
 // ListKeys 用户自己的 key 列表（/api/user/keys GET）。
-func (s *Service) ListKeys(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error) {
+func (s *Service) ListKeys(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.Key, int64, error) {
 	if err := validateListQuery(q, listSortFields["keys"]); err != nil {
 		return nil, 0, err
 	}

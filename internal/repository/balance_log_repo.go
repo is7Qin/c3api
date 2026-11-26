@@ -40,7 +40,7 @@ func (r *BalanceLogRepo) ListUserBalanceLogs(ctx context.Context, userID int64, 
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(balanceLogSortFields)
+	order, err := sortOrder(q, balanceLogSortFields)
 	if err != nil {
 		return nil, 0, err
 	}

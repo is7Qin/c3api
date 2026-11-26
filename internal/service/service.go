@@ -19,6 +19,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -88,8 +89,8 @@ type UserStore interface {
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	// CountUsers 用户总数（注册 bootstrap 用：表空 = 首个注册 = platform_admin）。
 	CountUsers(ctx context.Context) (int64, error)
-	ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error)
-	UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error)
+	ListUsers(ctx context.Context, q inputmodel.ListQuery) ([]*domain.User, int64, error)
+	UpdateUser(ctx context.Context, p *inputmodel.UserPatch) (*domain.User, error)
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error
 	// 原子资源更新（兑换码 applier 用；普通 client 与 tx client 均可用）。
 	UpdateUserBalance(ctx context.Context, userID, delta int64) error
@@ -104,14 +105,14 @@ type UserStore interface {
 	ListUserTempBalances(ctx context.Context, userID int64) ([]*domain.TempBalance, error)
 	// ListTempBalances 管理侧全量临时额度（/api/admin/temp-balances：含过期/用尽/
 	// 负扣减行——全量视角；userID 0 = 全部；sort 白名单 + 分页）。
-	ListTempBalances(ctx context.Context, q repository.ListQuery, userID int64) ([]*domain.TempBalance, int64, error)
+	ListTempBalances(ctx context.Context, q inputmodel.ListQuery, userID int64) ([]*domain.TempBalance, int64, error)
 	// ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询）。
 	ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error)
 }
 
 // BalanceLogStore 余额变动记录（管理面只读列表：/api/admin/users/{id}/balance-logs）。
 type BalanceLogStore interface {
-	ListUserBalanceLogs(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.BalanceLog, int64, error)
+	ListUserBalanceLogs(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.BalanceLog, int64, error)
 }
 
 // SettingStore 类型化配置持久化。
@@ -125,10 +126,10 @@ type SettingStore interface {
 type KeyStore interface {
 	CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
 	GetKey(ctx context.Context, id int64) (*domain.Key, error)
-	ListKeysByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error)
+	ListKeysByUser(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.Key, int64, error)
 	// ListKeys 管理端全量 key 列表（/api/admin/keys：软删过滤 + UserID/GroupID
 	// 零值不过滤 + 3 键 sort 白名单；脱敏在 handler 转换面——明文字段不下发）。
-	ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error)
+	ListKeys(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Key, int64, error)
 	// UpdateKey patch 语义更新：仅 Set 非 nil 字段，nil = 不改——并发
 	// 两个 PUT 改不同字段各自生效（对齐 UserPatch 范式）。
 	UpdateKey(ctx context.Context, p *repository.KeyPatch) (*domain.Key, error)
@@ -167,11 +168,11 @@ type TemplateStore interface {
 	// GetTemplatesByIDs 批量取模板（id IN 一次查询——UpdateTemplatesBatch 类型-
 	// 格式约束校验用，避免逐 id N+1）；缺失 id 不报错（数量 < 请求数）。
 	GetTemplatesByIDs(ctx context.Context, ids []int64) ([]*domain.Template, error)
-	ListTemplates(ctx context.Context, q repository.ListQuery) ([]*domain.Template, int64, error)
+	ListTemplates(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Template, int64, error)
 	UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error)
 	DeleteTemplate(ctx context.Context, id int64) error
 	DeleteTemplatesBatch(ctx context.Context, ids []int64) error
-	UpdateTemplatesBatch(ctx context.Context, ids []int64, p repository.TemplatePatch) error
+	UpdateTemplatesBatch(ctx context.Context, ids []int64, p inputmodel.TemplatePatch) error
 }
 
 // ProxyStore 出口代理条目持久化（spec-proxy-pool M1b 写面）。
@@ -206,12 +207,12 @@ type AccountStore interface {
 	// GetAccountWithTemplate 读账号 + 模板 + 已按 ctx scope 展开的 Proxy（探测
 	// 组装面；仓储实现已存在，接口此前未暴露）。越域/缺失 ⇒ repository.ErrNotFound。
 	GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error)
-	ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error)
+	ListAccounts(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Account, int64, error)
 	FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error
 	RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
 	DeleteAccount(ctx context.Context, id int64) error
 	DeleteAccountsBatch(ctx context.Context, ids []int64) error
-	UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) ([]repository.AccountWriteResult, error)
+	UpdateAccountsBatch(ctx context.Context, ids []int64, p inputmodel.AccountPatch) ([]repository.AccountWriteResult, error)
 	// SetAccountGroups 替换账号的全部分组（替换语义；空数组 = 清空）。
 	SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 	// GetAccountGroups 账号的分组 id 列表（编辑回显；账号缺 id 由调用方先
@@ -225,11 +226,11 @@ type AccountStore interface {
 type GroupStore interface {
 	CreateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error)
 	GetGroup(ctx context.Context, id int64) (*domain.Group, error)
-	ListGroups(ctx context.Context, q repository.ListQuery) ([]*domain.Group, int64, error)
+	ListGroups(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Group, int64, error)
 	UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error)
 	DeleteGroup(ctx context.Context, id int64) error
 	DeleteGroupsBatch(ctx context.Context, ids []int64) error
-	UpdateGroupsBatch(ctx context.Context, ids []int64, p repository.GroupPatch) error
+	UpdateGroupsBatch(ctx context.Context, ids []int64, p inputmodel.GroupPatch) error
 	// LoadGroupAccounts 单组账号（删组前组内账号校验：含账号组 → 409 拒绝；
 	// 与调度器 Loader 同一数据源）。
 	LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error)
@@ -337,10 +338,10 @@ type RedemptionStore interface {
 	CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error
 	GetByCode(ctx context.Context, code string) (*domain.RedemptionCode, error)
 	GetCode(ctx context.Context, id int64) (*domain.RedemptionCode, error)
-	ListCodes(ctx context.Context, q repository.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error)
-	ListCodeUses(ctx context.Context, codeID int64, q repository.ListQuery) ([]*domain.RedemptionUse, int64, error)
+	ListCodes(ctx context.Context, q inputmodel.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error)
+	ListCodeUses(ctx context.Context, codeID int64, q inputmodel.ListQuery) ([]*domain.RedemptionUse, int64, error)
 	// ListUsesByUser 某用户的兑换记录（/api/user/redemptions；use + 码联查视图）。
-	ListUsesByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.RedemptionRecord, int64, error)
+	ListUsesByUser(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.RedemptionRecord, int64, error)
 	DeactivateCodes(ctx context.Context, ids []int64) (int64, error)
 	GetUse(ctx context.Context, codeID, userID int64) (*domain.RedemptionUse, error)
 	CreateUse(ctx context.Context, use *domain.RedemptionUse) error
@@ -351,9 +352,9 @@ type RedemptionStore interface {
 type PricingStore interface {
 	UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error)
 	UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error)
-	UpsertPriceEntryManual(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error)
+	UpsertPriceEntryManual(ctx context.Context, m *inputmodel.PriceEntryManual) (*domain.PriceEntry, error)
 	DeletePriceEntryManual(ctx context.Context, model string) error
-	ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error)
+	ListPriceEntries(ctx context.Context, q inputmodel.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error)
 	GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error)
 	ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error)
 	ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error)
@@ -362,8 +363,8 @@ type PricingStore interface {
 }
 
 type LogStore interface {
-	QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error)
-	QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error)
+	QueryUsages(ctx context.Context, q inputmodel.UsageQuery) ([]*domain.UsageLog, error)
+	QueryErrLogs(ctx context.Context, q inputmodel.ErrLogQuery) ([]*domain.UsageLog, error)
 	// ScanUsageAgg 批量账号 usage_logs 区间聚合（/api/admin/accounts/usage 查询面：
 	// 单查询 ANY + GROUP BY；无记录账号无键——补零由 service 按 ids 全量组装）。
 	ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error)
@@ -1014,7 +1015,7 @@ var listSortFields = map[string][]string{
 }
 
 // validateListQuery sort/order 白名单校验（非法 → ErrInvalidInput；handler 依赖此 400）。
-func validateListQuery(q repository.ListQuery, sortFields []string) error {
+func validateListQuery(q inputmodel.ListQuery, sortFields []string) error {
 	if q.Order != "" && q.Order != "asc" && q.Order != "desc" {
 		return ErrInvalidInput
 	}
@@ -1045,7 +1046,7 @@ func validateIDs(ids []int64) error {
 // 多格式语义与 validateTemplate 对齐：supported_formats 非空/枚举/去重；
 // format_models 的 key 必须合法枚举且列表非空；两者同批提供时 key 必须
 // ∈ supported_formats（跨字段子集校验，与单 PUT 的 validateTemplate 一致）。
-func validateTemplatePatch(p repository.TemplatePatch) error {
+func validateTemplatePatch(p inputmodel.TemplatePatch) error {
 	if p.Name != nil && *p.Name == "" {
 		return ErrInvalidInput
 	}
@@ -1082,7 +1083,7 @@ func validateTemplatePatch(p repository.TemplatePatch) error {
 
 // validateAccountPatch 校验 patch 提供的字段（nil = 未提供，跳过）。写面的唯一
 // 校验权威：handler 只做类型转换，不重复判定（重复判定只可能与此处分歧）。
-func validateAccountPatch(p repository.AccountPatch) error {
+func validateAccountPatch(p inputmodel.AccountPatch) error {
 	// 空补丁：无任何字段 = 无意义的空写（仍会推进 C）——拒绝而非静默接受。
 	if p.Name == nil && p.TemplateID == nil && p.UpstreamKey == nil &&
 		p.BaseURL == nil && p.MaxConcurrency == nil && p.GroupIDs == nil &&

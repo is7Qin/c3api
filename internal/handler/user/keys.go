@@ -9,12 +9,12 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // GetUserKeys 我的 key 列表（分页/排序；明文长期回显，ServerInterface）。
 func (h *UserAPI) GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset: int(httpface.Deref(params.Offset)),
 		Name:   httpface.Deref(params.Name),

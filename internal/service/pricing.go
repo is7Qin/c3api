@@ -14,6 +14,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -74,7 +75,7 @@ func (s *Service) reloadPricing(ctx context.Context) {
 func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, error) {
 	var all []*domain.PriceEntry
 	for offset := 0; ; offset += pricingReloadPage {
-		rows, _, err := s.store.ListPriceEntries(ctx, repository.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, nil, "")
+		rows, _, err := s.store.ListPriceEntries(ctx, inputmodel.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, nil, "")
 		if err != nil {
 			s.log.Warn("pricing snapshot reload failed", logx.Error(err))
 			return nil, err
@@ -140,7 +141,7 @@ func (s *Service) ResolvedPricesByModel(at time.Time) map[string]domain.Resolved
 }
 
 // validation helpers
-func (s *Service) UpsertPriceEntry(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error) {
+func (s *Service) UpsertPriceEntry(ctx context.Context, m *inputmodel.PriceEntryManual) (*domain.PriceEntry, error) {
 	if m.Model == "" {
 		return nil, fmt.Errorf("%w: model is required", ErrInvalidInput)
 	}
@@ -211,7 +212,7 @@ func (s *Service) GetPriceEntry(ctx context.Context, model string) (*domain.Pric
 	return pe, nil
 }
 
-func (s *Service) ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
+func (s *Service) ListPriceEntries(ctx context.Context, q inputmodel.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
 	if source != nil && !source.Valid() {
 		return nil, 0, fmt.Errorf("%w: invalid source %q", ErrInvalidInput, *source)
 	}

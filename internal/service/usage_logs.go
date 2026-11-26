@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // admitLogsWindow 明细分页面的窗口判定（KindUsageList / KindErrlogList）：from/to
@@ -42,7 +42,7 @@ func (s *Service) admitLogsWindow(kind domain.StatsKindID, from, to *time.Time) 
 // 返回行可能含 limit+1 探测行，next_cursor 组装在 handler。
 // 返回 []*domain.UsageLog 直透（不再擦除为 []any——spec 2026-08-17 边界收敛，
 // 类型信息保留，handler 断言删除）。
-func (s *Service) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error) {
+func (s *Service) QueryUsages(ctx context.Context, q inputmodel.UsageQuery) ([]*domain.UsageLog, error) {
 	if err := s.admitLogsWindow(domain.KindUsageList, q.From, q.To); err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (s *Service) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*
 // 异常双轨，status_code/error_type 全值；行类型同为 *domain.UsageLog——
 // err_logs 表复用该领域类型）。keyset 游标分页同 QueryUsages；覆盖率依据
 // Retention.ErrLog（只读 err_logs 一张表——与 usage_logs 不是同一个 basis）。
-func (s *Service) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error) {
+func (s *Service) QueryErrLogs(ctx context.Context, q inputmodel.ErrLogQuery) ([]*domain.UsageLog, error) {
 	if err := s.admitLogsWindow(domain.KindErrlogList, q.From, q.To); err != nil {
 		return nil, err
 	}

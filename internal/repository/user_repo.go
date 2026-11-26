@@ -18,6 +18,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/user"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // UserRepo 用户（顶层实体）持久化。
@@ -145,7 +146,7 @@ func (r *UserRepo) ListTempBalances(ctx context.Context, q ListQuery, userID int
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(tempBalanceSortFields)
+	order, err := sortOrder(q, tempBalanceSortFields)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -246,7 +247,7 @@ func (r *UserRepo) ListUsers(ctx context.Context, q ListQuery) ([]*domain.User, 
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(userSortFields)
+	order, err := sortOrder(q, userSortFields)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -272,15 +273,12 @@ func (r *UserRepo) ListUsers(ctx context.Context, q ListQuery) ([]*domain.User, 
 // 时必带旧值条件（OldXxx = GET 快照，服务层重试时重读刷新）——旧值不满足
 // （期间有扣费/并发变更）→ 0 行 → ErrConflict，绝不无条件覆盖并发增量
 // （v02 核实：GET 快照陈旧值写回与 flusher 扣费双向覆盖，余额凭空复活）。
-type UserPatch struct {
-	ID                int64
-	Role              *domain.Role
-	Status            *domain.UserStatus
-	MaxConcurrency    *int
-	OldMaxConcurrency *int
-	Balance           *int64
-	OldBalance        *int64
-}
+//
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type UserPatch = inputmodel.UserPatch
 
 // UpdateUser 按 patch 更新（email 不可变、密码走 UpdateUserPassword）。价格
 // 倍率按组挂在 group_assignments 上，用户本体无倍率字段——见

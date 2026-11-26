@@ -8,16 +8,16 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/service"
 )
 
 // 兑换码用户面（/api/user/redemptions，JWT 保护区内——Router 中间件强制；user_id
 // 一律取当前登录用户，防越权）。
 
-// pageToQuery 增强分页范式（page 1-based + page_size）→ repository.ListQuery
+// pageToQuery 增强分页范式（page 1-based + page_size）→ inputmodel.ListQuery
 // （与 admin 面同语义：page 缺省/越下界按 1；page_size 缺省 20，越界 → 400）。
-func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
+func pageToQuery(page, pageSize *int) (inputmodel.ListQuery, error) {
 	p := 1
 	if page != nil && *page > 1 {
 		p = *page
@@ -27,9 +27,9 @@ func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
 		size = *pageSize
 	}
 	if size < 1 || size > 100 {
-		return repository.ListQuery{}, service.ErrInvalidInput
+		return inputmodel.ListQuery{}, service.ErrInvalidInput
 	}
-	return repository.ListQuery{Limit: size, Offset: (p - 1) * size}, nil
+	return inputmodel.ListQuery{Limit: size, Offset: (p - 1) * size}, nil
 }
 
 // PostUserRedemptions 兑换码（ServerInterface）：400 invalid code（不存在/失效/

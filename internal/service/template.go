@@ -8,8 +8,8 @@ import (
 	"context"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -35,7 +35,7 @@ func (s *Service) GetTemplate(ctx context.Context, id int64) (*domain.Template, 
 	return t, nil
 }
 
-func (s *Service) ListTemplates(ctx context.Context, q repository.ListQuery) ([]*domain.Template, int64, error) {
+func (s *Service) ListTemplates(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Template, int64, error) {
 	if err := validateListQuery(q, listSortFields["templates"]); err != nil {
 		return nil, 0, err
 	}
@@ -76,7 +76,7 @@ func (s *Service) DeleteTemplatesBatch(ctx context.Context, ids []int64) error {
 	return nil
 }
 
-func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repository.TemplatePatch) error {
+func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p inputmodel.TemplatePatch) error {
 	if err := validateIDs(ids); err != nil {
 		return err
 	}

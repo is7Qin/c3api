@@ -10,19 +10,20 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// CreateAccount 账号创建：与 PATCH 共用同一三态字段模型（repository.AccountPatch），
+// CreateAccount 账号创建：与 PATCH 共用同一三态字段模型（inputmodel.AccountPatch），
 // 创建侧额外要求 Name 与 TemplateID 必须显式提供。写时默认：Enabled=true、
 // UpstreamCostMultiplierBp=10000（×1）、CacheDomain/BaseURL=nil、无分组、
 // MaxConcurrency=注入的默认并发、LifecycleRevision=IdentityRevision=1。
 // 未提供的字段落默认；base_url/cache_domain 的 &"" 即 NULL（与默认一致）；
 // 显式 enabled:false 生效。
-func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) (*domain.Account, error) {
+func (s *Service) CreateAccount(ctx context.Context, p inputmodel.AccountPatch) (*domain.Account, error) {
 	if p.Name == nil || *p.Name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -145,7 +146,7 @@ func (s *Service) GetAccount(ctx context.Context, id int64) (*domain.Account, er
 	return a, nil
 }
 
-func (s *Service) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error) {
+func (s *Service) ListAccounts(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Account, int64, error) {
 	if err := validateListQuery(q, listSortFields["accounts"]); err != nil {
 		return nil, 0, err
 	}
@@ -160,7 +161,7 @@ func (s *Service) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*
 // 三态里没有负数的位置，落成「空列表」会把非法输入伪装成正常的空结果。
 // 错误带字段级说明（ErrInvalidInput 的 400 body 直接取 err.Error()，与
 // `rate_micro must be positive` 同款）。仓储只认三态，不重复校验。
-func validateAccountGroupFilter(q repository.ListQuery) error {
+func validateAccountGroupFilter(q inputmodel.ListQuery) error {
 	if q.AccountGroupID != nil && *q.AccountGroupID < 0 {
 		return fmt.Errorf("%w: group_id must be >= 0", ErrInvalidInput)
 	}
@@ -173,7 +174,7 @@ func validateAccountGroupFilter(q repository.ListQuery) error {
 // + clients 失效（身份字段变更）+ NOTIFY——失效只在提交后执行，回滚路径不留
 // 半套失效。
 //
-// 三态语义由 repository.AccountPatch 承载：nil = 不变；base_url/cache_domain
+// 三态语义由 inputmodel.AccountPatch 承载：nil = 不变；base_url/cache_domain
 // 空串 = 清空（落 NULL）；有值 = 落值；group_ids nil = 不变、非 nil（含空数组）
 // = 替换。
 //
@@ -182,7 +183,7 @@ func validateAccountGroupFilter(q repository.ListQuery) error {
 //
 // 失效字段（failed_at/last_error/failure_source）不在写面内：失效恢复的唯一入口
 // 是 RecoverAccount。
-func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.AccountPatch, ifMatch *int64) (*domain.Account, error) {
+func (s *Service) PatchAccount(ctx context.Context, id int64, p inputmodel.AccountPatch, ifMatch *int64) (*domain.Account, error) {
 	if err := validateAccountPatch(p); err != nil {
 		return nil, err
 	}
@@ -340,7 +341,7 @@ func (s *Service) DeleteAccountsBatch(ctx context.Context, ids []int64) error {
 
 // UpdateAccountsBatch 批量账号配置写入：单事务全成或全败，返回每账号的新配置
 // 代际（客户端下一次读-改-写令牌）与真实变更集。
-func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) ([]repository.AccountWriteResult, error) {
+func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p inputmodel.AccountPatch) ([]repository.AccountWriteResult, error) {
 	if err := validateIDs(ids); err != nil {
 		return nil, err
 	}
@@ -408,7 +409,7 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 }
 
 // groupsOfPatch 补丁携带的分组 id 列表（nil = 未提供 → 空集）。
-func groupsOfPatch(p repository.AccountPatch) []int64 {
+func groupsOfPatch(p inputmodel.AccountPatch) []int64 {
 	if p.GroupIDs == nil {
 		return nil
 	}
@@ -475,7 +476,7 @@ func (s *Service) GetAccountHealth(accountID int64) *AccountHealthView {
 
 // ListAccountViews 账号管理端视图（含调度器运行时信息）。handler 列表入口，
 // 与 ListAccounts 一致做 sort/order 校验（非法 → ErrInvalidInput → 400）。
-func (s *Service) ListAccountViews(ctx context.Context, q repository.ListQuery) ([]*AccountView, int64, error) {
+func (s *Service) ListAccountViews(ctx context.Context, q inputmodel.ListQuery) ([]*AccountView, int64, error) {
 	if err := validateListQuery(q, listSortFields["accounts"]); err != nil {
 		return nil, 0, err
 	}

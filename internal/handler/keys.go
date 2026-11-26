@@ -9,7 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // 管理端密钥列表（/api/admin/keys，spec 2026-08-16）：全量视角（不限归属用户）+
@@ -22,7 +22,7 @@ import (
 // 本端点分页规格即 limit/offset）；limit/offset 缺省归一在 ListQuery 内
 // （20/0），sort/order 缺省（id/desc）与白名单校验在 sortOrder。
 func (h *AdminAPI) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:   httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset:  int(httpface.Deref(params.Offset)),
 		Name:    httpface.Deref(params.Name),

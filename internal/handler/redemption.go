@@ -11,7 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
 )
@@ -27,9 +27,9 @@ func createdBy(r *http.Request) int64 {
 	return id
 }
 
-// pageToQuery 增强分页范式（page 1-based + page_size）→ repository.ListQuery。
+// pageToQuery 增强分页范式（page 1-based + page_size）→ inputmodel.ListQuery。
 // page 缺省/越下界按 1；page_size 缺省 20，越界（<1 或 >1000）→ ErrInvalidInput 400。
-func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
+func pageToQuery(page, pageSize *int) (inputmodel.ListQuery, error) {
 	p := 1
 	if page != nil && *page > 1 {
 		p = *page
@@ -39,9 +39,9 @@ func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
 		size = *pageSize
 	}
 	if size < 1 || size > 1000 {
-		return repository.ListQuery{}, service.ErrInvalidInput
+		return inputmodel.ListQuery{}, service.ErrInvalidInput
 	}
-	return repository.ListQuery{Limit: size, Offset: (p - 1) * size}, nil
+	return inputmodel.ListQuery{Limit: size, Offset: (p - 1) * size}, nil
 }
 
 // apiRedemptionValueToMillis 契约面值 → 毫分存储（API 输入边界换算，与 balance
@@ -155,7 +155,7 @@ func (h *AdminAPI) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Reque
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	rows, total, err := h.svc.GetCodeUses(r.Context(), id, repository.ListQuery{
+	rows, total, err := h.svc.GetCodeUses(r.Context(), id, inputmodel.ListQuery{
 		Limit:  int(httpface.Deref(params.Limit)),
 		Offset: int(httpface.Deref(params.Offset)),
 	})

@@ -10,8 +10,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/pricing"
-	"github.com/is7qin/c3api/internal/repository"
 )
 
 func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams) {
@@ -67,7 +67,7 @@ func (h *AdminAPI) PutPriceEntry(w http.ResponseWriter, r *http.Request, params 
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	m := &repository.PriceEntryManual{
+	m := &inputmodel.PriceEntryManual{
 		Model: params.Model, Mode: domain.PriceMode(in.Mode),
 		InputPerM: usdToMillisPtr(in.InputPerM), OutputPerM: usdToMillisPtr(in.OutputPerM),
 		CacheReadPerM: usdToMillisPtr(in.CacheReadPerM), CacheWritePerM: usdToMillisPtr(in.CacheWritePerM),

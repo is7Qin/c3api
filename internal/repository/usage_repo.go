@@ -21,21 +21,14 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
-type UsageQuery struct {
-	GroupID   int64 // 0 = 不过滤
-	AccountID int64
-	UserID    int64 // 0 = 不过滤（/api/user/usages 强制 = 自己）
-	KeyID     int64
-	Model     string
-	Format    string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
-	ErrorType string // usage_logs = 纯计费明细（仅 cost>0）→ 值域收敛 none/abort（err_logs 分表后）
-	From      *time.Time
-	To        *time.Time
-	Cursor    int64 // keyset 游标（上页最后一条 id；<=0 = 首页无 id 谓词）
-	Limit     int
-}
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type UsageQuery = inputmodel.UsageQuery
 
 type UsageRepo struct {
 	client *ent.Client

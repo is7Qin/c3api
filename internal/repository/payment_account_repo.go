@@ -28,6 +28,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/paymentaccount"
 	"github.com/is7qin/c3api/internal/ent/paymentchannel"
+	"github.com/is7qin/c3api/internal/paymenterr"
 )
 
 // ErrMerchantRefImmutable 账户更新时新 config 推导出的 MerchantRef 与现列不符（N29）。
@@ -35,7 +36,11 @@ import (
 // 它**是** ErrConflict 的细分（errors.Is 两者都为真）：数据库层能给的语义就是冲突，
 // 但 spec §10-3 要求服务层映射 **400**（"改商户身份请新建账户 + 停用旧账户"），故单列
 // 一个可识别的子哨兵免得服务层按字符串匹配。
-var ErrMerchantRefImmutable = fmt.Errorf("%w: merchant_ref is read-only", ErrConflict)
+//
+// R1-c：canonical 定义搬到 internal/paymenterr（业务错误轴——它不是"任何存储都会有
+// 的协议分类"，见该包注释的判据），本包保留**同值别名**。必须是同值别名而不是
+// 另建一枚 fmt.Errorf：包内 3 处包裹点与包外 errors.Is/== 混用都必须认得同一个值。
+var ErrMerchantRefImmutable = paymenterr.ErrMerchantRefImmutable
 
 // ErrConfigRevisionMismatch 账户更新的乐观并发闸门未通过：调用方带的
 // `expected_config_revision` 与现列不符（说明这份表单是基于过期快照填的）。

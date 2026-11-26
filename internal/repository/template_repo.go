@@ -91,7 +91,7 @@ func (r *TemplateRepo) ListTemplates(ctx context.Context, q ListQuery) ([]*domai
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(templateSortFields)
+	order, err := sortOrder(q, templateSortFields)
 	if err != nil {
 		return nil, 0, err
 	}

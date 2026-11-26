@@ -19,6 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/template"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/storeerr"
 )
 
@@ -44,42 +45,23 @@ var ErrProviderNotWired = errors.New("repository: provider not wired")
 
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
-type TemplatePatch struct {
-	Name             *string
-	BaseURL          *string
-	SupportedFormats *[]domain.RequestFormat
-	Models           *[]string
-	FormatModels     *map[domain.RequestFormat][]string
-	ModelMapping     *domain.ModelMapping
-}
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type TemplatePatch = inputmodel.TemplatePatch
 
-type AccountPatch struct {
-	Name        *string
-	TemplateID  *int64
-	UpstreamKey *string
-	// BaseURL 批量三态（定死）：nil = 不变；&"" = 清空（落 NULL = 继承
-	// 模板）；&非空 = 落值。
-	BaseURL        *string
-	MaxConcurrency *int
-	// GroupIDs nil = 不变；非 nil = 替换账号全部分组（含空数组 = 清空）。
-	GroupIDs                 *[]int64
-	Enabled                  *bool
-	UpstreamCostMultiplierBp *int
-	CacheDomain              *string // nil=不变, &""=清空, &val=落值
-	// SupplierUserID 归属（spec §2.5 管理面「把账号分配给供应商」入口）：nil =
-	// 不变；&0 = 清空（回平台自有，落 NULL）；&uid(>0) = 分配给该用户（值域校验：
-	// 目标须为供应商面可达用户，且与禁用路径锁同一 users 行）。
-	SupplierUserID *int64
-	// ProxyID 出口代理（spec-proxy-pool §3.2）：nil = 不变；&0 = 解绑（落 NULL，
-	// 回落直连）；&id(>0) = 绑定该代理（存在性与可用性由 service 校验——仓库层
-	// 只搬值，B 端 0 与"C 端 null"不可区分，故沿用 supplier_user_id 的 &0 先例）。
-	ProxyID *int64
-}
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type AccountPatch = inputmodel.AccountPatch
 
-type GroupPatch struct {
-	Name       *string
-	Visibility *domain.GroupVisibility
-}
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type GroupPatch = inputmodel.GroupPatch
 
 // AccountWriteResult 单账号一次写入的结果：新配置代际 C（客户端 CAS 令牌）与本次
 // **真实变更**的字段集。ChangedFields 是调用方推导失效计划的唯一输入

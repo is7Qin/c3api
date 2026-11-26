@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 func decodeBody(r *http.Request, v any) ([]byte, error) {
@@ -148,7 +148,7 @@ func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 
 // GetTemplates 模板列表（分页/筛选/排序，ServerInterface）。
 func (h *AdminAPI) GetTemplates(w http.ResponseWriter, r *http.Request, params GetTemplatesParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset: int(httpface.Deref(params.Offset)),
 		Name:   httpface.Deref(params.Name),
@@ -267,13 +267,13 @@ func (h *AdminAPI) PostTemplatesBatchUpdate(w http.ResponseWriter, r *http.Reque
 
 // templatePatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新）。
 // 空 fields（无任何字段）视为非法输入。
-func templatePatchFromBody(f *TemplatePatch) (repository.TemplatePatch, error) {
+func templatePatchFromBody(f *TemplatePatch) (inputmodel.TemplatePatch, error) {
 	var mm *domain.ModelMapping
 	if f.ModelMapping != nil {
 		m := modelMappingFromBody(f.ModelMapping)
 		mm = &m
 	}
-	p := repository.TemplatePatch{
+	p := inputmodel.TemplatePatch{
 		Name:         f.Name,
 		BaseURL:      f.BaseUrl,
 		Models:       f.Models,
@@ -292,7 +292,7 @@ func templatePatchFromBody(f *TemplatePatch) (repository.TemplatePatch, error) {
 	}
 	if p.Name == nil && p.BaseURL == nil && p.SupportedFormats == nil &&
 		p.Models == nil && p.FormatModels == nil && p.ModelMapping == nil {
-		return repository.TemplatePatch{}, errors.New("fields must contain at least one field")
+		return inputmodel.TemplatePatch{}, errors.New("fields must contain at least one field")
 	}
 	return p, nil
 }

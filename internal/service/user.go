@@ -13,6 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	serviceerr "github.com/is7qin/c3api/internal/service/errors"
@@ -135,7 +136,7 @@ func (s *Service) ListUserTempBalances(ctx context.Context, userID int64) ([]*do
 
 // ListTempBalances 管理侧临时额度全量列表（/api/admin/temp-balances；userID 0 =
 // 全部用户；sort/order 白名单校验——非法 → ErrInvalidInput 400）。
-func (s *Service) ListTempBalances(ctx context.Context, q repository.ListQuery, userID int64) ([]*domain.TempBalance, int64, error) {
+func (s *Service) ListTempBalances(ctx context.Context, q inputmodel.ListQuery, userID int64) ([]*domain.TempBalance, int64, error) {
 	if err := validateListQuery(q, listSortFields["temp_balances"]); err != nil {
 		return nil, 0, err
 	}
@@ -247,7 +248,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 }
 
 // ListUsers 用户列表（/api/admin/users；platform_admin 专属）。
-func (s *Service) ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error) {
+func (s *Service) ListUsers(ctx context.Context, q inputmodel.ListQuery) ([]*domain.User, int64, error) {
 	if err := validateListQuery(q, listSortFields["users"]); err != nil {
 		return nil, 0, err
 	}
@@ -265,7 +266,7 @@ const maxUserUpdateRetries = 3
 // 0 行 → 重读当前值刷新旧值条件重试 ≤3 次 → 超限 ErrConflict（409）。用户
 // 状态/并发/额度变更 → invalidate → Auth.Reload 全量刷新。价格
 // 倍率按组经 group_assignment 设置，用户本体无倍率字段。
-func (s *Service) UpdateUser(ctx context.Context, p *repository.UserPatch, operatorID int64) (*domain.User, error) {
+func (s *Service) UpdateUser(ctx context.Context, p *inputmodel.UserPatch, operatorID int64) (*domain.User, error) {
 	if p.Role != nil && !p.Role.Valid() {
 		return nil, ErrInvalidInput
 	}

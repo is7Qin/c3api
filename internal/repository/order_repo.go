@@ -24,6 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/order"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // orderListLimitMax 管理面订单列表 limit 上限（§7-3：默认 20、上限 100）。
@@ -31,15 +32,12 @@ const orderListLimitMax = 100
 
 // OrderQuery 订单列表筛选（§7-3 管理面 / §7-1 用户面）：
 // 零值 = 不过滤；Limit <=0 → 20，>100 → 100；Offset <0 → 0。
-type OrderQuery struct {
-	UserID      int64 // 0 = 全部；用户面由 service 强制 = 本人
-	Status      *domain.OrderStatus
-	OutTradeNo  string
-	CreatedFrom *time.Time // created_at >= (nil = 不限)
-	CreatedTo   *time.Time // created_at <= (nil = 不限)
-	Limit       int
-	Offset      int
-}
+//
+// R1-c：canonical 定义搬到 internal/inputmodel（输入契约不该住在存储实现包里），
+// 本处只留**类型别名**（带 `=`）。handler/service 与本包必须与 canonical 是
+// **同一个类型**：写成新定义会静默变成"两份同形 struct"，跨包赋值与同一性判定
+// 全部失真。编译期双向可赋值断言见 inputmodel_identity.go。
+type OrderQuery = inputmodel.OrderQuery
 
 // OrderRepo 支付订单持久化。
 type OrderRepo struct {
