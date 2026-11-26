@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/pricingresult"
 	serviceerr "github.com/is7qin/c3api/internal/service/errors"
 )
 
@@ -89,6 +90,11 @@ func TestSyncNowErrorContracts(t *testing.T) {
 		})
 		_, err := w.SyncNow(context.Background())
 		require.ErrorIs(t, err, ErrPriceFetch)
+		// 双层包装承重：外层 %w 让通用的 ErrUpstream 映射也成立（httpface 502）。
+		require.ErrorIs(t, err, serviceerr.ErrUpstream)
+		// handler 的谓词：专属**类型**（errors.As），与上面两个 Is 相互独立。
+		var fetchErr *pricingresult.FetchError
+		require.ErrorAs(t, err, &fetchErr, "handler 的 502 分支靠 As 判类型")
 		require.Zero(t, u.count(), "fetch 失败不落库")
 		require.Zero(t, reloads, "fetch 失败不刷新快照")
 	})
@@ -163,5 +169,8 @@ func TestPreview(t *testing.T) {
 		w = NewSyncWorker(SyncWorkerConfig{Fetcher: &fakeFetcher{err: errors.New("boom")}, Repo: &fakeUpserter{}, Settings: &fakeSettings{url: "https://u"}})
 		_, err = w.Preview(context.Background())
 		require.ErrorIs(t, err, ErrPriceFetch)
+		require.ErrorIs(t, err, serviceerr.ErrUpstream)
+		var fetchErr *pricingresult.FetchError
+		require.ErrorAs(t, err, &fetchErr)
 	})
 }

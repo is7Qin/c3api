@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -29,8 +28,9 @@ type AdminAPI struct {
 	usageSnap CodexUsageProber
 	// pricingSync 价格手动同步/预览编排面（service 侧回填删除后，
 	// sync/preview 端点经构造直调 worker；nil = 未装配 → 端点 500，不 panic，
-	// 与旧 nil-fetcher 降级语义一致）。
-	pricingSync *pricing.SyncWorker
+	// 与旧 nil-fetcher 降级语义一致）。类型是本包声明的消费方接口
+	// （pricing_port.go），刻意不写成具体 worker 类型。
+	pricingSync PricingSync
 	// log fan-out 未知上游错误 Warn（nil = 静默；生产经 OpsOptions 注入）。
 	log *logx.Logger
 	// overview/users-top 聚合面缓存（spec 2026-08-14 TTL：30s/2s——dashboard

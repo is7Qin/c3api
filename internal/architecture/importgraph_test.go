@@ -272,6 +272,16 @@ var allowRules = []allowRule{
 	{from: "internal/modelmap", to: []string{}},
 	{from: "internal/identityenv", to: []string{}},
 
+	// P6-1：internal/pricingresult 是价格手动同步/预览的**结果值叶子包**（零内部
+	// 依赖，只 import stdlib）：handler 要驱动一次价格同步并读结果，但不该认识
+	// pricing 的实现面（fetcher/repo/settings/cron/worker 生命周期）。结果值与
+	// 错误类型放中立叶子，消费方接口（handler.PricingSync）与实现在 pricing，
+	// 各自独立演化。与 internal/modelmap / internal/identityenv 同范式。
+	//
+	// 显式空切片而不是裸规则：语义是"叶包不依赖任何内部包"，将来有人往里加
+	// import 时得到的是本规则明确的拒绝，而不是 leafRule 顺手放行。
+	{from: "internal/pricingresult", to: []string{}},
+
 	// pkg/headervalid 是头 wire 合法性判据的**中立叶子包**（stdlib-only）：domain 的
 	// 保存期 request_patch 校验与 pkg/aiclient 的 RelayHeaders 值卫生共用同一份判据
 	// （spec request_patch §2.6）。此前判据寄居 pkg/httpx，把 net/http 传输装配整个
@@ -442,6 +452,9 @@ var allowRules = []allowRule{
 		"internal/handler/", "internal/domain", "internal/credential",
 		"internal/service", "internal/auth", "internal/httpface", "pkg/logx",
 		"internal/inputmodel", "internal/paymenterr",
+		// P6-1：结果值叶子包（PricingSync 的返回类型），不是 pricing 的实现面。
+		// 这正是 handler -> pricing 那条生产债清掉后的替代物：只共享纯数据。
+		"internal/pricingresult",
 	}},
 
 	// 传输壳：只依赖 domain 与两个 pkg 原语。
@@ -470,7 +483,10 @@ var allowRules = []allowRule{
 	{from: "internal/notification", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
 	{from: "internal/notify", to: []string{"internal/worker", "pkg/logx"}},
 	{from: "internal/paymentregistry", to: []string{"internal/domain", "internal/service/epay"}},
-	{from: "internal/pricing", to: []string{"internal/domain", "internal/service/errors", "internal/worker", "pkg/logx"}},
+	// P6-1 加 internal/pricingresult：三个结果类型（SyncStats/Preview/PreviewEntry）
+	// 的 canonical 定义下沉到该叶子包，本包留**别名**；fetch 失败同时产出
+	// &pricingresult.FetchError 供 handler 用 errors.As 判定。
+	{from: "internal/pricing", to: []string{"internal/domain", "internal/pricingresult", "internal/service/errors", "internal/worker", "pkg/logx"}},
 
 	// 探测面：需要 sdkbridge 客户端做健康探测，属执行面延伸。
 	{from: "internal/probe", to: []string{
@@ -696,7 +712,20 @@ const (
 	//   换来的是生产门禁里 internal/domain -> pkg/httpx 这条 new violation 的消失
 	//   （修法是判据搬家，不是把 pkg/httpx 加进 domain 的白名单）。scheduler 的
 	//   三条外部测试边改由 testFixtureAllow 承载，矩阵未为此加宽。
-	// 前值：0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664（本单之前）
+	// P6-1 变更（矩阵三处：新增 1 条显式叶子规则 + 两条 to 各加 1 个窄边，
+	// 没有新增 all: true / deny）：
+	//   1. 新增 {from: "internal/pricingresult", to: []string{}}：结果值叶子包，
+	//      零内部依赖（只 import stdlib），与 internal/modelmap / identityenv 同范式；
+	//   2. handler 的 to 加 internal/pricingresult：PricingSync 的返回类型是纯数据，
+	//      不是 pricing 的实现面——这是 handler -> pricing 那条生产债的替代物；
+	//   3. pricing 的 to 加 internal/pricingresult：三个结果类型的 canonical 定义
+	//      下沉到叶子包（本包留别名），fetch 失败产出 pricingresult.FetchError。
+	//   换来的是 productionLedger 里 {internal/handler, internal/pricing} 那条 P6 债
+	//   的消失（debtMax 5 → 4）。⚠ testLedger 同步增一行（debtMax 4 → 5）：生产边
+	//   断了之后，这条边只剩"同包测试用真实 *pricing.SyncWorker 装进消费方接口验
+	//   行不变"的夹具需求——那是 V3 的判据，换成 fake 就什么都证明不了。
+	// 前值：6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244（本单之前）
+	// 再前值：0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664（R1-c 之后）
 	// 再前值：8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185（R1-c 之后）
 	// 再前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
 	// 再前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
@@ -704,7 +733,7 @@ const (
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244"
+	allowMatrixFingerprint = "93aaa4ada68332006639a25be84c92c31a138de9487f69fea0d61fbdb3eacabe"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -880,12 +909,11 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 5,
+	debtMax: 4,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
-		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},
 		{"internal/handler", "internal/sdkbridge", "handler 的 codex 导入/用量接口直接调 sdkbridge；P6 收进 service", phaseP6},
 		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
 	},
@@ -897,7 +925,7 @@ var productionLedger = ledger{
 
 var testLedger = ledger{
 	name:    "同包测试 TestImports",
-	debtMax: 4,
+	debtMax: 5,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/billing", "internal/usage", "billing 测试用 usage 组件落库构造误差日志夹具；P4 后改 repository 端口", phaseP4},
@@ -908,6 +936,12 @@ var testLedger = ledger{
 		// 接口一致性断言"的边变成合法的测试夹具边 ⇒ 门禁按 shrink-only 要求删行
 		// 并同步减上限（redundant legacy）。该边本身就是夹具需求，与本单新增的
 		// 三条外部测试夹具边同型，不是"删债时偷加边"。
+		// P6-1：生产边已断（handler 不再 import pricing），这条只剩**测试夹具**需求：
+		// pricing_sync_test.go 必须把**真实** *pricing.SyncWorker 装进
+		// handler.PricingSync 才能证明「方法集是超集 ⇒ 自动满足」以及端点行为不变
+		// （换成 fake 就什么都证明不了）。故走 testLedger 而不是 testFixtureAllow ——
+		// 后者按前缀匹配，加 internal/pricing 会让**任意**包的测试都能 import pricing。
+		{"internal/handler", "internal/pricing", "handler 的同包测试用真实 pricing.SyncWorker 装进消费方接口，验行为不变；接口化后该边只剩测试夹具需求", phaseP6},
 		{"internal/handler", "internal/scheduler", "handler 测试直连 scheduler 构造路由视图；P6 后改 service 端口", phaseP6},
 		{"internal/handler", "internal/settingssnap", "handler 测试读 settingssnap 构造设置快照；P6 后由 service 提供", phaseP6},
 		{"internal/handler/payment", "internal/settingssnap", "支付回调测试用 settingssnap 构造设置；P6 后由 service 提供", phaseP6},

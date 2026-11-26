@@ -31,6 +31,7 @@
 | 供应商收益 / 解冻 | `supplier/AGENTS.md` |
 | `usage_logs` 写入 / 分区 / 离线聚合 | `usage/AGENTS.md` |
 | 定价与换算系 | `pricing/AGENTS.md` |
+| 价格同步/预览的**结果值**（handler 侧消费方接口、`FetchError` 谓词） | `pricingresult/AGENTS.md` + `handler/AGENTS.md` |
 | 规则引擎 | `rule/AGENTS.md` |
 | 路由装配 / 中间件 | `server/AGENTS.md` |
 | 多实例广播 | `notify/AGENTS.md` |
@@ -41,7 +42,7 @@
 | 迁移 DDL 生成器 | `db/migrate/gen/AGENTS.md` |
 | 错误哨兵归属（该进哪个包） | `storeerr/AGENTS.md` / `paymenterr/AGENTS.md` |
 
-**中性叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据；`pkg/*` 侧无 legacy 通道）。
+**中立叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据，`pkg/*` 不受 legacy 通道管辖）/ `pricingresult`。
 **测试夹具特权**（`testFixtureAllow`，跨层是允许的）：`testsupport/`、`ent/`、`db/migrate`、
 `repository`、`rulepersist`、`sdkbridge`、`server`、`billing`。
 

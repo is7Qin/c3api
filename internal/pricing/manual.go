@@ -11,36 +11,24 @@ import (
 	"slices"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/pricingresult"
 	"github.com/is7qin/c3api/internal/service/errors"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // ErrPriceFetch 拉取失败（fetch err 包装）：管理端手动 sync 端点映射 502。
+//
+// ⚠ 仅供本包测试与既有调用方；跨包判定请用 pricingresult.FetchError + errors.As
+// （不要认变量名）。
 var ErrPriceFetch = errors.New("pricing: price fetch failed")
 
-// SyncStats 手动同步结果（文本价行 + 跳过数 + 落库数 + 拉取变体数）。
-type SyncStats struct {
-	Rows     int
-	Skipped  int
-	Updated  int
-	Variants int
-}
-
-// Preview 预览结果（只读比较，零写库）。
-type Preview struct {
-	ToAdd           int
-	ToUpdate        int
-	Skipped         int
-	Entries         []PreviewEntry
-	VariantsChanged int
-}
-
-// PreviewEntry 单模型 add/update 意向。
-type PreviewEntry struct {
-	Model  string
-	Mode   string
-	Action string // add/update
-}
+// SyncStats / Preview / PreviewEntry 的 canonical 定义在 internal/pricingresult
+// （结果值的中立叶子包）。别名而非新类型：SyncWorker 的既有签名与全部调用点不变。
+type (
+	SyncStats    = pricingresult.SyncStats
+	Preview      = pricingresult.Preview
+	PreviewEntry = pricingresult.PreviewEntry
+)
 
 // SnapshotReader 预览 membership 源（service 定价快照实现）：nil map =
 // 快照未加载（全量 ToAdd，与旧 service.priceSnapshot==nil 分支同语义）。
@@ -65,7 +53,15 @@ func (w *SyncWorker) SyncNow(ctx context.Context) (*SyncStats, error) {
 	res, err := w.fetch.Fetch(ctx, url)
 	if err != nil {
 		w.log.Warn("pricing sync failed", logx.Error(err))
-		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
+		// 一处 fetch 失败 = 三条语义同时成立：
+		//   - &pricingresult.FetchError  → handler 用 errors.As 判定（**专属、精确**，不认变量名）
+		//   - ErrPriceFetch              → 本包既有测试的 ErrorIs 契约
+		//   - serviceerr.ErrUpstream     → 任何经 httpface.WriteServiceErr 的路径拿到通用 502
+		// 三者用嵌套 %w 一次表达（Go 1.27 支持多个 %w）。⚠ handler 的 502 分支只认
+		// 第一条——外层那条 ErrUpstream 不是它的承重件。
+		return nil, fmt.Errorf("%w: %w", &pricingresult.FetchError{
+			Err: fmt.Errorf("%w: %w", ErrPriceFetch, err),
+		}, serviceerr.ErrUpstream)
 	}
 	entries := res.PriceEntries
 	n, err := w.repo.UpsertPriceEntriesFromLiteLLM(ctx, entries)
@@ -120,7 +116,15 @@ func (w *SyncWorker) Preview(ctx context.Context) (*Preview, error) {
 	res, err := w.fetch.Fetch(ctx, url)
 	if err != nil {
 		w.log.Warn("pricing sync preview failed", logx.Error(err))
-		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
+		// 一处 fetch 失败 = 三条语义同时成立：
+		//   - &pricingresult.FetchError  → handler 用 errors.As 判定（**专属、精确**，不认变量名）
+		//   - ErrPriceFetch              → 本包既有测试的 ErrorIs 契约
+		//   - serviceerr.ErrUpstream     → 任何经 httpface.WriteServiceErr 的路径拿到通用 502
+		// 三者用嵌套 %w 一次表达（Go 1.27 支持多个 %w）。⚠ handler 的 502 分支只认
+		// 第一条——外层那条 ErrUpstream 不是它的承重件。
+		return nil, fmt.Errorf("%w: %w", &pricingresult.FetchError{
+			Err: fmt.Errorf("%w: %w", ErrPriceFetch, err),
+		}, serviceerr.ErrUpstream)
 	}
 	entries := res.PriceEntries
 	preview := &Preview{Skipped: res.Skipped}

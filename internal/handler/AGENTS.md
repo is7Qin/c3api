@@ -21,6 +21,11 @@
 - 探测结论 `AccountTestResult` 必须包含 `output_preview`（恒 string）与
   `image_previews`（恒数组；nil 必须写成 `[]`）。这些字段只回显给发起探测的
   管理员/账号 owner，绝不写日志。
+- `pricing_port.go`：`PricingSync` 是**本包声明的消费方接口**（只有 `SyncNow` +
+  `Preview` 两个方法，返回 `internal/pricingresult` 的中立结果值）。实现在
+  `internal/pricing`（方法集是超集 ⇒ 自动满足），由组合根 `cmd/server` 注入到
+  `OpsOptions.PricingSync`。**不要把字段类型改回 `*pricing.SyncWorker`**——那会让
+  本包重新认识 pricing 的 fetcher/repo/settings/cron/worker 实现面（就是被清掉的那条债）。
 
 ## 不变量
 
@@ -29,6 +34,19 @@
 - handler 只搬运请求/响应，不做业务校验；400 的字段语义由 service 决定。
 - 探测端点一次请求只调用一次 `svc.ProbeAccount`；不写库、不计费、不改账号状态。
 - 错误响应不得包含上游 body、URL、内部 ID、key/签名或凭据（根反模式 7）。
+- **`/pricing/sync` 与 `/pricing/sync/preview` 的 fetch 失败都判 `*pricingresult.FetchError`
+  （`errors.As`），并写固定文案 `"pricing sync failed"`**。两条都不要退回：
+  - **不要**判哨兵（`pricing.ErrPriceFetch` / `pricingresult` 里的任何变量名）——那会让本包
+    认识实现方的变量；
+  - **不要**判通用的 `serviceerr.ErrUpstream`——它被 `codex_login`/`payment` 等多处共享生产，
+    会把无关上游故障误标成价格同步失败；
+  - **不要**改走 `WriteServiceErr` 兜住 `FetchError`——那个 502 分支会把 `err.Error()`
+    原样写进响应体（含上游 fetch 原文），既是行为漂移也是信息泄漏。
+  门禁：`TestPricingSyncPredicateIsPrecise`（`pricing_port_test.go`）。
+- **`POST /pricing/sync/preview` 目前不返回 `entries`**（只回 `to_add/to_update/skipped/
+  variants_changed` 四个 int）。契约里已定义 `PricingSyncPreviewResponse.entries`、
+  `pricingresult.Preview.Entries` 也已写好并有 pricing 侧测试，所以"顺手补全"是一次**合理
+  的独立特性**——但它不是解耦的副作用，**不要在这个口径下顺手做**（单独开单）。
 - 测试：`go test ./internal/handler/ -run 'TestPostAccountsIdTest|TestProbeSchemaContract'`；
   OpenAPI 契约由 `TestProbeSchemaContract` 锁住（nullable/enum/maxLength/required）。
 

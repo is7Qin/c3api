@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
 	"github.com/is7qin/c3api/internal/inputmodel"
-	"github.com/is7qin/c3api/internal/pricing"
+	"github.com/is7qin/c3api/internal/pricingresult"
 )
 
 func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams) {
@@ -169,7 +169,11 @@ func (h *AdminAPI) PostPricingSync(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := h.pricingSync.SyncNow(r.Context())
 	if err != nil {
-		if errors.Is(err, pricing.ErrPriceFetch) {
+		// 谓词是**专属类型**（pricingresult.FetchError），不是通用哨兵：
+		// serviceerr.ErrUpstream 被 codex_login/payment 等多处共享生产，判它会
+		// 把无关的上游故障误标成价格同步失败。文案固定，不回显上游错误文本。
+		var fetchErr *pricingresult.FetchError
+		if errors.As(err, &fetchErr) {
 			httpface.WriteErr(w, http.StatusBadGateway, "pricing sync failed")
 			return
 		}
@@ -188,6 +192,14 @@ func (h *AdminAPI) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request
 	}
 	preview, err := h.pricingSync.Preview(r.Context())
 	if err != nil {
+		// 与 PostPricingSync 同一条谓词（专属类型 FetchError，errors.As）。
+		// **不能**只靠 WriteServiceErr：ErrUpstream 分支会把 err.Error() 原样
+		// 回显（含上游 fetch 原文），而本系列端点只用固定文案。
+		var fetchErr *pricingresult.FetchError
+		if errors.As(err, &fetchErr) {
+			httpface.WriteErr(w, http.StatusBadGateway, "pricing sync failed")
+			return
+		}
 		httpface.WriteServiceErr(w, err)
 		return
 	}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -58,9 +57,10 @@ type OpsOptions struct {
 	// 账号 null 快照，与旧 service nil-setter 降级语义一致）。
 	UsageSnap CodexUsageProber
 	// PricingSync 价格手动同步/预览编排面（POST /pricing/sync 与
-	// /pricing/sync/preview 经构造直调（*pricing.SyncWorker 满足）；nil =
+	// /pricing/sync/preview 经构造直调；接口在本包声明，pricing_port.go 的
+	// PricingSync——*pricing.SyncWorker 方法集是超集，满足它）；nil =
 	// 未装配 → 端点 500，与旧 service nil-fetcher 降级语义一致）。
-	PricingSync *pricing.SyncWorker
+	PricingSync PricingSync
 	// AttemptSampling 尝试明细采样丢弃计数面（/api/admin/ops/attempts/{request_id}
 	// 的 sampling 段；实现 = (*usage.AttemptLogWorker).Dropped 的方法值）。handler
 	// 只需要丢弃总数，不要整个 worker（Enqueue/Close 属于写路径）。
