@@ -21,21 +21,11 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
-type UsageQuery struct {
-	GroupID   int64 // 0 = 不过滤
-	AccountID int64
-	UserID    int64 // 0 = 不过滤（/api/user/usages 强制 = 自己）
-	KeyID     int64
-	Model     string
-	Format    string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
-	ErrorType string // usage_logs = 纯计费明细（仅 cost>0）→ 值域收敛 none/abort（err_logs 分表后）
-	From      *time.Time
-	To        *time.Time
-	Cursor    int64 // keyset 游标（上页最后一条 id；<=0 = 首页无 id 谓词）
-	Limit     int
-}
+// R1-c：canonical 在 internal/inputmodel；为何必须是别名（而非新定义）见 inputmodel_identity.go。
+type UsageQuery = inputmodel.UsageQuery
 
 type UsageRepo struct {
 	client *ent.Client

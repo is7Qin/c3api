@@ -84,7 +84,7 @@ func (r *GroupRepo) ListGroups(ctx context.Context, q ListQuery) ([]*domain.Grou
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(groupSortFields)
+	order, err := sortOrder(q, groupSortFields)
 	if err != nil {
 		return nil, 0, err
 	}

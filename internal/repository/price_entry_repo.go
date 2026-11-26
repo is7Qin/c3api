@@ -17,6 +17,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // PriceEntryRepo 统一价格条目持久化。
@@ -138,18 +139,9 @@ func (r *PriceEntryRepo) upsertLitellmBatch(ctx context.Context, batch []*domain
 }
 
 // PriceEntryManual 手动设价入参。
-type PriceEntryManual struct {
-	Model          string
-	Mode           domain.PriceMode
-	InputPerM      *int64
-	OutputPerM     *int64
-	CacheReadPerM  *int64
-	CacheWritePerM *int64
-	PricePerCall   *int64
-	ImgInTokPerM   *int64
-	ImgOutTokPerM  *int64
-	PricePerImage  *int64
-}
+//
+// R1-c：canonical 在 internal/inputmodel；为何必须是别名（而非新定义）见 inputmodel_identity.go。
+type PriceEntryManual = inputmodel.PriceEntryManual
 
 func (r *PriceEntryRepo) UpsertManual(ctx context.Context, m *PriceEntryManual) (*domain.PriceEntry, error) {
 	if m.Model == "" {
@@ -251,7 +243,7 @@ func (r *PriceEntryRepo) ListPriceEntries(ctx context.Context, q ListQuery, sour
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(priceEntrySortFields)
+	order, err := sortOrder(q, priceEntrySortFields)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // GetErrLogs 错误明细分页查询（/err_logs：完整错误面——本地拒绝 + 半异常双轨，
@@ -16,7 +16,7 @@ import (
 // keyset 游标分页与 /usage_logs 同语义（from/to 必填、cursor 透传、next_cursor 组装
 // ——limit 归一/探测走 httpface.LogLimit + ClipLogPage，C2 消重）。
 func (h *AdminAPI) GetErrLogs(w http.ResponseWriter, r *http.Request, params GetErrLogsParams) {
-	lq := repository.ErrLogQuery{
+	lq := inputmodel.ErrLogQuery{
 		Limit:      httpface.LogLimit(httpface.Deref(params.Limit)),
 		Cursor:     httpface.Deref(params.Cursor),
 		From:       &params.From,

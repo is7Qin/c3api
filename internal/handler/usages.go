@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // GetUsageLogs 用量明细分页查询（/usage_logs；消费面改名裁决：/logs → /usage_logs
@@ -20,7 +20,7 @@ import (
 // limit 缺省/钳制走 httpface.LogLimit，limit+1 探测走 httpface.ClipLogPage
 // （与 4 个 usage/errlog handler 同源语义，C2 消重）。
 func (h *AdminAPI) GetUsageLogs(w http.ResponseWriter, r *http.Request, params GetUsageLogsParams) {
-	lq := repository.UsageQuery{
+	lq := inputmodel.UsageQuery{
 		Limit:     httpface.LogLimit(httpface.Deref(params.Limit)),
 		Cursor:    httpface.Deref(params.Cursor),
 		From:      &params.From,

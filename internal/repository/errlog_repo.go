@@ -12,29 +12,18 @@ package repository
 
 import (
 	"context"
-	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/errlog"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // ErrLogQuery err_logs 查询过滤面（/errlogs API 同构 /usages：分页 + error_type/
 // status_code/时间范围/model/group 等——完整错误面，status_code/error_type 全值）。
-type ErrLogQuery struct {
-	GroupID    int64 // 0 = 不过滤
-	AccountID  int64
-	UserID     int64 // 0 = 不过滤（/api/user/errlogs 强制 = 自己）
-	KeyID      int64
-	Model      string
-	Format     string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
-	StatusCode int    // 0 = 不过滤
-	ErrorType  string
-	From       *time.Time
-	To         *time.Time
-	Cursor     int64 // keyset 游标（上页最后一条 id；<=0 = 首页无 id 谓词）
-	Limit      int
-}
+//
+// R1-c：canonical 在 internal/inputmodel；为何必须是别名（而非新定义）见 inputmodel_identity.go。
+type ErrLogQuery = inputmodel.ErrLogQuery
 
 type ErrLogRepo struct{ client *ent.Client }
 

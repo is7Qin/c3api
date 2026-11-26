@@ -281,9 +281,13 @@ var allowRules = []allowRule{
 	// RoutingFlowRow）与保留期哨兵的 canonical 搬过去，本包保留类型别名
 	// （type X = qualitymodel.X） + 哨兵同值别名。同属"实现 → 契约"方向，
 	// qualitymodel 只依赖 domain，结构上不可能反向 import 本包。
+	//
+	// R1-c 起再多两条：internal/inputmodel（9 个查询/补丁/定价入参的 canonical，
+	// 本包只留 `type X = inputmodel.X`）与 internal/paymenterr（支付业务哨兵，
+	// 本包只留同值别名）。两者都是叶子包，不可能反向 import 本包。
 	{from: "internal/repository", to: []string{
 		"internal/domain", "internal/credential", "internal/ent", "internal/loadport", "internal/storeerr",
-		"internal/qualitymodel",
+		"internal/qualitymodel", "internal/inputmodel", "internal/paymenterr",
 	}},
 
 	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
@@ -376,9 +380,16 @@ var allowRules = []allowRule{
 	// `internal/httpface` 是显式边：httpface 从 handler 子树搬到顶层后，
 	// `internal/handler/` 这个**子树前缀**不再匹配它。本包与 handler/user、
 	// handler/paymentadmin 三处都在写错误响应，边是真的，不是删债时顺带放宽。
+	//
+	// R1-c：查询/补丁 DTO 与支付业务哨兵的 canonical 搬到两个叶子包后，本包多两条
+	// **输入契约**边（handler 构造字面量、判定业务错误，仍不碰存储）。⚠ **不要**
+	// 在这里加 `internal/repository`：那三条 handler→repository 债刚被清掉，
+	// 许可一加就等于把刚断掉的边重新合法化（它本来就不在这张表里，这条边的存在
+	// 曾经完全靠 legacy 债豁免）。
 	{from: "internal/handler", to: []string{
 		"internal/handler/", "internal/domain", "internal/credential",
 		"internal/service", "internal/auth", "internal/httpface", "pkg/logx",
+		"internal/inputmodel", "internal/paymenterr",
 	}},
 
 	// 传输壳：只依赖 domain 与两个 pkg 原语。
@@ -451,6 +462,21 @@ var allowRules = []allowRule{
 	// 也会连带放行 credential/worker/pkg —— 契约包不该有这些。所以这里写成窄边
 	// {domain}，与 internal/config、internal/continuation 同口径。
 	{from: "internal/qualitymodel", to: []string{"internal/domain"}},
+
+	// 输入契约（R1-c）：与 qualitymodel 同口径——显式声明的叶子层，**只允许 domain**。
+	// 裸规则会让 leafRule 连带放行 credential/worker/pkg，而"输入契约"不该有这些。
+	// 为什么需要 domain：9 个类型里 6 个的字段是 domain 枚举（OrderStatus /
+	// GroupVisibility / RequestFormat / ModelMapping / Role / UserStatus / PriceMode），
+	// 包级依赖"有一个就算"，故这条边是真需要的，不是惯性。
+	{from: "internal/inputmodel", to: []string{"internal/domain"}},
+
+	// 支付业务错误（R1-c）：**只允许 storeerr**。
+	// 为什么不是裸规则：它必须 `%w` 到 storeerr.ErrConflict（保住
+	// errors.Is(err, ErrConflict) 的派生链），除此之外一切都是加宽。
+	// 为什么不放进 storeerr 本身：见 internal/paymenterr 的包注释（判据是
+	// "删掉业务语境后它还成立吗"——它不成立，所以留在支付域）。
+	{from: "internal/paymenterr", to: []string{"internal/storeerr"}},
+
 	{from: "internal/db/migrate", to: []string{"internal/db/migrate/"}},
 
 	{from: "internal/snapshot"},
@@ -553,12 +579,35 @@ const (
 	//   换来的是账本里 quality → repository 那条 P4 债的**消失**（debtMax 12 → 11）。
 	//   注意：这条边消失是**真删边**（quality 改指行契约，不再碰存储实现），不是把边
 	//   改名绕开账本 —— D1/D2 两条结构性判据独立复核了闭包里已无 repository。
-	// 前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
+	// 债 r1c-inputmodel 变更（3 条 to: 白名单加宽 + 2 条新增显式叶子规则，没有新增 all: true）：
+	//   handler 子树"零函数调用、但有类型引用"的 10 个符号（9 个查询/补丁/定价入参 +
+	//   1 枚支付业务哨兵）的 canonical 拆到两个新叶子包 internal/inputmodel（只依赖
+	//   domain）与 internal/paymenterr（只依赖 storeerr），repository 全部保留别名。
+	//   矩阵改动如下：
+	//   1. internal/handler 的 to 加 internal/inputmodel + internal/paymenterr
+	//      （⚠ 只加这两个。repository 本来就不在这张表里——那条边过去完全靠 legacy
+	//      债豁免存在，加回去等于把刚清的边重新合法化）；
+	//   2. repository 的 to 加 internal/inputmodel + internal/paymenterr（别名主语）；
+	//   3. 新增显式叶子规则 internal/inputmodel → {domain}（窄边，理由同 qualitymodel：
+	//      裸规则落 leafRule 会连带放行 credential/worker/pkg）；
+	//   4. 新增显式叶子规则 internal/paymenterr → {storeerr}（它必须 %w 到
+	//      storeerr.ErrConflict，其余一律不收）。
+	//   service 是 all: true（deny 仅 internal/proxy）⇒ 两个新包自动放行，未改。
+	//   换来的是账本里 handler / handler/user / handler/paymentadmin → repository
+	//   三条 P4 债的**消失**（debtMax 11 → 8）。
+	//   注意：这三条边消失是**真删边**（handler 生产代码不再有任何 repository 符号，
+	//   D2 文本扫描与 Imports 口径双向复核），不是把边改名绕开账本。
+	//   ⚠ 传递闭包（go list .Deps）里仍有 repository，且**基线即如此**：
+	//   handler → service → repository 是 service 自己引的（它还在用
+	//   repository.TxStore / Repository / ErrNotFound 等本单非目标的符号）。
+	//   本门禁用直接 Imports 口径裁决，故与 D1 不冲突。
+	// 前值：0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352（R1-b 之后）
+	// 再前值：ee2ae1c7e5dde005a8d7da9dd3a2f5eec7ae166a2eb1cdb0f83f26b6c454f6a5（R1-a 之后）
 	// 再前值：d4164844746b06667580c3d2e2d4c8daeac0c25124994932cea6d8ca92f46da3（债 s1-a-class 之后）
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "0220bcb8d61bda0ba6b6dd05deb32897d5eb5013c76fe638da03c5a98cbe7352"
+	allowMatrixFingerprint = "8094d0ea13a576d761fc16c4ca014a8b4fc78a508b80367fda0a110172697185"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -734,14 +783,11 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 11,
+	debtMax: 8,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent", "internal/domain", "Ent 生成模型复用 domain 枚举，Codegen 边界尚未抽离；P3 把枚举归入 api/中立类型并重生成，生成代码不得作为永久豁免", phaseP3},
 		{"internal/ent/schema", "internal/domain", "手写 schema 字段直接用 domain 枚举；P3 归入中立类型后，schema 只依赖 ent 自带类型", phaseP3},
-		{"internal/handler", "internal/repository", "handler 直读 repository（模板/订单/账号列表）；P4 存储接口化后改走 service 端口", phaseP4},
-		{"internal/handler/paymentadmin", "internal/repository", "支付管理 handler 直读 repository；P4 后走 service 端口", phaseP4},
-		{"internal/handler/user", "internal/repository", "用户端 handler 直读 repository（订单/钥匙/兑换）；P4 后走 service 端口", phaseP4},
 		{"internal/repository", "internal/billing", "repository 反向依赖 billing 的账务类型；P4 把账务读写抽成端口", phaseP4},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		{"internal/handler", "internal/pricing", "handler 直接用 pricing 的报价/成本类型；P6 控制器化后走 service 端口", phaseP6},

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -126,7 +127,7 @@ func (s *Service) GenerateCodes(ctx context.Context, req GenerateRequest, create
 
 // ListCodes 兑换码列表（/api/admin/redemption-codes）：type/status 筛选
 // （nil = 不过滤；非法枚举 → 400）+ sort 白名单校验（非法 → 400）。
-func (s *Service) ListCodes(ctx context.Context, q repository.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error) {
+func (s *Service) ListCodes(ctx context.Context, q inputmodel.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error) {
 	if typ != nil && !typ.Valid() {
 		return nil, 0, ErrInvalidInput
 	}
@@ -154,7 +155,7 @@ func (s *Service) GetCode(ctx context.Context, id int64) (*domain.RedemptionCode
 // 码不存在 → 404（mapRepoErr 含详情）。use 快照不存码类型——handler 需先
 // GetCode 取 type 做面值换算。q 直透 ListCodeUses（limit/offset 缺省归一在
 // repo——≤0→20/<0→0；spec 2026-08-17 补分页参数）。
-func (s *Service) GetCodeUses(ctx context.Context, codeID int64, q repository.ListQuery) ([]*domain.RedemptionUse, int64, error) {
+func (s *Service) GetCodeUses(ctx context.Context, codeID int64, q inputmodel.ListQuery) ([]*domain.RedemptionUse, int64, error) {
 	if _, err := s.store.GetCode(ctx, codeID); err != nil {
 		return nil, 0, mapRepoErr(err)
 	}
@@ -164,7 +165,7 @@ func (s *Service) GetCodeUses(ctx context.Context, codeID int64, q repository.Li
 // ListMyRedemptions 我的兑换记录（/api/user/redemptions）：use 快照 + 码的 type/remark
 // 联查；userID 由 handler 从 JWT 取（强制本人数据，防越权）。sort/order 白名单
 // 校验（非法 → 400）。
-func (s *Service) ListMyRedemptions(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.RedemptionRecord, int64, error) {
+func (s *Service) ListMyRedemptions(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.RedemptionRecord, int64, error) {
 	if err := validateListQuery(q, listSortFields["redemption_uses"]); err != nil {
 		return nil, 0, err
 	}

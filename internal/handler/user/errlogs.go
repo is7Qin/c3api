@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // GetUserErrLogs 我的错误明细（/api/user/err_logs：完整错误面——本地拒绝 + 半异常
@@ -16,7 +16,7 @@ import (
 // 同语义（cursor 透传仅本人行内生效；limit 归一/探测走 httpface.LogLimit +
 // ClipLogPage，C2 消重）。
 func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams) {
-	lq := repository.ErrLogQuery{
+	lq := inputmodel.ErrLogQuery{
 		Limit:      httpface.LogLimit(httpface.Deref(params.Limit)),
 		Cursor:     httpface.Deref(params.Cursor),
 		From:       &params.From,

@@ -115,7 +115,7 @@ func (r *KeyRepo) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, int
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(keyAdminSortFields)
+	order, err := sortOrder(q, keyAdminSortFields)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -150,7 +150,7 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(keySortFields)
+	order, err := sortOrder(q, keySortFields)
 	if err != nil {
 		return nil, 0, err
 	}

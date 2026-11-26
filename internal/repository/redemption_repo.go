@@ -100,7 +100,7 @@ func (r *RedemptionRepo) ListCodes(ctx context.Context, q ListQuery, typ *domain
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(redemptionCodeSortFields)
+	order, err := sortOrder(q, redemptionCodeSortFields)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -128,7 +128,7 @@ func (r *RedemptionRepo) ListCodeUses(ctx context.Context, codeID int64, q ListQ
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(redemptionUseSortFields)
+	order, err := sortOrder(q, redemptionUseSortFields)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -158,7 +158,7 @@ func (r *RedemptionRepo) ListUsesByUser(ctx context.Context, userID int64, q Lis
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(redemptionUseSortFields)
+	order, err := sortOrder(q, redemptionUseSortFields)
 	if err != nil {
 		return nil, 0, err
 	}

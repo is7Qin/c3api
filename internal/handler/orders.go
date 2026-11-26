@@ -18,7 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -26,7 +26,7 @@ import (
 // GetOrders 订单列表（全量；user_id/status/out_trade_no/created 区间筛选）。
 // limit 默认 20、上限 100（service 侧归一，与 §7-3 一致）。
 func (h *AdminAPI) GetOrders(w http.ResponseWriter, r *http.Request, params GetOrdersParams) {
-	q := repository.OrderQuery{
+	q := inputmodel.OrderQuery{
 		UserID:      httpface.Deref(params.UserId),
 		OutTradeNo:  httpface.Deref(params.OutTradeNo),
 		CreatedFrom: params.CreatedFrom,

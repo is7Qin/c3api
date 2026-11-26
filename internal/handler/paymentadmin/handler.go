@@ -22,7 +22,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/paymenterr"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -312,7 +312,7 @@ func marshalConfig(cfg map[string]interface{}) (json.RawMessage, error) {
 //	其余 500（不把内部细节回显给管理台）
 func (a *API) writeErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, repository.ErrMerchantRefImmutable):
+	case errors.Is(err, paymenterr.ErrMerchantRefImmutable):
 		// N29：改商户身份不是并发冲突，是"你写了错误的配置" → 400（§17-10）。
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, service.ErrNotFound):

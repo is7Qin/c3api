@@ -9,9 +9,9 @@ import (
 	"fmt"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/protoconv"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -72,7 +72,7 @@ func (s *Service) getGroupLive(ctx context.Context, id int64) (*domain.Group, er
 	return g, nil
 }
 
-func (s *Service) ListGroups(ctx context.Context, q repository.ListQuery) ([]*domain.Group, int64, error) {
+func (s *Service) ListGroups(ctx context.Context, q inputmodel.ListQuery) ([]*domain.Group, int64, error) {
 	if err := validateListQuery(q, listSortFields["groups"]); err != nil {
 		return nil, 0, err
 	}
@@ -192,7 +192,7 @@ func (s *Service) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
 
 // UpdateGroupsBatch 批量更新组（仅 name/visibility——GroupPatch 无倍率字段，
 // 不触发任何快照重载；倍率批量变更走单组 UpdateGroup）。
-func (s *Service) UpdateGroupsBatch(ctx context.Context, ids []int64, p repository.GroupPatch) error {
+func (s *Service) UpdateGroupsBatch(ctx context.Context, ids []int64, p inputmodel.GroupPatch) error {
 	if err := validateIDs(ids); err != nil {
 		return err
 	}

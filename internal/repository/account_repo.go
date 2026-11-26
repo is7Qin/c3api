@@ -246,7 +246,7 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 	if err != nil {
 		return nil, 0, err
 	}
-	order, err := q.sortOrder(accountSortFields)
+	order, err := sortOrder(q, accountSortFields)
 	if err != nil {
 		return nil, 0, err
 	}

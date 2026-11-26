@@ -18,7 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -58,7 +58,7 @@ func (h *UserAPI) GetUserOrders(w http.ResponseWriter, r *http.Request, params G
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	q := repository.OrderQuery{
+	q := inputmodel.OrderQuery{
 		UserID: currentUserID(r), // 越权的唯一防线：不从请求参数取 user_id
 		Limit:  lq.Limit,
 		Offset: lq.Offset,

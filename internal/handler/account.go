@@ -14,7 +14,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // PostAccounts 创建账号（ServerInterface）。创建体是唯一字段模型的别名
@@ -46,7 +46,7 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 // ——**不得**用「0 = 不过滤」的旧先例读它（`group_id=0` 是「只看未分组」）。
 // 负数校验在 service（ErrInvalidInput → 400）。
 func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params GetAccountsParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:          httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset:         int(httpface.Deref(params.Offset)),
 		Name:           httpface.Deref(params.Name),
@@ -229,8 +229,8 @@ func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request,
 //   - 可空标量（base_url/cache_domain）：缺席 → nil（不变）；显式 null → &""
 //     （repo 层"清空"编码：落 NULL）；"" → 400；非空 → &v。
 //   - group_ids：原样透传（nil = 不变，[] = 清空，列表 = 替换）。
-func accountPatchFromBody(ctx context.Context, f *AccountConfigPatch) (repository.AccountPatch, error) {
-	var p repository.AccountPatch
+func accountPatchFromBody(ctx context.Context, f *AccountConfigPatch) (inputmodel.AccountPatch, error) {
+	var p inputmodel.AccountPatch
 	// 归属（§2.5 唯一字段级例外）：供应商面请求体出现该字段（含显式 null）⇒ 400；
 	// 供应商面归属恒为 JWT 本人（service 钉死），不可经请求体改写。管理面经此字段
 	// 「把账号分配给供应商」。

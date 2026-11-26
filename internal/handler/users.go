@@ -9,7 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // 用户管理面（/api/admin/users）：余额字段在 API 边界换算 USD float64（内部存储
@@ -20,7 +20,7 @@ import (
 // GetUsers 用户列表（platform_admin 专属；/admin 组中间件已鉴权，
 // ServerInterface）。
 func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUsersParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:           httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset:          int(httpface.Deref(params.Offset)),
 		Email:           httpface.Deref(params.Email),
@@ -83,7 +83,7 @@ func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) 
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	patch := &repository.UserPatch{ID: u.ID}
+	patch := &inputmodel.UserPatch{ID: u.ID}
 	if in.Role != nil {
 		role := domain.Role(*in.Role)
 		patch.Role = &role
@@ -162,7 +162,7 @@ func (h *AdminAPI) GetUsersIdBalanceLogs(w http.ResponseWriter, r *http.Request,
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	rows, total, err := h.svc.ListUserBalanceLogs(r.Context(), id, repository.ListQuery{
+	rows, total, err := h.svc.ListUserBalanceLogs(r.Context(), id, inputmodel.ListQuery{
 		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset: int(httpface.Deref(params.Offset)),
 	})

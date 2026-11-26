@@ -8,13 +8,14 @@ import (
 	"context"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
 // ListUserBalanceLogs 某用户的余额变动记录（/api/admin/users/{id}/balance-logs；
 // platform_admin 专属）。sort/order 白名单校验（非法 → ErrInvalidInput 400），
 // 分页 limit/offset 缺省归一在 repo。
-func (s *Service) ListUserBalanceLogs(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.BalanceLog, int64, error) {
+func (s *Service) ListUserBalanceLogs(ctx context.Context, userID int64, q inputmodel.ListQuery) ([]*domain.BalanceLog, int64, error) {
 	if err := validateListQuery(q, listSortFields["balance_logs"]); err != nil {
 		return nil, 0, err
 	}

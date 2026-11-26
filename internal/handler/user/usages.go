@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // GetUserUsageLogs 我的用量明细（/api/user/usage_logs；强制 user_id = 当前用户——
@@ -17,7 +17,7 @@ import (
 // user_id 过滤钳制），next_cursor 组装与 admin 侧同构（limit 归一/探测走
 // httpface.LogLimit + ClipLogPage，C2 消重）。
 func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, params GetUserUsageLogsParams) {
-	lq := repository.UsageQuery{
+	lq := inputmodel.UsageQuery{
 		Limit:     httpface.LogLimit(httpface.Deref(params.Limit)),
 		Cursor:    httpface.Deref(params.Cursor),
 		From:      &params.From,

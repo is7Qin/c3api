@@ -42,6 +42,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/inputmodel"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -54,7 +55,7 @@ import (
 type PaymentStore interface {
 	CreateOrder(ctx context.Context, o *domain.Order) (*domain.Order, error)
 	GetOrderByID(ctx context.Context, id int64) (*domain.Order, error)
-	ListOrders(ctx context.Context, q repository.OrderQuery) ([]*domain.Order, int64, error)
+	ListOrders(ctx context.Context, q inputmodel.OrderQuery) ([]*domain.Order, int64, error)
 	// MarkOrderNotifyFailure 失败审计（非事务；WHERE status <> 'paid'）。**验签/
 	// 重复键/未知单号失败不得调用**——单号未验证，会被伪造签名污染任意订单。
 	MarkOrderNotifyFailure(ctx context.Context, outTradeNo, reason string) error
@@ -1065,7 +1066,7 @@ func (s *Service) CloseOrder(ctx context.Context, id int64, force bool) (*CloseR
 
 // ListOrders 管理面订单列表（§7-3）：limit 默认 20 / 上限 100；status 非法枚举 →
 // 400。用户面由 handler 强制 q.UserID = 本人（service 不猜身份）。
-func (s *Service) ListOrders(ctx context.Context, q repository.OrderQuery) ([]*domain.Order, int64, error) {
+func (s *Service) ListOrders(ctx context.Context, q inputmodel.OrderQuery) ([]*domain.Order, int64, error) {
 	if q.Status != nil && !q.Status.Valid() {
 		return nil, 0, ErrInvalidInput
 	}

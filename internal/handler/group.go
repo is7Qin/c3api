@@ -11,7 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/inputmodel"
 )
 
 // PostGroups 创建分组（平台容量池；key 为独立表，用户面 /api/user/keys 创建，
@@ -57,7 +57,7 @@ func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 
 // GetGroups 分组列表（分页/筛选/排序，ServerInterface）。
 func (h *AdminAPI) GetGroups(w http.ResponseWriter, r *http.Request, params GetGroupsParams) {
-	q := repository.ListQuery{
+	q := inputmodel.ListQuery{
 		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
 		Offset: int(httpface.Deref(params.Offset)),
 		Name:   httpface.Deref(params.Name),
@@ -230,11 +230,11 @@ func (h *AdminAPI) PostGroupsBatchUpdate(w http.ResponseWriter, r *http.Request)
 }
 
 // groupPatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新）。
-func groupPatchFromBody(f *GroupPatch) (repository.GroupPatch, error) {
+func groupPatchFromBody(f *GroupPatch) (inputmodel.GroupPatch, error) {
 	if f.Name == nil && f.Visibility == nil {
-		return repository.GroupPatch{}, errors.New("fields must contain at least one field")
+		return inputmodel.GroupPatch{}, errors.New("fields must contain at least one field")
 	}
-	p := repository.GroupPatch{Name: f.Name}
+	p := inputmodel.GroupPatch{Name: f.Name}
 	if f.Visibility != nil {
 		v := domain.GroupVisibility(*f.Visibility)
 		p.Visibility = &v
