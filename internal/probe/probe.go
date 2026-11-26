@@ -131,23 +131,24 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	if err != nil {
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
-	payload := staticPayload(spec.Format, spec.UpstreamModel, spec.Input)
+	// 与 proxy 数据面同一份 request_patch 语义（spec §7.3）：body patch 在既有
+	// payload 合成之后、出网之前；头装饰器在 aiclient 网关头之后（aiclient 保证
+	// 后写覆盖）。key 同时用于 URL 路径与 patch 格式层（同一把键）；{api_key} 用
+	// spec.Credential 原始裸 key。无配置 ⇒ nil 装饰器 / 原 slice（零分配）。
+	payload := probeBodyPatch(spec, key, staticPayload(spec.Format, spec.UpstreamModel, spec.Input))
+	decorate := probeHeaderDecorator(spec, key)
 
 	var (
 		resp *http.Response
 		call error
 	)
-	// TODO(P5): probe 数据面——三处 decorate 实参由 P5 接线（headerDecorator 同款
-	// 语义，key 来源 spec.Credential 原值）并叠加 bodyPatch（payload 之后）。P3
-	// 阶段边界内显式传 nil；aiclient 签名已就位，AST 门禁把 probe 列为 pending
-	// （P5 接手时删 pending 条目并改为非 nil）。
 	switch spec.Format {
 	case domain.FormatOpenAIChat:
-		resp, call = p.factory.ChatCompletionRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
+		resp, call = p.factory.ChatCompletionRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, decorate)
 	case domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS:
-		resp, call = p.factory.ResponseRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
+		resp, call = p.factory.ResponseRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, decorate)
 	case domain.FormatAnthropic:
-		resp, call = p.factory.AnthMessageRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, nil)
+		resp, call = p.factory.AnthMessageRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc, decorate)
 	default:
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}

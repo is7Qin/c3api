@@ -18,28 +18,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 出站调用点 AST 门禁（spec custom-request-patch §7.1 评审 oracle I9 / momus I-D）。
+// 出站调用点 AST 门禁（spec custom-request-patch §7.1 评审 oracle I9 / momus I-D；
+// §10 P5 把 probe 纳入同一门禁）。
 //
 // 目的：request_patch 的装饰器是**每一个**数据面出站点的必经之路。手写 call site
-// 会漂（本轮 14 个接线点 + rawJSON 1 个内部透传 + WS dial 1 个 P4 占位），漏一个
-// 就是「配置对该上游静默失效」——没有任何行为测试会红。本门禁把「漏接线」变成
-// 机械红：
+// 会漂（proxy 11 个 aiclient 出站接线 + rawJSON 1 个内部透传 + WS dial 1 个；
+// probe 5 个 factory 调用），漏一个就是「配置对该上游静默失效」——没有任何行为测试
+// 会红。本门禁把「漏接线」变成机械红：
 //
 //  1. 从 pkg/aiclient 生产代码**动态枚举**全部出站方法：Factory 上最后一个参数类型
 //     是 func(*http.Request) 或 func(*websocket.DialOptions) 的导出方法（今天 6+1；
 //     新增出站方法自动纳入，不改门禁即被测到）；
-//  2. 扫描 internal/proxy 全部生产源文件：这些方法的调用 + rawJSON（第 8 参装饰器）
-//     必须传够形参，且**最后一个实参不是 nil**；
-//  3. 显式 nil 只允许白名单（文件+函数+方法）：P4 把 WS 握手装饰器转正后**白名单
-//     为空集**——今天所有 aiclient 出站接线（含 caller_responses_ws.go 的
-//     ResponsesWSDial）都传非 nil 装饰器；codex/BPS 车道今天不调 aiclient
-//     （SDK/prepared 面），将来若某车道确需 nil，必须在此登记并写明理由；
-//  4. 计数 golden：proxy 侧 aiclient 出站调用 11 处（a 10 + c 1）+ rawJSON 4 处。
-//     新增/删除调用点必须同步改门禁（spec 明确要求「不改门禁即红」）。
+//  2. 扫描 **internal/proxy 与 internal/probe** 全部生产源文件（spec §7.1 的扫描集
+//     写死这两个包）：这些方法的调用 + rawJSON（第 8 参装饰器）必须传够形参，且
+//     **最后一个实参不是 nil**；
+//  3. 显式 nil 只允许白名单（文件+函数+方法）：P4 把 WS 握手装饰器转正、P5 把 probe
+//     5 个 factory 调用全部接上装饰器后**白名单为空集**——今天两个包的所有 aiclient
+//     出站接线都传非 nil 装饰器；将来若某车道确需 nil，必须在此登记并写明理由；
+//  4. 计数 golden：proxy 侧 aiclient 出站调用 11 处（a 10 + c 1）+ rawJSON 4 处、
+//     probe 侧 aiclient 出站调用 5 处。新增/删除调用点必须同步改门禁（spec 明确要求
+//     「不改门禁即红」）。
 //
-// probe 的 5 个 factory 调用是 P5 数据面（spec §10 P5）：本门禁**不扫描** probe
-// （pending）；TestEgressProbePendingForP5 只记录「仍是 5 处显式 nil」，P5 接线后
-// 自动静默（不阻塞 P5），真正纳入装饰器检查在 P5 把 probe 加入扫描集时完成。
+// P5 之前 probe 的 5 处显式 nil 是"阶段内待接"记录；接线完成后该记录与对应用例
+// 成对删除——probe 从此与 proxy 同一条判据。
 
 // outboundMethod 从 pkg/aiclient 动态枚举出来的出站方法（名字 → 形参数）。
 type outboundMethod struct {
@@ -70,9 +71,9 @@ type nilAllowKey struct {
 }
 
 // egressNilAllowlist 是「显式 nil 允许」白名单（空集 = 全部接线点必须传装饰器）。
-// P4 已把 WS 握手装饰器接上，P3 的阶段白名单条目（caller_responses_ws.go /
-// call / ResponsesWSDial）成对删除；将来若某车道确需 nil，必须在此登记
-// file+fn+method+**理由**（空理由会被门禁判红）。
+// P4 把 WS 握手装饰器接上、P5 把 probe 5 个 factory 调用接上，阶段白名单条目
+// 已全部成对删除；将来若某车道确需 nil，必须在此登记 file+fn+method+**理由**
+// （空理由会被门禁判红）。
 var egressNilAllowlist = map[nilAllowKey]string{}
 
 // expectedOutboundMethods 显式 pin 住今天应有的 7 个出站方法名（动态枚举之外的第二
@@ -82,13 +83,17 @@ var expectedOutboundMethods = []string{
 	"ImagesRaw", "ResponsesWSDial",
 }
 
-// wantProxyOutboundCalls / wantProxyRawJSONCalls 是调用点计数 golden（见文件头）。
+// wantProxyOutboundCalls / wantProxyRawJSONCalls / wantProbeOutboundCalls 是调用点
+// 计数 golden（见文件头）。probe 的 5 处 = probe.go 3（chat/responses/anthropic）+
+// content.go 2（images/search）。
 const (
 	wantProxyOutboundCalls = 11
 	wantProxyRawJSONCalls  = 4
+	wantProbeOutboundCalls = 5
 )
 
-// TestEgressCallSitesDecorated 门禁主体：动态枚举 + 全量扫描 + 白名单/计数断言。
+// TestEgressCallSitesDecorated 门禁主体：动态枚举 + 全量扫描（proxy + probe）+
+// 白名单/计数断言。
 func TestEgressCallSitesDecorated(t *testing.T) {
 	methods := discoverOutboundMethods(t)
 	for _, want := range expectedOutboundMethods {
@@ -97,45 +102,57 @@ func TestEgressCallSitesDecorated(t *testing.T) {
 	}
 	require.Len(t, methods, len(expectedOutboundMethods)+1, "出站方法集合变了（含 rawJSON）：%v", methodNames(methods))
 
-	files := proxySourceFiles(t)
-	require.Positive(t, len(files))
+	proxyFiles := egressPackageSourceFiles(t, ".")
+	require.Positive(t, len(proxyFiles))
+	probeFiles := egressPackageSourceFiles(t, repoRelDir(t, "internal/probe"))
+	require.Positive(t, len(probeFiles), "internal/probe 非测试源为 0：门禁在空转")
 
 	seen := map[string]bool{}
-	rawJSONCalls, outboundCalls := 0, 0
-	for _, path := range files {
-		src, err := os.ReadFile(path)
-		require.NoError(t, err)
-		base := filepath.Base(path)
-		fset := token.NewFileSet()
-		af, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-		require.NoError(t, err)
+	proxyOutboundCalls, proxyRawJSONCalls, probeOutboundCalls := 0, 0, 0
+	scan := func(files []string, isProbe bool) {
+		for _, path := range files {
+			src, err := os.ReadFile(path)
+			require.NoError(t, err)
+			base := filepath.Base(path)
+			fset := token.NewFileSet()
+			af, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+			require.NoError(t, err)
 
-		for _, site := range collectEgressCalls(af, fset, methods) {
-			// 计数按**调用点**（不是去重键）：同一函数里两个 ImagesRaw（流式/非
-			// 流式分支）是两个接线点。
-			key := site.file + "|" + site.fn + "|" + site.method
-			if site.method == "rawJSON" {
-				rawJSONCalls++
-			} else {
-				outboundCalls++
-			}
-			seen[key] = true
-			require.NotNil(t, site.lastArg, "%s：调用点参数缺失（装饰器实参必须到位）", site.pos)
-			if isNilIdent(site.lastArg) {
-				key := nilAllowKey{file: base, fn: site.fn, method: site.method}
-				reason, ok := egressNilAllowlist[key]
+			for _, site := range collectEgressCalls(af, fset, methods) {
+				// 计数按**调用点**（不是去重键）：同一函数里两个 ImagesRaw（流式/
+				// 非流式分支）是两个接线点。
+				key := site.file + "|" + site.fn + "|" + site.method
+				switch {
+				case site.method == "rawJSON":
+					proxyRawJSONCalls++
+				case isProbe:
+					probeOutboundCalls++
+				default:
+					proxyOutboundCalls++
+				}
+				seen[key] = true
+				require.NotNil(t, site.lastArg, "%s：调用点参数缺失（装饰器实参必须到位）", site.pos)
+				if !isNilIdent(site.lastArg) {
+					continue
+				}
+				allowKey := nilAllowKey{file: base, fn: site.fn, method: site.method}
+				reason, ok := egressNilAllowlist[allowKey]
 				require.True(t, ok,
-					"%s：出站调用 %s 传了显式 nil——装饰器只有白名单车道允许 nil（P4 后为空集）；非白名单调用点必须传 headerDecorator(...) / wsHeaderDecorator(...) 闭包",
+					"%s：出站调用 %s 传了显式 nil——装饰器只有白名单车道允许 nil（P5 后为空集）；非白名单调用点必须传 headerDecorator(...) / probeHeaderDecorator(...) / wsHeaderDecorator(...) 闭包",
 					site.pos, site.method)
 				require.NotEmpty(t, reason, "%s：nil 白名单条目必须写明理由（防「随手加白名单」）", base)
 			}
 		}
 	}
+	scan(proxyFiles, false)
+	scan(probeFiles, true)
 
-	require.Equal(t, wantProxyOutboundCalls, outboundCalls,
-		"proxy 侧 aiclient 出站调用点数量变了（实际 %d）：新增/删除调用点必须同步本门禁与 spec 记账", outboundCalls)
-	require.Equal(t, wantProxyRawJSONCalls, rawJSONCalls,
-		"rawJSON（第 8 参装饰器）调用点数量变了（实际 %d）", rawJSONCalls)
+	require.Equal(t, wantProxyOutboundCalls, proxyOutboundCalls,
+		"proxy 侧 aiclient 出站调用点数量变了（实际 %d）：新增/删除调用点必须同步本门禁与 spec 记账", proxyOutboundCalls)
+	require.Equal(t, wantProxyRawJSONCalls, proxyRawJSONCalls,
+		"rawJSON（第 8 参装饰器）调用点数量变了（实际 %d）", proxyRawJSONCalls)
+	require.Equal(t, wantProbeOutboundCalls, probeOutboundCalls,
+		"probe 侧 aiclient 出站调用点数量变了（实际 %d）：5 个 factory 调用必须全部接装饰器并同步本门禁", probeOutboundCalls)
 
 	keys := make([]string, 0, len(seen))
 	for k := range seen {
@@ -146,12 +163,15 @@ func TestEgressCallSitesDecorated(t *testing.T) {
 }
 
 // TestEgressCallSitesGateRejectsBypass 门禁红/绿自证（机械可复验，不靠人手删代码）：
-// 合成源码里非白名单 nil → 违规；非 nil → 放行；形参数量不足 → 违规哨兵。
+// 合成源码里非白名单 nil → 违规；非 nil → 放行；形参数量不足 → 违规哨兵；probe
+// 包形态（Factory 方法接收者 + 显式 nil）同样被识别。
 func TestEgressCallSitesGateRejectsBypass(t *testing.T) {
 	methods := map[string]outboundMethod{
 		"ResponsesWSDial": {name: "ResponsesWSDial", arity: 9},
 		"RawPost":         {name: "RawPost", arity: 10},
 		"rawJSON":         {name: "rawJSON", arity: 8},
+		"ImagesRaw":       {name: "ImagesRaw", arity: 10},
+		"SearchRaw":       {name: "SearchRaw", arity: 9},
 	}
 	src := strings.Join([]string{
 		"package proxy",
@@ -182,11 +202,36 @@ func TestEgressCallSitesGateRejectsBypass(t *testing.T) {
 	require.Equal(t, 1, nilCount, "非白名单函数里的 nil 实参必须可被识别（门禁不能空转）")
 	require.Equal(t, 2, decoratedCount)
 
-	// P4 转正：WS 握手装饰器已接非 nil 实参，阶段白名单必须清空（否则就是
-	// 「白名单留着但接线已经做了」的静默漂移——门禁会继续放行假 nil）。
-	require.Empty(t, egressNilAllowlist, "P4 接线完成后 aiclient 出站白名单必须为空集（WS dial 已传 wsHeaderDecorator）")
+	// P4/P5 转正：proxy 的 WS 握手与 probe 的 5 个 factory 调用都已接非 nil 实参，
+	// 阶段白名单必须清空（否则就是「白名单留着但接线已经做了」的静默漂移——门禁
+	// 会继续放行假 nil）。
+	require.Empty(t, egressNilAllowlist, "P5 接线完成后 aiclient 出站白名单必须为空集（proxy 14 接线点 + probe 5 调用点全部传装饰器）")
 	_, ok := egressNilAllowlist[nilAllowKey{file: "forward.go", fn: "rawJSON", method: "RawPost"}]
 	require.False(t, ok, "rawJSON 内部 RawPost 透传不是白名单——它必须把实参原样传下去")
+
+	// probe 包形态：同一套判据必须扫得到 probe 的 factory 调用（P5 起两个包同一门禁）。
+	probeSrc := strings.Join([]string{
+		"package probe",
+		"",
+		"func (p *Prober) probeStaticImages(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {",
+		"	resp, _ := p.factory.ImagesRaw(ctx, 1, \"https://up\", \"/v1/x\", \"k\", \"\", body, nil, hc, nil)",
+		"	_ = resp",
+		"	return domain.ProbeResult{}",
+		"}",
+		"",
+		"func (p *Prober) probeStaticSearch(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {",
+		"	resp, _ := p.factory.SearchRaw(ctx, 1, \"https://up\", \"/v1/x\", \"k\", body, nil, hc, probeHeaderDecorator(spec))",
+		"	_ = resp",
+		"	return domain.ProbeResult{}",
+		"}",
+	}, "\n")
+	probeFset := token.NewFileSet()
+	probeAF, err := parser.ParseFile(probeFset, "probe_sample.go", probeSrc, 0)
+	require.NoError(t, err)
+	probeSites := collectEgressCalls(probeAF, probeFset, methods)
+	require.Len(t, probeSites, 2, "probe 形态的 factory 调用必须能被门禁识别")
+	require.True(t, isNilIdent(probeSites[0].lastArg), "probe 显式 nil 必须判红（与 proxy 同一判据）")
+	require.False(t, isNilIdent(probeSites[1].lastArg), "probe 非 nil 装饰器必须放行")
 
 	// 形参不足（「删一个实参」在 AST 上的等价形态）必须可识别：lastArg=nil 哨兵。
 	shortSrc := strings.Join([]string{
@@ -204,38 +249,27 @@ func TestEgressCallSitesGateRejectsBypass(t *testing.T) {
 	require.Nil(t, shortSites[0].lastArg, "形参数量不足必须判红（lastArg=nil 哨兵）")
 }
 
-// TestEgressProbePendingForP5 probe 的 5 个 factory 调用是 P5 数据面：P3 只记录
-// 「显式 nil pending」，不阻塞、不扫描（spec §10 P3/P5 边界）。P5 接线后本用例
-// 自动静默（检测到非 nil 即返回），真正纳入检查在 P5 把 probe 加入扫描集。
-func TestEgressProbePendingForP5(t *testing.T) {
-	methods := discoverOutboundMethods(t)
-	dir := repoRelDir(t, "internal/probe")
+// egressPackageSourceFiles 列出 dir 下全部**非测试** Go 源文件（排序 ⇒ 稳定）。
+// dir == "." 表示本测试文件所在包目录；其余按传入目录解析。
+func egressPackageSourceFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	if !filepath.IsAbs(dir) {
+		_, self, _, ok := runtime.Caller(0)
+		require.True(t, ok)
+		dir = filepath.Join(filepath.Dir(self), dir)
+	}
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	calls, nilCalls := 0, 0
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		src, err := os.ReadFile(path)
-		require.NoError(t, err)
-		fset := token.NewFileSet()
-		af, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-		require.NoError(t, err)
-		for _, site := range collectEgressCalls(af, fset, methods) {
-			calls++
-			if isNilIdent(site.lastArg) {
-				nilCalls++
-			}
-		}
+		names = append(names, filepath.Join(dir, name))
 	}
-	if nilCalls < calls {
-		// P5 已接线：本用例使命结束，P5 负责把 probe 加入主门禁扫描集。
-		return
-	}
-	require.Equal(t, 5, calls, "probe factory 出站调用应为 5 处（P5 待接清单）")
-	require.Equal(t, 5, nilCalls, "P3 阶段 probe 应全部显式 nil（P5 TODO）")
+	sort.Strings(names)
+	return names
 }
 
 // discoverOutboundMethods 从 pkg/aiclient 生产源码动态枚举出站方法：

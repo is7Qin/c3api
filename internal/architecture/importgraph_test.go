@@ -279,9 +279,16 @@ var allowRules = []allowRule{
 	//
 	// 写成显式空切片而不是裸规则：语义是"叶包不依赖任何包"，与 internal/modelmap /
 	// internal/identityenv 同口径。注意 judge() 对 from=pkg/* 的边先走硬规则短路
-	// （pkg/* 内部依赖放行），所以本规则**不参与边裁决**；它在这里的意义是把
-	// "本包只依赖 stdlib"写成一条被指纹覆盖的显式声明，而不是靠"没人往里加 import"
-	// 的运气。
+	// （pkg/* -> internal/* 是零豁免硬红线），所以本规则**不参与边裁决**（inert）。
+	//
+	// P5 裁决（archfix momus Minor「inert 规则去留」）：**保留**。理由：
+	//  1. 它是"本包只依赖 stdlib"的显式声明，随 allowMatrixFingerprint 一起冻结；
+	//     删掉等于让这条意图从受审的矩阵里消失，只省下 3 行噪声；
+	//  2. 真正的强制在两条既有规则上：pkg/* -> internal/* 的硬红线（importgraph
+	//     直接判 kindHardViolation）、以及本包对 pkg/* 之间依赖的自由放行——本规则
+	//     不重复表达它们，只把"连 pkg 都不依赖"写下来；
+	//  3. 反例路径明确：将来若有人往 pkg/headervalid 加 internal import，红的是硬红线
+	//     而不是本规则（inert ≠ 失守），所以保留不会造成"假门禁"错觉——注释已说明。
 	{from: "pkg/headervalid", to: []string{}},
 
 	// pkg/egressapi 是出口值类型与归一化（Spec / Key / New）的**中立叶子包**：domain
