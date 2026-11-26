@@ -71,7 +71,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				return p.bpsHTTPError(ctx, w, reqID, groupID, start, sel, reqModel, err)
 			}
 		} else {
-			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP())
+			// request_patch：既有变换（setModel）之后、出网之前最后一步。
+			streamBody = p.bodyPatch(sel, patchKeyResponses, streamBody)
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyResponses, cred))
 			if err != nil {
 				return statusOf(err), upstreamBody(err), false, err
 			}
@@ -225,7 +227,8 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var code int
 		var errBody []byte
 		var err error
-		data, code, errBody, err = p.rawJSON(ctx, sel, targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header)
+		upBody = p.bodyPatch(sel, patchKeyResponses, upBody)
+		data, code, errBody, err = p.rawJSON(ctx, sel, targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header, headerDecorator(sel, patchKeyResponses, cred))
 		if err != nil {
 			return statusOf(err), nil, false, err
 		}

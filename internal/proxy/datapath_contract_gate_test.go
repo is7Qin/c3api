@@ -34,8 +34,11 @@ const (
 	// 为什么是精确相等而不是下限：spec 写「文件数 >=55、契约位点 ==84」，实测
 	// 非测试源 **54** 个文件、**86** 个契约位点（brief 的 55/84 各差一个）。
 	// 精确相等是更紧的钉子：扫描面缩小、文件增删、符号改名都会红。
-	datapathScanFiles     = 54
-	datapathContractSites = 86
+	// P3（request_patch HTTP 数据面）新增非测试源 request_patch.go（helper +
+	// 限频 WARN + 脱敏）；同时新增 6 个 api.Selection 位点（patchOf / formatPatchFor /
+	// headerDecorator / bodyPatch / upstreamKeyOf / warnBodyPatchFailure）。
+	datapathScanFiles     = 55
+	datapathContractSites = 92
 	datapathReleaseSites  = 38
 	datapathHandleCalls   = 50
 	datapathContractFloor = 84 // V0 下限

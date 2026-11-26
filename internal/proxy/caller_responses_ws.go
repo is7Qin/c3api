@@ -370,7 +370,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// r.Context() 同时取消 → 499 语义不变。每 attempt 一次（与 aiclient
 	// UpstreamTimeout wrap 同级），非每帧。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
-	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP())
+	// TODO(P4): WS 数据面——此处接 headerDecorator(sel, patchKeyResponsesWS, cred)
+	// 的 DialOptions 装饰（握手头 + Host + {api_key}）与帧 hook；P3 阶段边界内
+	// **显式 nil**（aiclient 签名已就位），由 AST 门禁白名单钉住，P4 接线时删除
+	// 白名单条目并改为非 nil 装饰器。
+	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP(), nil)
 	cancel()
 	if dialErr == nil {
 		// 首帧模型改写与 stripTier 删除都在调用方预处理（relayWS 原样写出）：

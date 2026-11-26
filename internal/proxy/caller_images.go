@@ -32,6 +32,15 @@ func (c *imagesCaller) upstreamPath(sel *api.Selection) string {
 	return targetPath(sel, pathKeyImagesGen, c.path)
 }
 
+// patchKey 图片端点的 request_patch 格式键：与 upstreamPath 同源按 op 取
+// generations/edits 两键（同一格式两个端点，不能共用一个键；spec §7.1 评审 M2）。
+func (c *imagesCaller) patchKey() domain.UpstreamPathKey {
+	if c.op == domain.OpImagesEdits {
+		return patchKeyImagesEdits
+	}
+	return patchKeyImagesGen
+}
+
 // imagesCaller 是 openai-images 格式的 UpstreamCaller：
 // 内置端点转发模板 base_url + /v1/images/<path>（generations|edits）；custom 模板
 // 配了该键则原样透传（targetPath）。api_key / responses-special 两类型直连；
@@ -77,7 +86,11 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	if stream {
 		ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 		defer cancel()
-		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header, sel.Egress.HTTP())
+		// request_patch：multipart 的 body 结构性跳过（非 JSON，只注入头）；
+		// JSON body 照常 splice（spec §3 矩阵）。
+		patchKey := c.patchKey()
+		upBody = p.bodyPatch(sel, patchKey, upBody)
+		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKey, cred))
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -168,7 +181,10 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		return 200, nil, true, nil
 	}
 
-	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header, sel.Egress.HTTP())
+	// request_patch：multipart body 结构性跳过；JSON body 照常（非流式分支）。
+	patchKey := c.patchKey()
+	upBody = p.bodyPatch(sel, patchKey, upBody)
+	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKey, cred))
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}

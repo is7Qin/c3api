@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -262,6 +263,11 @@ func (p *Proxy) recordAttemptLog(sel *api.Selection, l *domain.UsageLog) {
 		}
 	}
 	if p.cfg.UsageCapture && l != nil {
+		// 日志面脱敏（spec custom-request-patch §8）：上游回显的当次 attempt key
+		// 在落 err_logs/usage_logs 前精确替换为 [redacted]。行与 attempt 一一对应
+		// （行内文本只可能回显该行 attempt 自己注入的 key），故用本行 sel 的 key；
+		// failover 跨号时每一行各带各的 key（详见 request_patch.go 取舍说明）。
+		l.ErrorMessage = redactLogKey(l.ErrorMessage, upstreamKeyOf(sel))
 		// 供应商收益出生定态（spec 2026-10-09 §4.2）：归属/分成/credited 三列
 		// 在计费完成后按**选中账号时捕获**的财务上下文盖章（关闭态 credited=true
 		// 且零列——新行不入收益索引）。
@@ -725,7 +731,14 @@ type usageTuple struct {
 // commit 是本次尝试的交付事实（§5.2：计费资格由它决定，不再由 error_type
 // 决定）：写过业务帧的失败照常计费（sent_ambiguous），一帧未写出的失败不计费。
 func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *api.Selection, reqModel string, u usageTuple, commit CommitState, err error) {
-	p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
+	// 日志面脱敏（spec custom-request-patch §8「落库/打日志前」）：上游在流内错误
+	// 载荷（sserelay.PayloadError.Message）里回显的账号 key 不得进进程日志。
+	// 只在中止路径（罕见）且命中时改字段形态；其余保持 logx.Error(err) 原样。
+	warnErr := logx.Error(err)
+	if key := upstreamKeyOf(sel); key != "" && err != nil && strings.Contains(err.Error(), key) {
+		warnErr = logx.String("error", redactPatchKey(err.Error(), key))
+	}
+	p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), warnErr)
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)), commit)
 	// 中止行必须留因（§3.2）：abort 落可读结论，**不**落库内部文案（用户实证：
 	// 该列出现 `failed to get reader: failed to read frame header: EOF`）。原始
@@ -879,10 +892,14 @@ func causeMessage(err error) *string {
 // 出口 client 从 sel 上取（`sel.Egress.HTTP()`，快照期已解析好、恒非 nil）——
 // 本 helper 是四个非流式面（chat/responses/anthropic/converted）共用的一条出栈，
 // 所以出口只在这一个地方交给 aiclient。
-func (p *Proxy) rawJSON(ctx context.Context, sel *api.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
+//
+// decorate 是 request_patch 的出站装饰器（第 8 参，spec §7.1 评审 C1/M1）：四个
+// 非流式调用点各自用当次 attempt 的原始 cred 构造闭包并透传到这里；rawJSON 自身
+// 不持有 key、不解析 auth 参数。
+func (p *Proxy) rawJSON(ctx context.Context, sel *api.Selection, path, authHeader, auth string, body []byte, in http.Header, decorate func(*http.Request)) ([]byte, int, []byte, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in, sel.Egress.HTTP())
+	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in, sel.Egress.HTTP(), decorate)
 	if err != nil {
 		// 网关预算到期（UpstreamTimeout 的哨兵）⇒ 错误带标记，pipeline 归类成
 		// timeout 而不是 network（§3.1：上游零产出 ≠ 传输层断开）。

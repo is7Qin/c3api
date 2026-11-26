@@ -314,7 +314,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// attempt_logs 写点（唯一）：classify 之后、terminate 之前——这样落库的
 		// error_message 就是 classify 写进 err_logs/耗尽行的同一条文本（单一来源），
 		// 而终止分支（取消/fatal/4xx）也照样留下尝试明细。
-		p.recordFailedDispatch(attempt, reqID, format, code, dispatchClientCancel(callCtx, code), callErr, lastErrMsg, latency)
+		p.recordFailedDispatch(attempt, reqID, format, code, dispatchClientCancel(callCtx, code), callErr, lastErrMsg, latency, upstreamKeyOf(sel))
 		if terminate {
 			return
 		}
@@ -575,6 +575,10 @@ func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, f
 	} else if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}
+	// 日志面脱敏（spec custom-request-patch §8）：耗尽行文本来自最后一次 attempt
+	// 的上游/传输错误，用 lastSel 的当次 key 做精确替换（recordLog 无 sel，故在
+	// 唯一构造点做；attempt_logs 行另在 recordFailedDispatch 内脱敏）。
+	l.ErrorMessage = redactLogKey(l.ErrorMessage, lastSel.UpstreamKey)
 	p.recordLog(l)
 	// 统一写出：via rule.UnifiedMessage，同 sanitize 同源；WS/HTTP 分流
 	// 代理日志保留原文 lastErrMsg（边界）

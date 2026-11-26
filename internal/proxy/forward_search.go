@@ -259,7 +259,10 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	// 转移
 	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header, sel.Egress.HTTP())
+	// request_patch（spec §3 矩阵：search 面头 + body）：search body 是 JSON
+	// 合成体，照常 splice；键 = openai-search。
+	body = p.bodyPatch(sel, patchKeySearch, body)
+	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeySearch, cred))
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()

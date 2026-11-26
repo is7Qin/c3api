@@ -35,7 +35,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP())
+		// request_patch：既有变换（setModel）之后、出网之前最后一步。
+		streamBody = p.bodyPatch(sel, patchKeyAnthropic, streamBody)
+		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyAnthropic, cred))
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -156,7 +158,8 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 交 pipeline 按 4xx 归一（落 err_logs + 原样透出错误体），不在此处直接写出。
 		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
+	upBody = p.bodyPatch(sel, patchKeyAnthropic, upBody)
+	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header, headerDecorator(sel, patchKeyAnthropic, cred))
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

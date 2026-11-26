@@ -42,7 +42,10 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP())
+		// request_patch：既有变换（setStreamAndModel）之后、出网之前最后一步；
+		// {api_key} 用当次 attempt 的原始 cred 展开（failover 每轮重算）。
+		streamBody = p.bodyPatch(sel, patchKeyChat, streamBody)
+		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyChat, cred))
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -136,7 +139,8 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		sel.HandleOrDetached().Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, r.Header)
+	upBody = p.bodyPatch(sel, patchKeyChat, upBody)
+	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, r.Header, headerDecorator(sel, patchKeyChat, cred))
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

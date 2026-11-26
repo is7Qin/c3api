@@ -385,7 +385,7 @@ func TestAttemptLogLaneAndFormatProjection(t *testing.T) {
 			p.SetAttemptLogs(sink)
 			p.recordFailedDispatch(
 				scheduler.Attempt{Ordinal: 3, AccountID: 7, Lane: tc.lane},
-				"req-proj", tc.format, http.StatusBadGateway, false, nil, "boom", 12*time.Millisecond)
+				"req-proj", tc.format, http.StatusBadGateway, false, nil, "boom", 12*time.Millisecond, "")
 
 			rows := sink.snapshot()
 			require.Len(t, rows, 1)
@@ -408,7 +408,7 @@ func TestSetAttemptLogsRejectsTypedNil(t *testing.T) {
 	require.Nil(t, p.attemptLogs, "typed nil 必须折成未装配（nil 接口）")
 	require.NotPanics(t, func() {
 		p.recordFailedDispatch(scheduler.Attempt{Ordinal: 1, AccountID: 1},
-			"req", domain.FormatOpenAIChat, http.StatusBadGateway, false, nil, "x", time.Millisecond)
+			"req", domain.FormatOpenAIChat, http.StatusBadGateway, false, nil, "x", time.Millisecond, "")
 	}, "未装配/typed nil ⇒ 写点 no-op，不得 panic")
 }
 

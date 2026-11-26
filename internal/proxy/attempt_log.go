@@ -56,7 +56,10 @@ func (p *Proxy) SetAttemptLogs(s AttemptLogSink) {
 //
 // 无条件性：本函数不读 qualityRecorder/foldOwner —— 观测面未装配时 flow 边会
 // 丢弃，但尝试明细照写（它是审计事实，不是观测面的副产品）。
-func (p *Proxy) recordFailedDispatch(attempt api.Attempt, reqID string, format domain.RequestFormat, code int, clientCancel bool, callErr error, msg string, latency time.Duration) {
+//
+// redactKey 是当次 attempt 的账号上游 key：attempt_logs.error_message 与 err_logs
+// 同源（classify 文本），同样在上游回显时脱敏为 [redacted]（spec §8）。
+func (p *Proxy) recordFailedDispatch(attempt api.Attempt, reqID string, format domain.RequestFormat, code int, clientCancel bool, callErr error, msg string, latency time.Duration, redactKey string) {
 	if p.attemptLogs == nil {
 		return
 	}
@@ -78,7 +81,7 @@ func (p *Proxy) recordFailedDispatch(attempt api.Attempt, reqID string, format d
 		Outcome:      flowOutcomeToken(outcome),
 		ErrorType:    string(attemptErrorType(code, callErr, clientCancel)),
 		CommitState:  new(outcome.Commit.String()), // handled=false 恒已知，不留 NULL
-		ErrorMessage: optionalMessage(msg),
+		ErrorMessage: optionalMessage(redactPatchKey(msg, redactKey)),
 		LatencyMS:    latency.Milliseconds(),
 		CreatedAt:    time.Now(),
 	}

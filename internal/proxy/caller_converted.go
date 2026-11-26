@@ -76,13 +76,18 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return 0, nil, false, err
 		}
 		var resp *http.Response
+		// request_patch：作用于**转换后的上游 body**，键 = 目标格式（spec §3 矩阵）；
+		// 既有变换（setModel）之后、出网之前最后一步。
 		switch target {
 		case domain.FormatOpenAIResponses:
-			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP())
+			streamBody = p.bodyPatch(sel, patchKeyResponses, streamBody)
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyResponses, cred))
 		case domain.FormatAnthropic:
-			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP())
+			streamBody = p.bodyPatch(sel, patchKeyAnthropic, streamBody)
+			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyAnthropic, cred))
 		case domain.FormatOpenAIChat:
-			resp, err = p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP())
+			streamBody = p.bodyPatch(sel, patchKeyChat, streamBody)
+			resp, err = p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP(), headerDecorator(sel, patchKeyChat, cred))
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
@@ -270,20 +275,28 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
 	var path, authHeader, auth string
+	// patchKey = **目标格式**键（转换车道作用于转换后的上游 body，spec §3）；
+	// decorator 的 {api_key} 来源是原始 cred（不能拿 auth 反解：anthropic 分支
+	// auth 是裸 cred、openai 分支是 "Bearer "+cred，两者形态不同）。
+	var patchKey domain.UpstreamPathKey
 	switch target {
 	case domain.FormatOpenAIResponses:
 		path, authHeader, auth = targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred
+		patchKey = patchKeyResponses
 	case domain.FormatAnthropic:
 		path, authHeader, auth = targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred
+		patchKey = patchKeyAnthropic
 	case domain.FormatOpenAIChat:
 		path, authHeader, auth = targetPath(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred
+		patchKey = patchKeyChat
 	default:
 		// 未接线的目标协议：显式拒绕（不得带空 path 去拼 URL）。
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": "protocol conversion target is not wired"}})
 		sel.HandleOrDetached().Release()
 		return http.StatusInternalServerError, nil, true, nil
 	}
-	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
+	upBody = p.bodyPatch(sel, patchKey, upBody)
+	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header, headerDecorator(sel, patchKey, cred))
 	if upstreamErr != nil {
 		return statusOf(upstreamErr), nil, false, upstreamErr
 	}

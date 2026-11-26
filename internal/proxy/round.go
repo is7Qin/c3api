@@ -195,6 +195,9 @@ func (r *round) settle(p *Proxy, sel *api.Selection, l *domain.UsageLog) {
 	r.billingSettled = true
 	p.applyBilling(l)
 	if p.cfg.UsageCapture {
+		// 日志面脱敏（spec custom-request-patch §8）：与 recordAttemptLog 同一
+		// 唯一实现——上游回显的当次 attempt key 落库前替换为 [redacted]。
+		l.ErrorMessage = redactLogKey(l.ErrorMessage, upstreamKeyOf(sel))
 		// 供应商收益出生定态：归属/分成/credited 三列按选中账号时捕获的财务
 		// 上下文盖章（与 finish 同一落章点，必须在 routeLog 之前）。
 		p.stampSupplier(sel, l)
