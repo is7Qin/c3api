@@ -205,7 +205,7 @@
 
 ### 出站请求修饰器 request_patch（custom 专用）
 
-`template_exts.request_patch` 是 `custom` 模板的**出站请求修饰器**：在网关把请求构造完成、真正出网之前的最后一步，按模板配置覆盖/新增/删除 HTTP 头，并对 JSON 请求体执行 path 级 `set` / `delete`。HTTP 六个出站面（含协议转换车道、images、search）、Responses WS（握手头 + `response.create` 帧体）与单账号探测（probe）共用同一领域对象、同一执行器与同一套语义；与 `upstream_paths` 一样，只在 `credential_type=custom` 时生效；codex / BPS 的 SDK 车道不消费（无 custom 配置）。
+`template_exts.request_patch` 是 `custom` 模板的**出站请求修饰器**：在网关把请求构造完成、真正出网之前的最后一步，按模板配置覆盖/新增/删除 HTTP 头，并对 JSON 请求体执行 path 级 `set` / `delete`。HTTP 六个出站面（含协议转换车道、images、search）、Responses WS（握手头 + `response.create` 帧体）与单账号探测（probe）共用同一领域对象、同一执行器与同一套语义；与 `upstream_paths` 一样，只在 `credential_type=custom` 时生效；codex / BPS 的 SDK 车道不消费（无 custom 配置）。三条出站面（HTTP / WS / probe）对同一份配置产生**同一 wire 语义**；探测结论（分类/预览/回显）仍由上游响应决定，patch 只改出站头/体，残余失败也不改变探测结论。
 
 **配置形状（PUT body 的 `request_patch` 字段；GET 原样回显）：**
 
@@ -241,7 +241,7 @@
 - 头名先按 `http.CanonicalHeaderKey` 归一（保存期存规范形，重启后的所有比较也按规范形）；值卫生由 `pkg/headervalid.ValidHeaderValue`（全仓单源）判定：TAB 放行，CR/LF/NUL/DEL 等其他控制字节 400。
 - **Host 是特例**：只改 Host 请求头（HTTP 写 `req.Host`，WS 写握手 `DialOptions.Host`），不改 TLS SNI、连接目标与证书校验——上游可据此路由到另一虚拟主机，属配置面责任；空值 = 回落 URL.Host。
 - **`{api_key}` 占位符**：仅 header 值支持（全局层与格式层均可、可多次），出网前用当次 attempt 的账号上游 key 原值替换；配置只存占位符，**GET 原样回显占位符**（不替换/不掩码）；body 值不做替换（字面量）。其他 `{...}` 原样保留，没有转义机制。
-- body：只对 JSON 对象/数组生效；执行顺序 `delete`（路径排序）→ `set`（路径排序），同一 path 同时出现时 `set` 胜；非 JSON body（如 images edits 的 multipart）结构性跳过、不改写、不告警；JSON 但 sjson 残余失败时原 body 裸透传 + 固定文案限频 WARN（不打印 path/value/body），请求不中止。
+- body：只对 JSON 对象/数组生效；执行顺序 `delete`（路径排序）→ `set`（路径排序），同一 path 同时出现时 `set` 胜；非 JSON body（如 images edits 的 multipart）结构性跳过、不改写、不告警；JSON 但 sjson 残余失败（保存期已拦，只可能是手工改库的脏值）时原 body 裸透传、请求不中止，并在**日志面**产生固定文案限频 WARN（按 template_id+format 1min，HTTP/WS/probe 三面共用同一份实现与同一张限频表，不打印 path/value/body）。该告警**不经管理面暴露**：ext GET 不返回、无告警查询端点/字段；修复方式是用 PUT 写回正确配置或直接清理脏值。
 - **`Accept-Encoding` 是出站响应编码不变量**：任一层非空值保存期 400（空值/Del 允许），运行期读到脏库值也会跳过。它决定上游响应体编码——放行会让 SSE 中继/usage 抽取/响应转换拿到压缩字节，表现为静默漏计费或 500（与 `relayDeny` 剔除入站 `Accept-Encoding` 是两条独立边界，见根 `AGENTS.md`）。
 - 不设只读/禁改路径，也不设数量/长度/深度上限（除 admin API 既有 1 MiB 请求体上限）：`model` / `stream` / `tools` / `Authorization` 等都可被改写，后果由操作员承担（见「安全声明」）。
 

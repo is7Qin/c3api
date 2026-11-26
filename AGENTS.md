@@ -16,7 +16,7 @@ internal/
   handler/        # /api/admin(oapi-codegen 生成路由) + /api/user(JWT)
   httpface/       # HTTP 报文面收敛点：错误写出+严格解码+分页窗口参数（叶子包，三方共用）
   service/        # 业务逻辑；errors 叶子包=8 哨兵错误；publish/reload 用 WithoutCancel；探测准入+唯一期限
-  probe/          # 单账号单模型探测执行：纯执行已准入 ctx；origin 锁定+不跟随重定向+2 MiB 上限+固定分类；文本/images/search 200-only 安全预览（只读）
+  probe/          # 单账号单模型探测执行：纯执行已准入 ctx；origin 锁定+不跟随重定向+2 MiB 上限+固定分类；文本/images/search 200-only 安全预览（只读）；custom request_patch 与 proxy 共用 domain 核心，残余失败 WARN 由组合根注入、自身不写日志
   repository/     # pgx+ent 数据访问；日分区引导(usage_logs/err_logs/usage_stats)
   ent/            # GENERATED——禁止手改
   scheduler/      # 选号快照；copy-modify-Store 不可变视图
@@ -37,7 +37,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | 改 AI 格式路径 | `internal/proxy/forward_*.go`(HTTP 面) → `caller_*.go`(上游策略) → `pipeline.go`(守卫骨架) |
 | 协议转换 | `internal/protoconv`（六方向：chat↔resp/mess 四方向 + mess→chat / resp→chat；请求侧全字节级，响应侧除 chat→resp 外是 map-based） |
 | 上游客户端/鉴权注入 | `pkg/aiclient`（Factory 双缓存；`rawPostCT` 收 `in http.Header` 走 `RelayHeaders`，唯一剔除清单在 `relay.go` 的 `relayDeny`） |
-| 出站请求修饰（custom `request_patch`） | `internal/domain/request_patch.go`(唯一解析/Canonical) + `request_patch_apply.go`(body 执行器) → `internal/proxy/request_patch.go`(头装饰/bodyPatch/WS hook) → `pkg/aiclient`(decorate 缝) → `internal/probe`(5 个工厂调用) |
+| 出站请求修饰（custom `request_patch`） | `internal/domain/request_patch.go`(唯一解析/Canonical) + `request_patch_headers.go`(头/body 选择判据，三面唯一实现) + `request_patch_apply.go`(body 执行器) → `internal/proxy/request_patch.go`(Selection 投影/WS hook/WARN 单一实现+probe 注入构造) → `pkg/aiclient`(decorate 缝) → `internal/probe`(5 个工厂调用，经 domain 核心与注入的 `PatchWarn`) |
 | 新增管理端点 | `openapi/openapi.yaml` → 重生成 → `internal/handler/*.go` 实现 → `web` 跑 `pnpm gen:api` |
 | 扣费链路 | `internal/proxy/forward.go`(routeLog 出生定态) → `internal/repository/billing_cursor.go`(游标消费) → `internal/billing`(Cost 纯函数/Balances 快照) |
 | 定价 | `internal/pricing`（换算系 ×1e5 与 ×1e11 禁混用） |
@@ -52,8 +52,8 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | `guardPipeline` | method | internal/proxy/pipeline.go:43 | auth→quota→余额预检→两级并发门→限流 骨架 |
 | `handleFormat` | method | internal/proxy/caller.go:126 | 4 种 REST 格式共享入口（scanKeys 单遍提取） |
 | `UpstreamCaller` | iface | internal/proxy/caller.go:98 | 一格式一实现； owns 记录/failover 分类 |
-| `RequestPatch` / `TemplateUpstream` | struct | internal/domain/request_patch.go / template_upstream.go | custom 出站修饰值类型（头 + 七键 body 面）；`ParseRequestPatch` 唯一 wire 入口、`ApplyRequestBodyPatch` 唯一执行器；快照里只读共享指针 |
-| `headerDecorator` / `bodyPatch` / `wsHeaderDecorator` / `wsClientFrameHook` | func/method | internal/proxy/request_patch.go | `request_patch` 唯一数据面接线：无配置 nil/原切片（零分配）、`{api_key}` 闭包捕获当次原始 cred、残余失败限频 WARN（不打印 path/value/body） |
+| `RequestPatch` / `TemplateUpstream` | struct | internal/domain/request_patch.go / request_patch_headers.go / template_upstream.go | custom 出站修饰值类型（头 + 七键 body 面）+ **数据面执行核心**（`RequestPatchHeaderLayers`/`ApplyRequestPatchHeaderLayers`/`RequestPatchHeaderDecorator`/`RequestPatchFormat`/`ApplyRequestPatch`，HTTP/WS/probe 三面唯一实现）；`ParseRequestPatch` 唯一 wire 入口；快照里只读共享指针 |
+| `headerDecorator` / `bodyPatch` / `wsHeaderDecorator` / `wsClientFrameHook` / `PatchWarnFunc` | func/method | internal/proxy/request_patch.go | Selection 形态薄适配（判据全在 domain）+ proxy 独有 WARN 单一实现：`emitBodyPatchWarn` + `bodyPatchWarnGate`（template+format 1min）+ 导出 `PatchWarnFunc(log)` 供 probe 注入；无配置 nil/原切片（生产口径 0 alloc，有配置 forced-escape 48B/1） |
 | `decorate` 参数 | param | pkg/aiclient/aiclient.go / responses_ws.go | 6 个 HTTP 出站方法 + `ResponsesWSDial` 的装饰缝：在网关默认头之后、强制 `Del Accept-Encoding` 之前执行（nil = 快路径） |
 | `digestTemplateUpstream` | func | internal/scheduler/static_key.go | `TemplateUpstream`（Paths + Patch）合并进既有 32B 摘要槽（tplDigests 仍 5 项，planKey 392B 不变） |
 | `relayWS` / `wsRelayTransport` | method/iface | internal/proxy/ws_relay.go:54/:35 | WS 双向中继合一；5 方法隔离 responses vs codex |
@@ -71,7 +71,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 - **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更
 - **测试**：testify **只 require 不 assert**；PG 测试真实 PostgreSQL（pgxmock 仅 5 个遗留/冒烟文件勿扩展：repository_test/rule_repo_test/pg_account_groups_test/signup_bootstrap_pg_test/notify publisher）；全仓 `t.Parallel()`=0 串行；固定 `time.Date(2026,8,...)` 注入时间；channel 屏障替代 sleep（参考 codex_test.go runWave）
-- **出站请求修饰（custom `request_patch`）= 可信配置面，不是入站透传**：`relayDeny` 只剔除客户端入站头；`request_patch` 执行在它之后（出网前最后一步），可覆盖网关默认头与 JSON body，唯一硬边界是出站 `Accept-Encoding`（保存期 400 + 运行期跳过——上游响应必须是明文，否则 relay/usage/转换静默拿压缩字节）。`{api_key}` 只在 header 值展开、来自当次 attempt 原始 cred（failover 每 attempt 重算）、**永不写日志/err/usage、GET 原样回显占位符**；无配置必须零新增分配（helper 返回 nil/原切片）。改出站调用点必须同步 AST 门禁（`egress_call_sites_gate_test.go` / `relayws_call_sites_gate_test.go`）。
+- **出站请求修饰（custom `request_patch`）= 可信配置面，不是入站透传**：`relayDeny` 只剔除客户端入站头；`request_patch` 执行在它之后（出网前最后一步），可覆盖网关默认头与 JSON body，唯一硬边界是出站 `Accept-Encoding`（保存期 400 + 运行期跳过——上游响应必须是明文，否则 relay/usage/转换静默拿压缩字节）。`{api_key}` 只在 header 值展开、来自当次 attempt 原始 cred（failover 每 attempt 重算）、**永不写日志/err/usage、GET 原样回显占位符**；无配置必须零新增分配（helper 返回 nil/原切片）。改出站调用点必须同步 AST 门禁（`egress_call_sites_gate_test.go` / `relayws_call_sites_gate_test.go`）。三面判据/执行核心唯一在 `internal/domain/request_patch_headers.go`（proxy/probe 禁止复制）；body sjson 残余失败 WARN 也只有一个实现（`emitBodyPatchWarn` + 共享 `template_id+format` 限频表），probe 经组合根注入 `proxy.PatchWarnFunc(log)`、自身不 import logx/不写日志。分配验收按 **forced-escape 口径**（生产路径有配置 48B/1 alloc、无配置 0；`BenchmarkRequestPatchConfiguredHeader` 的 +1 alloc 是跨包内联边界 artifact，不作回归口径）。
 - **前端**：pnpm only（本机须 `--config.node-linker=hoisted`）；schema.d.ts 由 `pnpm gen:api` 生成禁手改
 - **commit**：标题一行英文(conventional 前缀)+正文中文；不擅自 push
 
@@ -88,7 +88,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 9. 测试 time.Sleep 掩盖竞态——用屏障/watchdog；CI 无 -race，别赌
 10. 手改生成物：`internal/ent/**`、`handler/*/api.gen.go`、`web/src/lib/api/schema.d.ts`
 11. 破坏 usage_logs 单写点——INSERT 仅 usage flusher InsertBatch（billing worker 只 UPDATE 标记）；billed 出生定态仅 routeLog 一处判定（forward.go:420-425）；扣费标记必经结算语句的 marked==batch 比对守卫（`errConcurrentMark`，billing_settle.go:174-188），绕开=丢并发双扣防御
-12. 把入站 `relayDeny` 与出站 `request_patch` 混为一谈，或把 `request_patch` 当「客户端头→上游头」透传 DSL——前者约束客户端头（不可被配置穿透），后者是可信配置面的模板声明（执行在 deny 之后；无客户端数据、无 passthrough/表达式规则，`{api_key}` 是唯一占位符）。同样禁止：热路径打印 patch 的 key/value/body、把 `{api_key}` 展开值或上游回显 key 写进日志/`err_logs`/`usage_logs`、无配置路径新增分配、出站 `Accept-Encoding` 放行（响应编码不变量，保存期必须 400）。
+12. 把入站 `relayDeny` 与出站 `request_patch` 混为一谈，或把 `request_patch` 当「客户端头→上游头」透传 DSL——前者约束客户端头（不可被配置穿透），后者是可信配置面的模板声明（执行在 deny 之后；无客户端数据、无 passthrough/表达式规则，`{api_key}` 是唯一占位符）。同样禁止：热路径打印 patch 的 key/value/body、把 `{api_key}` 展开值或上游回显 key 写进日志/`err_logs`/`usage_logs`、无配置路径新增分配、出站 `Accept-Encoding` 放行（响应编码不变量，保存期必须 400）。也不得在 probe/service/其它包复制 request_patch 的头/body 判据或 WARN 文案/限频表（判据唯一在 `internal/domain/request_patch_headers.go`、WARN 唯一在 `internal/proxy`），不得为让 bench 数字复现把装饰器构造复制回 proxy；probe 的「不 import logx/不写日志」不变量不得被 WARN 需求打破。
 
 ## COMMANDS
 

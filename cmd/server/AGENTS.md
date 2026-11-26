@@ -19,9 +19,7 @@
   其余符号不许晚绑定，禁止服务定位器/聚合根。
 - `defer` 只留在 `main`/`run` 这一层（阶段函数零 defer）：阶段返回后仍持有句柄，
   只有进程级生命周期能保证"最后一步释放"。
-- 探测装配：`accountprobe.New(clients, egressPool)` 只传执行依赖（aiclient
-  Factory + 出口池）；准入（4+16）与 30s 总期限在 `internal/service`，不在本层
-  创建 prober 超时/信号量。
+- 探测装配：`accountprobe.New(clients, egressPool, accountprobe.Options{PatchWarn: proxy.PatchWarnFunc(log)})` 只传执行依赖（aiclient Factory + 出口池）与一个**可选观测 seam**；准入（4+16）与 30s 总期限在 `internal/service`，不在本层创建 prober 超时/信号量。`PatchWarn` 是 request_patch body sjson 残余失败的唯一观测注入点：`proxy.PatchWarnFunc(log)` 与 HTTP/WS 面同一份固定文案 + 同一张 `template_id+format` 1min 限频表，probe 包因此仍不 import logx、不写日志；`cmd/server/probe_wiring_test.go` 钉住该装配（整包 `accountprobe.New(` 恰 1 次），改写法须同步。
 - 依赖显式顺序构造；禁止事后 `Set*` 回填（构造环结构性消除）。
 - worker 注册序 = 反序排空序；改顺序前读注释。
 - Codex 会话簿：`convBook := codexsdk.NewConversationBook(redisstore.New(rdb))` 恒构造（与

@@ -21,7 +21,8 @@ latency_ms / status_code / 回显 model / 固定分类 error + 有限错误码 d
   （文本四格式）、`sdkbridge.GenerateImageOnce`（images）、`sdkbridge.SearchOnce`
   （search）；只搬运 SDK 机制。请求体、200 body 读取、SSE 终态、成功判定与预览
   全部在本包。**不走**生产 `sdkbridge.Codex` 条目/Auth/失败回调/轮转。
-- custom 模板的静态 key 族同时消费模板 `request_patch`（spec `custom-request-patch` §7.3）：`ProbeSpec.Upstream` 由 service 与逐格式路径同一处装填；5 个 factory 调用（`probe.go` 的 `ChatCompletionRaw`/`ResponseRaw`/`AnthMessageRaw` + `content.go` 的 `ImagesRaw`/`SearchRaw`）都带与 proxy 相同的头装饰器，body patch 在既有合成体之后、出站之前应用（复用唯一执行器 `domain.ApplyRequestBodyPatch`，不在本包复制判据）。格式键映射与上游路径同键（`openai-responses-ws` 探测实际走 HTTP responses 语义但键与 path 一致）；images 按 `ProbeSpec.ImageMode` 取 `openai-images.generations` / `.edits`，edits multipart **只注入头**（非 JSON 结构性跳过）；`{api_key}` 用 `ProbeSpec.Credential` 原始裸 key 展开。
+- custom 模板的静态 key 族同时消费模板 `request_patch`（spec `custom-request-patch` §7.3/§7.4）：`ProbeSpec.Upstream` 由 service 与逐格式路径同一处装填；5 个 factory 调用（`probe.go` 的 `ChatCompletionRaw`/`ResponseRaw`/`AnthMessageRaw` + `content.go` 的 `ImagesRaw`/`SearchRaw`）的头装饰器由 `domain.RequestPatchHeaderDecorator` 构造（`probeHeaderDecorator` 零逻辑投影，apiKey 固定取 `spec.Credential` **原始裸 key**），body 经 `(*Prober).applyBodyPatch` → `domain.ApplyRequestPatch` 在既有合成体之后、出站之前应用——层选择/逐层判据/执行器全部与 proxy 共用**唯一实现**，本包只做零逻辑委托，不复制判据。格式键与上游路径同键（`openai-responses-ws` 探测实际走 HTTP responses 语义但键与 path 一致）；images 按 `ProbeSpec.ImageMode` 取 `openai-images.generations` / `.edits`，edits multipart **只注入头**（非 JSON 结构性跳过、不触告警）；无配置 ⇒ nil 装饰器 / 原 slice（0 alloc，注入回调的生产形态下同样硬断言）。
+- **残余失败可观测性（P5 fix1，spec §7.4/§8）**：JSON body 但 sjson 残余失败（保存期已拦，只可能是手工改库的脏值）⇒ 原 body 裸透传、探测不中止、不分类为 probe 失败，并调用构造期注入的 `Options.PatchWarn(templateID, format)` **恰好一次**（nil = 静默）。该回调由组合根（`cmd/server/wiring_billing.go`）注入 `proxy.PatchWarnFunc(log)`——HTTP/WS 面同一份固定文案 + 同一张 `template_id+format` 1min 限频表的**单一实现**（见 `internal/proxy/request_patch.go` 的 `emitBodyPatchWarn`/`bodyPatchWarnGate`）。**probe 包自身仍不写日志、不 import logx、不新增架构边**，只把「残余失败发生了」这一事实交给注入的 func；成功/结构性跳过/无配置路径都不触回调。
 - 不落库、不计费、不改账号状态、不进调度/规则/失败统计。
 
 ## 格式与输入（account-probe-content）
@@ -134,7 +135,7 @@ latency_ms / status_code / 回显 model / 固定分类 error + 有限错误码 d
 13. **codex 新格式结论顺序**：ctx 取消/到期 > `ErrBodyTooLarge` > (status != 0
     且 err != nil → 按真实 HTTP 状态分类) > 传输分类（status=0）。201/204/206
     必须报 `upstream error` 而不是 `probe request failed`。
-14. **request_patch 不改变探测结论语义**：patch 只改出站头/体，探测的成功判定、固定分类词表、预览抽取与脱敏、错误不回显上游原文全部不变；`{api_key}` 值不进入结果/日志；images edits 的 multipart 只头不改 body。origin 锁定、不跟随重定向、2 MiB/8 MiB 上限、期限/准入边界均不受 patch 影响。
+14. **request_patch 不改变探测结论语义**：patch 只改出站头/体，探测的成功判定、固定分类词表、预览抽取与脱敏、错误不回显上游原文全部不变；`{api_key}` 值不进入结果；images edits 的 multipart 只头不改 body。残余失败只经注入回调产生日志面 WARN（probe 本身不写日志）、不改探测结论；origin 锁定、不跟随重定向、2 MiB/8 MiB 上限、期限/准入边界均不受 patch 影响。
 
 ## 验证
 
