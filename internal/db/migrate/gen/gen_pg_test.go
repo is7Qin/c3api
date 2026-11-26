@@ -80,15 +80,18 @@ func TestPatchOnlyWarnings(t *testing.T) {
 	}
 }
 
-// TestGenerateIsDeterministic 连跑两次生成器：产物必须逐字节相同（排序稳定、
-// 无 oid/随机量渗入）。
+// TestGenerateIsDeterministic 连跑两次生成器，并拆成三个各守一条职责的子测试
+// （P0 遗留 M4：原用例一条断言里塞了确定性 / 全局表不污染 / 0001 不带后置列三件事）：
 //
-// 同时钉住 hook 拆分的两条纪律（spec §4.2；评审 momus C3 / oracle I1）：
-//   - hook 幂等：ent 的 Tables 是进程级全局对象，两次 Run 必须输出逐字节相同；
-//   - hook 不污染全局表：Run 前后 ent 全局 Tables 的 Columns 逐表逐列不变
-//     （实现只做浅拷贝 + 重建 Columns slice，原地删列会在这里红）；
-//   - 列排除只属于 baseline 生成：request_patch 在 ent schema 里（runtime
-//     automigrate 建全列），但**不得**进冻结的 0001 生成物。
+//   - determinism：两次 Run 的产物逐字节相同（排序稳定、无 oid/随机量渗入）；
+//   - global-tables-not-polluted：hook 拆分后 Run 前后 ent 全局 Tables 的 Columns
+//     逐表逐列不变（实现只在 schema.CopyTables 克隆上重建 Columns slice，原地删列
+//     会在这里红），且 ent schema 必须保留 request_patch（runtime automigrate 建全列）；
+//   - 0001-no-post-baseline-columns：列排除只属于 baseline 生成，post-baseline 列
+//     **不得**进冻结的 0001 生成物（应由 0004 迁移 ADD COLUMN）。
+//
+// 两次 Run 在父测试里执行（子测试只读产物/全局表），断言强度与原用例完全相同
+// （spec §4.2；评审 momus C3 / oracle I1）。
 func TestGenerateIsDeterministic(t *testing.T) {
 	dsn := pgtest.DSN(t)
 	ctx := context.Background()
@@ -98,18 +101,27 @@ func TestGenerateIsDeterministic(t *testing.T) {
 	require.NoError(t, err)
 	second, err := Run(ctx, Config{DSN: dsn})
 	require.NoError(t, err)
-	require.Equal(t, first.UpSQL, second.UpSQL)
-	require.Equal(t, first.DownSQL, second.DownSQL)
-	require.Equal(t, first.CatalogTxt, second.CatalogTxt)
-	require.Equal(t, first.Stats, second.Stats)
+	after := entColumnSnapshot()
 
-	require.Equal(t, before, entColumnSnapshot(),
-		"MigrateHookForBaseline 不得改写 ent 全局 Tables 的 Columns（只允许克隆）")
-	templateExts := entTableByName(t, "template_exts")
-	require.Contains(t, tableColumnNames(templateExts), "request_patch",
-		"ent schema 必须保留 request_patch：runtime automigrate 建全列（列排除只属 baseline 生成）")
-	require.NotContains(t, first.UpSQL, "request_patch",
-		"post-baseline 列不得进冻结的 0001 生成物（应由 0004 迁移 ADD COLUMN）")
+	t.Run("determinism", func(t *testing.T) {
+		require.Equal(t, first.UpSQL, second.UpSQL)
+		require.Equal(t, first.DownSQL, second.DownSQL)
+		require.Equal(t, first.CatalogTxt, second.CatalogTxt)
+		require.Equal(t, first.Stats, second.Stats)
+	})
+
+	t.Run("global-tables-not-polluted", func(t *testing.T) {
+		require.Equal(t, before, after,
+			"MigrateHookForBaseline 不得改写 ent 全局 Tables 的 Columns（只允许克隆）")
+		templateExts := entTableByName(t, "template_exts")
+		require.Contains(t, tableColumnNames(templateExts), "request_patch",
+			"ent schema 必须保留 request_patch：runtime automigrate 建全列（列排除只属 baseline 生成）")
+	})
+
+	t.Run("0001-no-post-baseline-columns", func(t *testing.T) {
+		require.NotContains(t, first.UpSQL, "request_patch",
+			"post-baseline 列不得进冻结的 0001 生成物（应由 0004 迁移 ADD COLUMN）")
+	})
 }
 
 // entTableByName 从 ent 的全局 Tables 里按表名取表（只读）。

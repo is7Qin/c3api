@@ -57,6 +57,14 @@ type LegacyArtifacts struct {
 //
 // 这就是 cmd/server/wiring_infra.go:119-152 的那一串。它只在 M0b 拆掉老路径之前
 // 可生成——之后这个函数会编译失败（老方法不存在），**这正是它的过期标记**。
+//
+// 警告（P0 之后；pre-M0b only）：本函数走 repository.New(drv, true) 的 runtime
+// automigrate，而 P0 之后 automigrate 建的是**全列**（含 template_exts.request_patch，
+// 该列只在 0004 迁移里、不在冻结的 0001 baseline 里）。所以在这个 commit 上重新
+// -legacy 生成的夹具**会含 request_patch 列**，不再与 0001 快照逐对象相等——
+// T2「老路径 == 0001」会不成立，adopt 0001 会拒绝。已有 testdata/legacy/aba8042e.sql
+// 是 P0 前的冻结产物（gen -check 不覆盖它），因此当前无红；M0b 拆老路径时必须
+// 先删这个生成器/夹具。行为不变：本函数不因 P0 改动而改变，此处只是显式提示。
 func GenerateLegacy(ctx context.Context, cfg LegacyConfig) (LegacyArtifacts, error) {
 	if len(cfg.PGDump) == 0 {
 		cfg.PGDump = []string{"pg_dump"}

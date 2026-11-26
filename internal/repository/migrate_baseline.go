@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"entgo.io/ent/dialect/sql/schema"
+
+	"github.com/is7qin/c3api/internal/ent/templateext"
 )
 
 // PostBaselineColumn 是「ent schema 里有、但 0001 baseline 里**没有**」的一列：
@@ -20,7 +22,7 @@ type PostBaselineColumn struct {
 // PostBaselineColumns 是 baseline 生成器的**显式**删列清单（spec §4.2 的唯一清单，
 // 当前只有 template_exts.request_patch）。规则：
 //
-//   - 0001_baseline 一旦发布即不可变（checksum 漂移 ⇒ 启动门 NotReady）。ent schema
+//   - 0001_baseline 一旦发布即不可变（checksum 漂移 ⇒ 启动门 ModeReadonly）。ent schema
 //     继续加列时，不能让 gen 重写 0001；把「baseline 之后的列」显式登记在这里，
 //     gen 的 MigrateHookForBaseline 会从 ent 的建表输出里裁掉它们；物理列由后续
 //     迁移（0004_custom_request_patch）ADD COLUMN 建立。
@@ -34,7 +36,7 @@ type PostBaselineColumn struct {
 //     == 本清单）由 internal/db/migrate/gen 的测试双向断言（多/少都红）。
 func PostBaselineColumns() []PostBaselineColumn {
 	return []PostBaselineColumn{
-		{Table: "template_exts", Column: "request_patch"},
+		{Table: templateext.Table, Column: "request_patch"},
 	}
 }
 
