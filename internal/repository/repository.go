@@ -15,7 +15,6 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -1160,7 +1159,7 @@ func (r *Repository) LoadGroupMultipliers(ctx context.Context) (map[int64]int, e
 
 // LoadAssignmentMultipliers 全量用户-组专属倍率快照（用户专属倍率
 // 按组挂载——billing.Balances.Reload/ReloadMultipliers 数据源）。
-func (r *Repository) LoadAssignmentMultipliers(ctx context.Context) (map[billing.AssignmentKey]int, error) {
+func (r *Repository) LoadAssignmentMultipliers(ctx context.Context) (map[domain.AssignmentKey]int, error) {
 	return r.Groups.LoadAssignmentMultipliers(ctx)
 }
 

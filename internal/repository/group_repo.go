@@ -17,7 +17,6 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
-	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -362,7 +361,7 @@ func (r *GroupRepo) LoadGroupMultipliers(ctx context.Context) (map[int64]int, er
 // 万分数；仅 group_assignments.price_multiplier 非 NULL 行——缺失 = 未设置 →
 // 用组倍率；billing.Balances.Reload/ReloadMultipliers 调用 修正：用户
 // 专属倍率按组挂载）。
-func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[billing.AssignmentKey]int, error) {
+func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[domain.AssignmentKey]int, error) {
 	rows, err := r.client.GroupAssignment.Query().
 		Where(groupassignment.PriceMultiplierNotNil()).
 		Select(groupassignment.FieldUserID, groupassignment.FieldGroupID, groupassignment.FieldPriceMultiplier).
@@ -370,12 +369,12 @@ func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[billing.
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[billing.AssignmentKey]int, len(rows))
+	out := make(map[domain.AssignmentKey]int, len(rows))
 	for _, row := range rows {
 		if row.PriceMultiplier == nil {
 			continue // 非 NULL 谓词兜底（Select 子集查询仍可能带 nil？不——谓词已过滤，防御）
 		}
-		out[billing.AssignmentKey{UserID: row.UserID, GroupID: row.GroupID}] = *row.PriceMultiplier
+		out[domain.AssignmentKey{UserID: row.UserID, GroupID: row.GroupID}] = *row.PriceMultiplier
 	}
 	return out, nil
 }
