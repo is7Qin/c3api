@@ -761,6 +761,19 @@ const (
 	//   accounts_usage_test.go 原本真用 sdkbridge.ErrAuthExpired/ErrUpstream 构造
 	//   fake 返回值，本单把它们改成 &codexproto.Error{Kind: ...}（与生产口径一致，
 	//   也从"测真实哨兵"升级为"测中立类型"）。
+	// P6-3 变更（**矩阵零改动**：没有新增/删除规则，没有加宽任何 to）：
+	//   唯一的"搬家"是把 Kind 枚举的 canonical 定义从 internal/rule 下沉到
+	//   internal/domain（rule.Kind 留 `type Kind = domain.RuleKind` 别名）。而
+	//   internal/domain 本来就在 handler 的 allow 里（P6-1 已加）⇒ handler/user
+	//   直接 import domain.RuleKind 是既有许可，矩阵不需要动。
+	//   顺手印证了矩阵的作用面：本单最危险的失效模式（用户面 err_logs 脱敏因端口
+	//   漏接而静默关闭）在矩阵里**看不见**——矩阵只管 import 方向，不管注入是否为
+	//   nil；那条靠 cmd/server/errlog_classifier_wiring_test.go 的装配钉兜住。
+	//   换来的是 productionLedger 里 {internal/handler/user, internal/rule} 这条 P6
+	//   债的消失（debtMax 3 → 2）。⚠ testLedger 同步增一行（debtMax 5 → 6）：生产
+	//   边断了之后，这条边只剩"同包测试用真实规则引擎装进 ErrLogClassifier，验种子
+	//   规则/透传规则与 status_code=0 边界真的生效"的夹具需求（与 P6-1 的
+	//   handler -> pricing 同型：换成 fake 就变成测替身）。
 	// 前值：93aaa4ada68332006639a25be84c92c31a138de9487f69fea0d61fbdb3eacabe（P6-2 之前）
 	// 再前值：6d83b52496d7d9c7d4b7c6ec4bda576790e4cc1403e7734b683deabdcd8b8244（P6-1 之前）
 	// 再前值：0203a90606e229925892324db0df2c2b8281201b9cf78ce1314640b303ecb664（R1-c 之后）
@@ -947,7 +960,7 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 3,
+	debtMax: 2,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
@@ -960,7 +973,15 @@ var productionLedger = ledger{
 		// ⚠ 注意 `go list -deps ./internal/handler` 仍能看到 sdkbridge：那经
 		// handler -> service -> probe -> sdkbridge 传递而来，与本条债（直接边）
 		// 无关，P6-2 前就已存在，也不在本单范围内。
-		{"internal/handler/user", "internal/rule", "用户端 handler 直接用 rule 类型做设置转换；P6 控制器化", phaseP6},
+		// P6-3 删行（debtMax 3 → 2，只减不增）：{internal/handler/user,
+		// internal/rule} 这条边已**真删**——用户面 err_logs 行级脱敏改走自己声明
+		// 的 ErrLogClassifier 端口（rule_port.go），Kind 类型的 canonical 定义
+		// 下沉到 domain.RuleKind（rule.Kind 留别名，19 个既有引用点零改动），
+		// 统一文案公式在本包内私有实现一份并由对照测试钉住同源。
+		// ⚠ 同样的口径陷阱：`go list -deps ./internal/handler/user` 仍能看到
+		// rule——那经 handler/user -> service -> rule（internal/service/rule.go
+		// 持有规则 CRUD 重载面）传递而来，是**基线既有**的传递边，与本条债
+		// （直接边）无关，也不在本单范围内。
 	},
 	keep: []legacyRow{
 		{"internal/db/migrate/gen", "internal/repository", "迁移 DDL 生成器（go:generate）必须读取 repository 的 baseline DDL 与 hook 排除项；它是离线工具链、不是运行期包，结构上永不可能消除", phaseKeep},
@@ -970,7 +991,7 @@ var productionLedger = ledger{
 
 var testLedger = ledger{
 	name:    "同包测试 TestImports",
-	debtMax: 5,
+	debtMax: 6,
 	keepMax: 2,
 	debt: []legacyRow{
 		{"internal/billing", "internal/usage", "billing 测试用 usage 组件落库构造误差日志夹具；P4 后改 repository 端口", phaseP4},
@@ -990,6 +1011,15 @@ var testLedger = ledger{
 		{"internal/handler", "internal/scheduler", "handler 测试直连 scheduler 构造路由视图；P6 后改 service 端口", phaseP6},
 		{"internal/handler", "internal/settingssnap", "handler 测试读 settingssnap 构造设置快照；P6 后由 service 提供", phaseP6},
 		{"internal/handler/payment", "internal/settingssnap", "支付回调测试用 settingssnap 构造设置；P6 后由 service 提供", phaseP6},
+		// P6-3：生产边已断（handler/user 不再 import rule），这条只剩**测试夹具**
+		// 需求：convert_test.go 与 errlog_status_boundary_test.go 必须把**真实**
+		// *rule.RuleEngine 装进 ErrLogClassifier 才能证明「策略真的生效」——
+		// convert_test 验的是种子规则表/透传规则的实际命中，boundary_test 验的是
+		// 「status_code=0 ⇒ 带 http_status 的规则不匹配」这条**引擎判定语义**。
+		// 换成 fake 就把「测真实策略」降级成「测替身」，那两条断言随之失去意义。
+		// 与 P6-1 的 handler -> pricing 同型（走 testLedger 而非 testFixtureAllow：
+		// 后者按前缀匹配，加 internal/rule 会让**任意**包的测试都能 import rule）。
+		{"internal/handler/user", "internal/rule", "用户面 err_logs 脱敏测试用真实规则引擎装进 ErrLogClassifier，验策略真的生效；生产边已断，只剩测试夹具需求", phaseP6},
 	},
 	keep: []legacyRow{
 		{"internal/server", "internal/config", "server 测试用 config 构造 service 依赖；测试装配点没有运行期对应物，结构上不会消失", phaseKeep},

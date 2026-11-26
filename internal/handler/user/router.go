@@ -11,7 +11,6 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/httpface"
-	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -21,13 +20,15 @@ import (
 // RequireIdentity（JWT 或管理 key mk- 统一身份鉴权 + 内存快照用户状态校验）。
 // 生成路由的 spec 路径自带 /api/user 前缀，故无独立 BaseURL，
 // HandlerWithOptions 直接使用 spec 路径。
-// rules 为规则引擎（/api/user/err_logs 行级脱敏用；main 装配注入——非 New，
-// 测试构造零回归；nil = 不脱敏）。log 为面日志（/forgot-password 反枚举路径的
-// 发送失败可观测出口；nil = 静默）。p 为单一鉴权快照面（users + mgmt 合并；
-// proxy.Auth 实现；支持 mk- 凭证以 owner 身份访问 /api/user 面）。features 为
-// 部署级功能开关（启动配置投影，/api/user/features 原样回显 Supplier；零值 = 全部
-// 关闭）。Payment 不在此注入：它是运行时设置，处理器每次请求从设置快照读取。
-func Router(svc *service.Service, iss *auth.Issuer, p auth.SnapshotProvider, rules *rule.RuleEngine, log *logx.Logger, features Features) http.Handler {
+// rules 为规则判定端口（/api/user/err_logs 行级脱敏用；组合根经此构造注入——
+// 非 New，测试构造零回归；nil = 不脱敏）。它是**独立参数而不是 Features 里的一
+// 个开关**：这是行为依赖（问"命中什么规则"），不是"开不开某功能"的配置项。
+// log 为面日志（/forgot-password 反枚举路径的发送失败可观测出口；nil = 静默）。
+// p 为单一鉴权快照面（users + mgmt 合并；proxy.Auth 实现；支持 mk- 凭证以 owner
+// 身份访问 /api/user 面）。features 为部署级功能开关（启动配置投影，
+// /api/user/features 原样回显 Supplier；零值 = 全部关闭）。Payment 不在此注入：
+// 它是运行时设置，处理器每次请求从设置快照读取。
+func Router(svc *service.Service, iss *auth.Issuer, p auth.SnapshotProvider, rules ErrLogClassifier, log *logx.Logger, features Features) http.Handler {
 	api := New(svc, iss)
 	api.rules = rules
 	api.log = log

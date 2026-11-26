@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/auth"
-	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -26,9 +25,10 @@ type UserAPI struct {
 	// claims 判定会让降权用户继续拿到 visibility=admin 条目（§8-S5 破防）、新升权用户
 	// 又只看得到管理台侧栏却拿不到 admin 条目（spec 2026-11-16 §19-1）。
 	users auth.SnapshotProvider
-	// rules 规则引擎（/api/user/err_logs 行级脱敏用：平台问题行 error_message 按
-	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
-	rules *rule.RuleEngine
+	// rules 规则判定端口（/api/user/err_logs 行级脱敏用：平台问题行 error_message
+	// 按策略判定替换固定文案；组合根经 Router 构造注入——**nil = 不脱敏**）。
+	// 端口而非 *rule.RuleEngine：本包不 import 执行面引擎（见 rule_port.go）。
+	rules ErrLogClassifier
 	// log 面日志：/forgot-password 反枚举路径仍恒 200，发送失败不再静默吞——
 	// 记 Warn 后照常返回 200（main 装配经 Router 注入；nil = 静默）。
 	log *logx.Logger

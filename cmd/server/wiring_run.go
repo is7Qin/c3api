@@ -270,7 +270,12 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 	}
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
-	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log, userapi.Features{Supplier: cfg.Supplier.Enabled})
+	// 用户面 err_logs 行级脱敏端口：handler/user **不持有**规则引擎，只声明
+	// ErrLogClassifier（见 errlog_classifier.go）。适配器在此构造并作为独立参数
+	// 注入——不进 Features（那是开关，这是行为依赖），也没有 Set* 回填
+	// （errlog_classifier_wiring_test.go 把它钉成结构事实）。
+	var errLogRules userapi.ErrLogClassifier = errLogClassifier{engine: ruleEngine}
+	userHandler := userapi.Router(svc, iss, auth, errLogRules, log, userapi.Features{Supplier: cfg.Supplier.Enabled})
 	// 支付公开回调面（/api/payment/*，spec §7-2）：**无身份鉴权**（网关不带 JWT），
 	// 由 server.go 挂在非 admin 鉴权组；协议真伪由 provider 验签判定，入账只经
 	// svc.CompleteOrder。同一份 providers 装配同时给 service（注册表）与本包

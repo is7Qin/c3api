@@ -5,10 +5,10 @@
 package user
 
 import (
+	"context"
 	"math"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/rule"
 )
 
 // redemptionValueToAPI 毫分存储 → 契约面值（与 /admin 兑换码同规则）：
@@ -178,27 +178,27 @@ const upstreamRejectedMsg = "upstream rejected request"
 // ErrNoAccount/ErrNone 等本地拒绝行）一律无 kind——不参与策略匹配，原样返回
 // （本地拒绝行 message 恒网关文案 "invalid gateway key"/"no available account"
 // 等，无泄漏面）。
-func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
+func errTypeKind(et domain.ErrorType) (domain.RuleKind, bool) {
 	switch et {
 	case domain.Err4xx:
-		return rule.Kind4xx, true
+		return domain.RuleKind4xx, true
 	case domain.Err429:
-		return rule.Kind429, true
+		return domain.RuleKind429, true
 	case domain.Err5xx:
-		return rule.Kind5xx, true
+		return domain.RuleKind5xx, true
 	case domain.ErrNetwork:
-		return rule.KindNetwork, true
+		return domain.RuleKindNetwork, true
 	case domain.ErrAbort:
-		return rule.Kind5xx, true
+		return domain.RuleKind5xx, true
 	case domain.ErrTimeout:
 		// 用户面保守：与 ErrAbort 同档（timeout 也可能已下发部分业务帧，
 		// 归到 5xx 让用户侧看到「上游故障」而不是别的）。
-		return rule.Kind5xx, true
+		return domain.RuleKind5xx, true
 	}
 	return 0, false
 }
 
-// sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、http_status ← status_code、message ← error_message} 调同一策略（Classify）→ 统一公式 msg=CustomMessage!=nil?*CustomMessage:orig（via rule.UnifiedMessage，与 pipeline 响应同源）；代理日志保留原文边界另述。Model 口径 = 最终请求模型（映射后 sel.Model，与 failoverLoop 一致）。返回 (替换后文本, 是否替换)。
+// sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、http_status ← status_code、message ← error_message} 调同一策略（经 ErrLogClassifier 端口）→ 统一公式 msg=CustomMessage!=nil?*CustomMessage:orig（via 本包 unifiedMessage，与 pipeline 响应同源）；代理日志保留原文边界另述。Model 口径 = 最终请求模型（映射后 sel.Model，与 failoverLoop 一致）。返回 (替换后文本, 是否替换)。
 func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	k, ok := errTypeKind(l.ErrorType)
 	if !ok {
@@ -208,12 +208,12 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	if model == "" {
 		model = l.Model
 	}
-	ev := rule.Event{
+	q := ErrLogQuery{
 		AccountID: l.AccountID, TemplateID: l.TemplateID,
 		Model: model, Kind: k,
 	}
 	if l.GroupID > 0 {
-		ev.GroupID = &l.GroupID
+		q.GroupID = &l.GroupID
 	}
 	// ⚠ 能力边界（spec-stream-failure-truth §3.2，**不是实现缺陷**）：只有
 	// status_code > 0 才设置 HTTPStatus。上游在流内声明失败时**没有** HTTP 状态
@@ -223,18 +223,29 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	// nil 恒不匹配）。需要「过载不惩罚」这类效果应由规则条件表达，而不是让网关
 	// 合成一个上游没给过的码去迁就现成规则。
 	if l.StatusCode > 0 {
-		ev.HTTPStatus = &l.StatusCode
+		q.HTTPStatus = &l.StatusCode
 	}
 	if l.ErrorMessage != nil {
-		ev.ErrorMessage = *l.ErrorMessage
+		q.ErrorMessage = *l.ErrorMessage
 	}
-	then, _ := h.rules.Classify(ev)
-	// 与 pipeline 同源（helper 单点）
-	upstream := ""
-	if l.ErrorMessage != nil {
-		upstream = *l.ErrorMessage
+	return h.rules.ClassifyErrLog(context.Background(), q)
+}
+
+// unifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream。
+//
+// 本包的策略翻译就是终结于这一条公式（ErrLogClassifier 实现方也复用它），而
+// 它同时是 internal/rule.UnifiedMessage 的**同一公式**——所以这里私有实现
+// 一份，避免用户面为一个三行纯函数 import 整个规则引擎。改一处必须改另一处，
+// rule_port_test.go 的 TestUnifiedMessageMatchesRule 把两边钉在一起（任一侧改
+// 公式即红）。
+//
+// ⚠ rule.UnifiedMessage 的第二参数**完全未使用**（上游正文由调用方透传）：
+// 这里同样只要 then——不要"顺手"把它用上，那会与 rule 版分叉。
+func unifiedMessage(then domain.RuleThen) (string, bool) {
+	if then.CustomMessage != nil {
+		return *then.CustomMessage, true
 	}
-	return rule.UnifiedMessage(then, upstream)
+	return "", false
 }
 
 // toAPIStatsCapabilities 能力投影 → 用户面包内线缆类型（与

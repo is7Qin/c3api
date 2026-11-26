@@ -15,7 +15,15 @@
 | `persist_error.go` | `ClassifyPersistError` / `PersistErrorKind`（落库错误分类） |
 | `set.go` / `stats.go` / `worker.go` | 规则集合、统计、worker 循环 |
 
-`Kind` 五值：`ok` / `429` / `4xx` / `5xx` / `network`。
+`Kind` 六值：`ok` / `429` / `4xx` / `5xx` / `network` / `timeout`。
+
+⚠ **`Kind` 是 `domain.RuleKind` 的别名（`type Kind = domain.RuleKind`），不是本包
+定义的类型**：canonical 定义、数值、顺序、`String()` 全在 `internal/domain/rulekind.go`，
+本包只提供常量别名（`KindOK = domain.RuleKindOK` 等，6 个全部显式赋值）。改值/加值
+一律改 domain 那一份——在这里重新赋值就是造第二套枚举（历史上 `KindTimeout` 靠
+iota 续行、与 `KindNetwork` 撞成同值 4，`String()` 直接编译失败报 duplicate case）。
+别名方案的目的：用户面 handler 要用同一批类别却不必 import 本包，而 proxy /
+scheduler 等既有 `rule.Kind*` 引用点零改动。
 
 ## 不变量
 

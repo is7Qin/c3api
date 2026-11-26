@@ -30,6 +30,15 @@
 - 热路径共享类型保持值语义/零分配友好；不得引入每请求锁或 DB 依赖。
 - `TemplateUpstream` / `RequestPatch` 在快照内构造后**只读**：数据面只拿指针、不复制不修改；`RequestPatch` 的解析/序列化判据只有 `request_patch.go` 一份，数据面头/body 判据只有 `request_patch_headers.go` 的五个函数一份——proxy/probe 都只做零逻辑委托，不得复制。
 - `ShallowJSON` 必须在任何递归 JSON 解析前拦截上游可控深层数据。
+- **`RuleKind`（`rulekind.go`）的数值与顺序不可变**：它是「规则事件类别」的
+  canonical 定义，`internal/rule` 用 `type Kind = domain.RuleKind` 别名继续对外
+  提供 `rule.Kind`/`rule.Kind*`，全仓 19 个既有引用点因此零改动。把它放在
+  domain 而**不是** rule，是因为用户面 handler 也要做「错误类型 → 类别」的映射，
+  却不该 import 整个规则引擎（含匹配/惩罚/持久化，属执行面）；类别是纯枚举，是
+  两面共享的最小事实。`String()` 随类型一起在这里（别名类型不能在外部包定义
+  方法）。**新增只能追加到末尾**——rule 侧有 `f.Kind == 0` 这类判据（0 = 不投递
+  健康），中间插入会让它错；rule 的 `kindFromString` 解析表与本表逐值互逆，改值
+  等于改线缆/日志格式。
 - 文案变更属于 API 契约变更；必须逐字保留既有值，除非用户明确裁决。
 
 ## 验证

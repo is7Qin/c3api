@@ -90,7 +90,9 @@ func strPtrS(s string) *string { return new(s) }
 //go:fix inline
 func intPtrS(v int) *int { return new(v) }
 
-// newTestUserAPI 规则引擎注入版 UserAPI（种子表；rules 非 nil → 行级脱敏生效）。
+// newTestUserAPI 规则端口注入版 UserAPI（种子表；rules 非 nil → 行级脱敏生效）。
+// 端口背后是**真实**规则引擎（ruleEngineClassifier，见 rule_port_test.go）：
+// 这些用例验的是"种子/透传规则真的生效"，换 fake 就变成测替身。
 func newTestUserAPI(t *testing.T, rules ...domain.Rule) *UserAPI {
 	t.Helper()
 	st := &fakeRuleStore{}
@@ -100,7 +102,7 @@ func newTestUserAPI(t *testing.T, rules ...domain.Rule) *UserAPI {
 	}
 	e := rule.New(rule.Config{}, st, nil, nil, nil)
 	require.NoError(t, e.Reload(context.Background()))
-	return &UserAPI{rules: e}
+	return &UserAPI{rules: ruleEngineClassifier{engine: e}}
 }
 
 // TestUserErrLogSanitize 用户面 err_logs 行级脱敏（gate Major 2 全函数映射）：

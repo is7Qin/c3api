@@ -25,37 +25,31 @@ import (
 
 // Kind 事件类别（单一 kind 概念；连接级/5xx 分流由 scheduler.RuleKindOf 在
 // 调用点完成——scheduler 不再有第二套枚举）。
-type Kind int
+//
+// canonical 定义在 internal/domain（domain.RuleKind）：用户端 handler 也要用这
+// 同一批类别做「错误类型 → 类别」映射，但它不该 import 整个规则引擎（引擎含
+// 匹配、惩罚、持久化，属执行面）。这里用**别名**而非新类型——既有调用点
+// （proxy / scheduler / 本包）持有的仍是同一个类型，String() 随类型留在 domain，
+// 于是全部引用零改动。
+//
+// ⚠ 数值、顺序、String 一律改 domain 那一份，本文件只是搬运入口；在这里重新
+// 赋值就是造第二套枚举（KindTimeout 曾靠 iota 续行，与 KindNetwork 撞成同值
+// 4，String 直接报 duplicate case）。
+type Kind = domain.RuleKind
 
 const (
-	KindOK Kind = iota
-	Kind429
-	Kind4xx
-	Kind5xx
-	KindNetwork // 连接级（code==0）事件——独立类型，不吃 5xx 冷却
+	// 6 个常量全部显式赋 domain 值：任何一行留空都会靠"上一行 +1"续值，
+	// 与 domain 的真实数值脱钩（见上）。
+	KindOK      = domain.RuleKindOK
+	Kind429     = domain.RuleKind429
+	Kind4xx     = domain.RuleKind4xx
+	Kind5xx     = domain.RuleKind5xx
+	KindNetwork = domain.RuleKindNetwork
 	// KindTimeout 上游预算内零产出（SDK WS 读空闲 / 网关 UpstreamStreamTimeout）。
-	// **必须追加在末尾**：Kind 是 iota，插在中间会改掉已落库/已序列化事件的整数
+	// **必须追加在末尾**：数值是 iota，插在中间会改掉已落库/已序列化事件的整数
 	// 语义（streamFailureHealth 用 `f.Kind == 0` 判「不投递健康」）。
-	KindTimeout
+	KindTimeout = domain.RuleKindTimeout
 )
-
-func (k Kind) String() string {
-	switch k {
-	case KindOK:
-		return "ok"
-	case Kind429:
-		return "429"
-	case Kind4xx:
-		return "4xx"
-	case Kind5xx:
-		return "5xx"
-	case KindNetwork:
-		return "network"
-	case KindTimeout:
-		return "timeout"
-	}
-	return "unknown"
-}
 
 // kindFromString when.kind 字符串 → 事件类别；未知值返回负值（永不匹配，
 // 非法 kind 在 ValidateWhen 已被拒绝）。

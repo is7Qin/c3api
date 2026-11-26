@@ -43,7 +43,7 @@ func TestSanitizeErrLogInbandFailureHasNoHTTPStatus(t *testing.T) {
 		Then: domain.RuleThen{CustomMessage: errLogStrPtr("upstream overloaded")},
 	}}}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	h := &UserAPI{rules: re, now: time.Now}
+	h := &UserAPI{rules: ruleEngineClassifier{engine: re}, now: time.Now}
 
 	msg := errLogStrPtr("Our servers are currently overloaded. Please try again later.")
 
