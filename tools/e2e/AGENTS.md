@@ -44,8 +44,10 @@ go test -tags e2e -run '^TestBillingE2E$' ./tools/e2e -count=1 -v -timeout 900s
 **口径（收窄后；取代早期「所有 e2e 可以并发」表述）**：
 
 - **单套件 × host**：同一 host 同一时间只允许一个 e2e 套件（一个 `-tags e2e` test 二进制 =
-  一个套件；`-run` 过滤单 Test 也持锁）。第二个套件**立即 fast-fail（exit 2）**，不等待/
-  不重试/不静默 skip；同一 host 的多个 worktree 共享同一把锁（锁在 OS temp）。
+  一个套件；`-run` 过滤单 Test 也持锁）。第二个套件**立即 fast-fail**，不等待/不重试/
+  不静默 skip；退出码口径：**test 二进制 exit 2**（TestMain `os.Exit(2)`）/ **`go test` 对外
+  报 FAIL、exit 1**（go test 归一失败码，脚本/CI 不得按 exit 2 断言）；同一 host 的多个
+  worktree 共享同一把锁（锁在 OS temp）。
 - e2e 与全量单测可并发（不同资源：单测 pgtest 克隆 + miniredis，不共享 e2e 唯一库/Redis
   逻辑库/端口）；单套件内场景仍串行（`t.Parallel` 禁令不变）；资源层仍按每 run 唯一 PG 库/
   Redis 逻辑库/动态端口隔离（见下节）。
@@ -57,13 +59,24 @@ go test -tags e2e -run '^TestBillingE2E$' ./tools/e2e -count=1 -v -timeout 900s
 
 - 锁路径固定：`os.TempDir()/e2e-suite.lock/`（目录）；内容 `owner.json` =
   `pid/hostname/start/creation_time/exe/args`。
+- **锁域 = OS 用户 × TEMP 根**（host 级字面保证的实际边界）：锁路径随 `os.TempDir()`
+  （Windows `%TEMP%`、Unix `$TMPDIR`/`/tmp`），只有**同一 OS 用户且同一 TEMP/TMPDIR 根**才是
+  「同一 host 同时只允许一个 e2e 套件」；不同用户或显式不同 TEMP/TMPDIR 的 shell 属不同锁域
+  （各自 `e2e-suite.lock`），可绕过该保证。CI（单 runner 用户 + 默认 TEMP）与单用户本机满足
+  契约；需要严格 host 级时改用 host-wide 目录（如 `%ProgramData%`/`/var/run`），当前不实现。
 - 抢锁：`Mkdir` 原子独占。抢不到读 owner 判定——owner 活/状态不确定（含异 host）=> 打印
-  「已有 e2e 套件在运行」+ 占用者明细并 `os.Exit(2)`；owner 同 host 且**确定死亡**
+  「已有 e2e 套件在运行」+ 占用者明细并 `os.Exit(2)`（test 二进制退出码；`go test` 对外归一为
+  FAIL/exit 1，同口径见上节）；owner 同 host 且**确定死亡**
   （`procAlive` + `procCreationTime` 优先，PID 复用安全）=> 保守接管（`Mkdir` `.claim`
   CAS 单赢家；陈旧接管标记 >2min 才允许删后单次重抢）；坏记录（缺 owner.json/JSON 损坏/
   字段缺失）一律**不接管**，报错要求人工确认。
 - 释放：`m.Run` 结束后（panic 也经 defer）只删「仍属于本进程」的锁；进程被强杀时锁留在
   磁盘，下一个套件按上述死亡判定接管。普通 test job 不带 e2e tag => 无 TestMain/无锁。
+- **强杀后 <2min 的旧 run 残留 = 期望语义（不是泄漏）**：owner 被强杀后，旧 run 的 registry
+  记录/temp/PG 库/Redis 锁/专用栈会被「宁可泄漏不可误删」的 sweep 保守处理——age<2min 时
+  一律**保留**，由**下一套件**启动期 sweep（age 超过 2min 后）回收；starting/services_up/
+  spawning 状态更是一律保留（>24h 人工清，见下节「基础设施所有权」registry 保守策略）。
+  强杀后立刻看到残留不要按泄漏上报或手工删，复跑一套即可验证归零。
 - 手工清理（仅在确认无 e2e 进程运行时）：删 `%TEMP%\e2e-suite.lock`（Windows）/
   `$TMPDIR/e2e-suite.lock`（Unix）后重试；fast-fail 错误信息里带锁目录绝对路径与占用者。
 - 注意：`go test -tags e2e -run '^$' ./tools/e2e`（编译/空跑检查）也会短暂持锁；纯编译检查
