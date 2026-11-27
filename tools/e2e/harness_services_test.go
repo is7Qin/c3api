@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,28 +90,75 @@ func (s *sharedServices) Logs(*testing.T) string { return "" }
 
 func (s *sharedServices) Close(*testing.T) error { return nil }
 
-// dedicatedServices 自包含专用栈（db + redis，随机 host 端口，唯一 project）。
+// dedicatedServices 自包含专用栈（db + redis，**显式**随机 host 端口，唯一 project）。
+//
+// 端口为什么在 up 前就固定：Docker 对 HostPort 为空（"127.0.0.1:0:6379"）的端口绑定是在
+// **每次容器 start** 时重新分配的随机宿主端口 => docker compose stop/start 会换端口，
+// 与「outage 演练期间网关仍指向同一地址」「stop/start 保端口」语义冲突（P0 自测只比较了
+// 缓存字符串，未覆盖真实映射；P1 迁移 routing_multi 时实测 redis 重启后旧端口被拒）。
+// 因此 harness 先分配空闲宿主端口，再把 testdata/dedicated-compose.yml 渲染成每个 run 的
+// 显式端口副本（仍自包含、唯一 project、不碰共享 base）；stop/start 后端口映射天然不变。
 type dedicatedServices struct {
 	project     string
 	composeFile string
 	pgDSN       string
+	pgAddr      string
 	redisAddr   string
+	pgPort      int
+	redisPort   int
 }
 
 // newDedicatedServices 构造专用栈描述（**不**启动）：registry 需要先把
 // project/file/labels 写进去，之后才允许 up（AV-β：专用栈启动前 registry 已写）。
-func newDedicatedServices(t *testing.T, uuid string) *dedicatedServices {
+//
+// 宿主端口在此预分配并渲染进本 run 的 compose 副本（显式端口 => stop/start 保端口，
+// 见 dedicatedServices 注释）。
+func newDedicatedServices(t *testing.T, run *e2eRun) *dedicatedServices {
 	t.Helper()
 	root, err := repoRootDir()
 	require.NoError(t, err, "定位仓库根目录")
-	file := filepath.Join(root, "tools", "e2e", "testdata", "dedicated-compose.yml")
-	_, err = os.Stat(file)
-	require.NoError(t, err, "专用 compose 文件必须存在：%s", file)
-	short := uuid
+	template := filepath.Join(root, "tools", "e2e", "testdata", "dedicated-compose.yml")
+	tmpl, err := os.ReadFile(template)
+	require.NoError(t, err, "专用 compose 模板必须存在：%s", template)
+	pgPort := allocLoopbackPort(t)
+	redisPort := allocLoopbackPort(t)
+	rendered := strings.ReplaceAll(string(tmpl), `"127.0.0.1:0:5432"`, `"127.0.0.1:`+strconv.Itoa(pgPort)+`:5432"`)
+	rendered = strings.ReplaceAll(rendered, `"127.0.0.1:0:6379"`, `"127.0.0.1:`+strconv.Itoa(redisPort)+`:6379"`)
+	require.NotContains(t, rendered, `"127.0.0.1:0:`, "专用栈渲染必须替换全部随机端口占位（stop/start 保端口）")
+	file := filepath.Join(run.tmp, "dedicated-compose.yml")
+	require.NoError(t, os.WriteFile(file, []byte(rendered), 0o644), "写本 run 专用 compose 文件")
+	short := run.uuid
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	return &dedicatedServices{project: "e2e-" + short, composeFile: file}
+	return &dedicatedServices{project: "e2e-" + short, composeFile: file, pgPort: pgPort, redisPort: redisPort}
+}
+
+// allocLoopbackPort 分配一个当前空闲的回环宿主端口（专用栈显式端口映射用）。
+func allocLoopbackPort(t *testing.T) int {
+	t.Helper()
+	addr, err := allocLoopbackAddr()
+	require.NoError(t, err, "分配专用栈宿主端口")
+	idx := strings.LastIndex(addr, ":")
+	require.Greater(t, idx, 0, "解析动态端口：%s", addr)
+	port, err := strconv.Atoi(addr[idx+1:])
+	require.NoError(t, err, "解析动态端口：%s", addr)
+	require.NotZero(t, port)
+	return port
+}
+
+// serviceContainerPort 服务容器端口（compose port 的容器侧参数）。
+func serviceContainerPort(name string) int {
+	if name == serviceDB {
+		return 5432
+	}
+	return 6379
+}
+
+// discoverHostAddr compose port 发现服务实际 host:port（stop/start 前后一致性校验）。
+func (s *dedicatedServices) discoverHostAddr(t *testing.T, name string) (string, error) {
+	t.Helper()
+	return composePort(s.composeFile, s.project, name, serviceContainerPort(name))
 }
 
 // containerLabels registry 记录的容器 label 维度（兜底清理按 project label 过滤）。
@@ -134,6 +183,14 @@ func (s *dedicatedServices) up(t *testing.T) error {
 	if err != nil {
 		return err
 	}
+	// 显式宿主端口 => 实际映射必须等于预分配值（不等说明端口被抢/渲染失效）。
+	if want := "127.0.0.1:" + strconv.Itoa(s.pgPort); dbAddr != want {
+		return fmt.Errorf("专用栈 db 实际映射 %s != 预分配 %s（端口冲突或渲染失效）", dbAddr, want)
+	}
+	if want := "127.0.0.1:" + strconv.Itoa(s.redisPort); redisAddr != want {
+		return fmt.Errorf("专用栈 redis 实际映射 %s != 预分配 %s（端口冲突或渲染失效）", redisAddr, want)
+	}
+	s.pgAddr = dbAddr
 	s.pgDSN = "postgres://postgres:c3api@" + dbAddr + "/postgres?sslmode=disable"
 	s.redisAddr = redisAddr
 	return nil
@@ -169,6 +226,19 @@ func (s *dedicatedServices) StartService(t *testing.T, name string) error {
 	}
 	if err := composeStart(s.composeFile, s.project, name); err != nil {
 		return err
+	}
+	// 端口映射必须与 stop 前一致：显式宿主端口 => stop/start 保端口；变化即失败，
+	// 不静默换端口（spec §9.6；网关/连接池仍指向原地址）。
+	addr, err := s.discoverHostAddr(t, name)
+	if err != nil {
+		return err
+	}
+	want := s.redisAddr
+	if name == serviceDB {
+		want = s.pgAddr
+	}
+	if addr != want {
+		return fmt.Errorf("专用栈服务 %s start 后端口映射 %s != stop 前 %s（不静默换端口）", name, addr, want)
 	}
 	s.WaitHealthy(t, name)
 	return nil

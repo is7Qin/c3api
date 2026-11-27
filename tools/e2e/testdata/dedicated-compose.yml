@@ -2,8 +2,12 @@
 #
 # 为什么必须自包含、不与 deploy/test-compose.yml 叠加：docker compose 的 ports 是
 # **追加合并**语义——在 base 文件上叠加 override 仍会发布 base 的 15432/16379，
-# 与共享 base 栈端口冲突。专用栈独立定义 db+redis、随机 host 端口
-# （127.0.0.1:0:<container>），唯一 project 由 harness 用 -p e2e-<uuid8> 指定。
+# 与共享 base 栈端口冲突。专用栈独立定义 db+redis，唯一 project 由 harness 用
+# -p e2e-<uuid8> 指定。
+#
+# 端口：harness 在 up 前分配空闲宿主端口，并把下面的 ports 映射渲染成显式端口副本
+# （e2e-run-*/dedicated-compose.yml）。不能直接留 0：Docker 对空 HostPort 在**每次
+# start** 重新分配端口 => compose stop/start 会换端口（outage 演练要求保端口）。
 #
 # 只供 e2e 使用：无数据卷声明（down -v 即彻底销毁）、redis 不落盘。
 services:

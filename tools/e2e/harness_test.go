@@ -300,7 +300,7 @@ func newE2ERun(t *testing.T, opts e2eRunOptions) *e2eRun {
 
 	// 3) 基础设施所有权：shared（只读 base）或 dedicated（自包含专用栈）。
 	if opts.DedicatedServices {
-		r.dedicated = newDedicatedServices(t, uuid)
+		r.dedicated = newDedicatedServices(t, r)
 		r.services = r.dedicated
 		r.record.ComposeProject = r.dedicated.project
 		r.record.ComposeFile = r.dedicated.composeFile

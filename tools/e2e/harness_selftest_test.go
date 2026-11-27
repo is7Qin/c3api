@@ -265,14 +265,20 @@ func testHarnessDedicatedServices(t *testing.T) {
 	// 停专用 redis => 启动 => 健康 => 端口不变 + 业务恢复。
 	require.NoError(t, run.services.StopService(t, serviceRedis), "专用栈 stop redis")
 	require.NoError(t, run.services.StartService(t, serviceRedis), "专用栈 start redis")
-	require.Equal(t, redisAddrBefore, run.services.RedisAddr(), "stop/start 必须保留端口映射")
+	// 端口不变的**真实**证据：重新读 docker 端口映射（不是比较缓存的字符串；
+	// P0 自测只比缓存字符串，掩盖了「空 HostPort 每次 start 重新分配」的缺陷）。
+	redisAddrAfter, err := run.dedicated.discoverHostAddr(t, serviceRedis)
+	require.NoError(t, err)
+	require.Equal(t, redisAddrBefore, redisAddrAfter, "stop/start 必须保留端口映射（重新发现）")
 	run.services.WaitHealthy(t, serviceRedis)
 	selftestWaitChat(t, env, key, model, "专用 redis 恢复后业务恢复")
 
 	// 停专用 db => 启动 => 健康 => 端口不变。
 	require.NoError(t, run.services.StopService(t, serviceDB), "专用栈 stop db")
 	require.NoError(t, run.services.StartService(t, serviceDB), "专用栈 start db")
-	require.Equal(t, pgAddrBefore, run.services.PGAdminDSN(), "stop/start 必须保留端口映射")
+	dbAddrAfter, err := run.dedicated.discoverHostAddr(t, serviceDB)
+	require.NoError(t, err)
+	require.Contains(t, pgAddrBefore, dbAddrAfter, "stop/start 必须保留 PG 端口映射（重新发现）")
 	run.services.WaitHealthy(t, serviceDB)
 
 	logs := run.services.Logs(t)
