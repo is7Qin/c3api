@@ -357,6 +357,209 @@ func rtPollLong(t *testing.T, what string, timeout time.Duration, observe func()
 	}
 }
 
+// ---- 双镜像读/等待原语（P1 fix2 结构性修复）---------------------------------
+//
+// 本文件观察到的质量事实有两个语义不同的镜像，必须分开断言、分开等待，禁止用一个
+// 谓词同时代表两者：
+//
+//	镜像 A（durable）：routing_quality_fact 全时段、按分钟 bucket 落库（quality-sync
+//	  5s 节奏；Windows/Docker 抖动时会"冻结后爆发"）。单调、不随窗口滑动——适合断言
+//	  "累计样本量"（收敛 / 全员 n>=30）。
+//	镜像 B（plan/窗口）：网关编译道的 windowed quality view——[M-5m, M) 的 PG settled
+//	  分钟 + live 未落库分钟，PG 半部每分钟只刷新一次；primary 还额外要求窗口内
+//	  Attempts>=30 && TTFTCount>=30 且通过 Wilson/TTFT 区间带。它只在质量落库事件与
+//	  分钟边界重编译，存在分钟级可见性空洞——适合断言"当前决策面"，但不能用 A 的
+//	  谓词代表（P1 全套两次失败正是两镜像混用的产物：4b(i) leaders=[] 时交叉确认
+//	  轮询恒假、4b(ii) durable 全充分但窗口缺员）。
+//
+// 因此本文件只允许以下两类有界等待原语：
+//   - 镜像 A：rtWaitQualityPredicate（durable DB 读 + 节奏化注活流量）；
+//   - 镜像 B：rtPlanPrimarySettledTry / rtPlanPrimarySettled（plan 读）。
+// 失败消息必须带两镜像各自的计数（durable per / candidates / degraded / 窗口近似），
+// 让下次失败自证属于哪个镜像。
+
+// rtRouteSnap 单条路由的 plan 面快照（镜像 B：窗口化编译视图）。
+type rtRouteSnap struct {
+	Gen        int64
+	Primary    []int64
+	Candidates []int64
+	Degraded   []int64
+	Explore    []int64
+}
+
+func (s rtRouteSnap) String() string {
+	return fmt.Sprintf("gen=%d primary=%v candidates=%v degraded=%v explore=%v",
+		s.Gen, s.Primary, s.Candidates, s.Degraded, s.Explore)
+}
+
+// rtIDsOf 把 plan JSON 的 []any 数字数组转 []int64（plan 面账号 id 全为 int64）。
+func rtIDsOf(v any) []int64 {
+	arr, _ := v.([]any)
+	out := make([]int64, 0, len(arr))
+	for _, x := range arr {
+		if f, ok := x.(float64); ok {
+			out = append(out, int64(f))
+		}
+	}
+	return out
+}
+
+// rtSameIDs 判定两个账号 id 序列完全一致（plan primary 发布序是语义，不能排序后比）。
+func rtSameIDs(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// rtRouteSnapNow 读主路由的 plan 面快照（镜像 B）。路由暂不可见时返回零值快照而
+// 非失败——等待原语需要区分"暂不可见"与"稳定名单"。
+func rtRouteSnapNow(t *testing.T, env *e2eEnv, groupID int64) rtRouteSnap {
+	t.Helper()
+	gen, plan := rtPlan(t, env)
+	snap := rtRouteSnap{Gen: gen}
+	r := rtFindRoute(plan, groupID, "openai-chat", rtModel)
+	if r == nil {
+		return snap
+	}
+	snap.Primary = rtIDsOf(r["primary"])
+	snap.Degraded = rtIDsOf(r["degraded"])
+	if ex, ok := r["explore"].(map[string]any); ok {
+		snap.Explore = rtIDsOf(ex["ids"])
+	}
+	if cands, ok := r["candidates"].([]any); ok {
+		for _, cc := range cands {
+			if m, ok := cc.(map[string]any); ok {
+				if aid, ok := m["account_id"].(float64); ok {
+					snap.Candidates = append(snap.Candidates, int64(aid))
+				}
+			}
+		}
+	}
+	return snap
+}
+
+// rtPlanPrimarySettledTry 有界等待镜像 B 的 primary 稳定：连续两次读取都**非空且
+// 名单完全一致**才算稳定。单点非空不算——分钟边界的窗口可见性空洞会让刚读到的
+// 非空名单在下一次读取瞬间消失（P1 全套 #1：4a 后 primary=[4] → 4b(i) leaders=[]）。
+// 返回最后快照 / 期间观察到的 primary 并集 / 是否稳定。超时**不 Fatal**：调用方按
+// 语义分派（4a 必须稳定；4b(i) 空集合法 → 走"无 primary ⇒ 100% explore"路径）。
+func rtPlanPrimarySettledTry(t *testing.T, env *e2eEnv, groupID int64, timeout time.Duration) (rtRouteSnap, []int64, bool) {
+	t.Helper()
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.Now().Add(timeout)
+	var prev, last rtRouteSnap
+	var seen []int64
+	seenSet := map[int64]bool{}
+	havePrev := false
+	for {
+		last = rtRouteSnapNow(t, env, groupID)
+		for _, id := range last.Primary {
+			if !seenSet[id] {
+				seenSet[id] = true
+				seen = append(seen, id)
+			}
+		}
+		if havePrev && len(prev.Primary) > 0 && rtSameIDs(prev.Primary, last.Primary) {
+			t.Logf("plan primary 稳定（连续两次一致）：%s", last)
+			return last, seen, true
+		}
+		prev, havePrev = last, true
+		if !time.Now().Before(deadline) {
+			t.Logf("plan primary 未在 %s 内稳定：最后 %s 期间观察=%v", timeout, last, seen)
+			return last, seen, false
+		}
+		<-tick.C
+	}
+}
+
+// rtPlanPrimarySettled 必须稳定的 plan 面等待（4a 的输出契约 = 4b 的合法输入）。
+func rtPlanPrimarySettled(t *testing.T, env *e2eEnv, groupID int64, timeout time.Duration) rtRouteSnap {
+	t.Helper()
+	snap, seen, ok := rtPlanPrimarySettledTry(t, env, groupID, timeout)
+	require.True(t, ok, "plan primary 稳定等待失败（%s 内无连续两次非空且相同的名单）：最后 %s 期间观察=%v",
+		timeout, snap, seen)
+	return snap
+}
+
+// rtWaitQualityPredicate 镜像 A（durable 事实表）的有界等待原语：每轮先发 perRound
+// 个同节奏流量（注活/收敛，与其它阶段 10/轮一致），再读 durable 计数交给 predicate。
+// 只轮询镜像 A 的 DB 快照，**不混入 plan/窗口条件**（那属于 rtPlanPrimarySettled*）。
+func rtWaitQualityPredicate(t *testing.T, env *e2eEnv, key string, perRound int, timeout time.Duration, what string,
+	counts func() map[int64]int64, predicate func(map[int64]int64) (bool, string)) map[int64]int64 {
+	t.Helper()
+	var last map[int64]int64
+	rtPollLong(t, what, timeout, func() (bool, string) {
+		for i := 0; i < perRound; i++ {
+			if c, rb := rtChat(t, env, key, rtModel, nil); c != 200 {
+				return false, fmt.Sprintf("%s 第 %d/%d 个请求异常 status=%d body=%.120s", what, i+1, perRound, c, rb)
+			}
+		}
+		last = counts()
+		return predicate(last)
+	})
+	return last
+}
+
+// rtQualityTTFT 读镜像 A 事实表 per 账号 TTFT 三列（n / sumLog / sumsq，充分候选
+// 要求三者非零——缺陷 C 的"计数有、和零"特征由 {0,0} 兜底）。
+func rtQualityTTFT(t *testing.T, env *e2eEnv, fpAcc map[string]int64) map[int64][3]int64 {
+	t.Helper()
+	rows, err := env.pg.Query(context.Background(), `
+		SELECT encode(candidate_fingerprint,'hex') AS fp,
+			COALESCE(sum(ttft_n),0) AS n,
+			COALESCE(sum(ttft_sum_log_q32),0) AS s,
+			COALESCE(sum(ttft_sumsq_log_q32),0) AS sq
+		FROM routing_quality_fact GROUP BY 1`)
+	require.NoError(t, err, "读 durable TTFT 事实表")
+	defer rows.Close()
+	got := map[int64][3]int64{}
+	for rows.Next() {
+		var fp string
+		var n, s, sq int64
+		if err := rows.Scan(&fp, &n, &s, &sq); err != nil {
+			break
+		}
+		if aid, ok := fpAcc[fp]; ok {
+			got[aid] = [3]int64{n, s, sq}
+		}
+	}
+	return got
+}
+
+// rtQualityWindowCounts 读镜像 A 事实表在**编译道 PG 窗形状**的累计 attempts：
+// [truncate(now)-5m, truncate(now)) 的 settled 分钟（不含未落库 live 分钟，故只是
+// 诊断近似，绝不作为断言源）。失败消息用它区分"窗口看不到"与"窗口看得到但不晋升"。
+func rtQualityWindowCounts(t *testing.T, env *e2eEnv, fpAcc map[string]int64) map[int64]int64 {
+	t.Helper()
+	m := time.Now().UTC().Truncate(time.Minute)
+	rows, err := env.pg.Query(context.Background(), `
+		SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
+		FROM routing_quality_fact
+		WHERE bucket_minute >= $1 AND bucket_minute < $2
+		GROUP BY 1`, m.Add(-5*time.Minute), m)
+	require.NoError(t, err, "读 durable 质量窗口计数")
+	defer rows.Close()
+	got := map[int64]int64{}
+	for rows.Next() {
+		var fp string
+		var n int64
+		if err := rows.Scan(&fp, &n); err != nil {
+			break
+		}
+		if aid, ok := fpAcc[fp]; ok {
+			got[aid] = n
+		}
+	}
+	return got
+}
+
 // rtCreateRule 建规则（201），返回 ID（PascalCase 优先，兼容小写）。
 func rtCreateRule(t *testing.T, env *e2eEnv, name string, prio int, when, then map[string]any) int64 {
 	t.Helper()
@@ -779,18 +982,20 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 		return len(cands) >= 3, fmt.Sprintf("candidates=%d", len(cands))
 	})
 
-	// ============ 4a. 质量收敛 → 首个 Primary（事件驱动，无 nudge） ============
-	// 收敛信号只随新尝试推进：每轮先打 10 个流式请求再读 DB 事实表，直到任一
-	// 候选 attempts>=30（流式才有 TTFT；非流式 ttft_n 恒 0）。缺陷 B 已修复：
-	// 质量落库边界直接驱逐编译道（PG flush→RequestCompile，去抖收敛），首个
-	// 充分候选晋升 Primary——本阶段不再做任何管理面写 nudge，只等 primary 非空。
-	// 语义注记（探索份额已接线）：首个晋升者承载绝大多数首尝试，但
-	// explore-first 份额（bp>0）持续把首尝试注入未知候选——旧"三候选齐充分"
-	// 门在修复后的系统中不可达（它恰是 plan 冻结 bug 的产物），此处只要求
-	// 首个晋升；4b 先断言份额注活（零隔离），再以单隔离覆盖跟随者晋升。
+	// ============ 4a. 质量收敛（镜像 A durable）→ Primary 稳定（镜像 B plan） ============
+	// 两镜像分开写（P1 fix2，见文件头"双镜像读/等待原语"）：
+	//  A) durable 收敛门：至少 2 名候选全时段 attempts>=30（流式才有 TTFT；非流式
+	//     ttft_n 恒 0）。收敛轮内无 primary ⇒ bp=10000 全探索，三候选近乎均摊，
+	//     第二名紧随第一名过门；要求 2 名是给 4b 一个"leader/laggard 划分不随首个
+	//     重编译名单漂移"的合法输入（P1 全套实测 primary=[4] → 4b(i) 读到
+	//     primary=[] 后进入恒假轮询）。180 轮上限吸收晋升后探索份额（bp≈367）对
+	//     剩余候选的低速积累。
+	//  B) plan 稳定门：事件驱动重编译后 primary 须连续两次读取非空且相同（单点
+	//     非空会被分钟边界的窗口可见性空洞推翻）。超时即缺陷 B/窗口可见性回归，
+	//     不得降级为"plan 非空即可"。
 	// 缺陷 C 已修复：fakeupstream 首帧限速使 TTFT 现实化（~2ms），durable 和
 	// 非零、frontier ttft 真实——DB 和 + frontier 双断言（仅充分候选）。
-	t.Log("阶段 4a：质量收敛 → 首个 Primary（事件驱动）")
+	t.Log("阶段 4a：质量收敛（durable ≥2 候选）→ Primary 稳定（plan/窗口镜像）")
 	hexMain := rtRouteHex(t, env, g1, "openai-chat", rtModel)
 	fpAcc := map[string]int64{}
 	_, plan0 := rtPlan(t, env)
@@ -805,26 +1010,14 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 		}
 	}
 	require.Len(t, fpAcc, 3, "主路由须有 3 候选")
-	// gen 起点取在收敛循环之前：收敛期间每次晋升发布都会推进 generation，
-	// 收敛后读起点会漏掉已发生的推进。
-	genBefore, _ := rtPlan(t, env)
-	iters := 0
-	rtPollLong(t, "质量收敛首候选 n>=30（DB 事实表）", 300*time.Second, func() (bool, string) {
-		iters++
-		if iters > 60 {
-			return false, "60 轮（600 请求）仍无候选充分"
-		}
-		for i := 0; i < 10; i++ {
-			if c, rb := rtChat(t, env, k1, rtModel, nil); c != 200 {
-				return false, fmt.Sprintf("converge req 异常 status=%d body=%.120s", c, rb)
-			}
-		}
+	// 镜像 A 读：durable 事实表 per 账号 attempts（全时段单调；4b 断言源）。
+	// 与 plan 面（镜像 B）分开：此计数不随编译窗口滑动/分钟边界变化。
+	rtQualityCounts := func() map[int64]int64 {
+		t.Helper()
 		rows, err := env.pg.Query(context.Background(), `
 			SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
 			FROM routing_quality_fact GROUP BY 1`)
-		if err != nil {
-			return false, err.Error()
-		}
+		require.NoError(t, err)
 		defer rows.Close()
 		got := map[int64]int64{}
 		for rows.Next() {
@@ -837,54 +1030,40 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 				got[aid] = n
 			}
 		}
-		for _, aid := range []int64{accA, accB, accE} {
-			if got[aid] >= 30 {
-				return true, fmt.Sprintf("首候选充分 acc=%d per=%v", aid, got)
+		return got
+	}
+	// gen 起点取在收敛循环之前：收敛期间每次晋升发布都会推进 generation，
+	// 收敛后读起点会漏掉已发生的推进。
+	genBefore, _ := rtPlan(t, env)
+	iters := 0
+	rtWaitQualityPredicate(t, env, k1, 10, 300*time.Second, "质量收敛（durable 事实表：≥2 候选 n>=30）",
+		rtQualityCounts, func(got map[int64]int64) (bool, string) {
+			iters++
+			if iters > 180 {
+				return false, "180 轮（1800 请求）仍不足 2 名候选 durable 充分"
 			}
-		}
-		return false, fmt.Sprintf("iter=%d per=%v", iters, got)
-	})
-	// 事件驱动重编译：收敛达成后不做任何管理面写，只等 primary 非空——质量
-	// 落库边界（PG flush）已直接驱逐编译道。超时即缺陷 B 回归。
-	t.Logf("收敛达成（%d 轮），等待事件驱动重编译 primary 出现（gen 起点=%d）", iters, genBefore)
-	var primaries []any
-	rtPollLong(t, "事件驱动重编译后 Primary 非空（无 nudge）", 120*time.Second, func() (bool, string) {
-		gen, plan := rtPlan(t, env)
-		r := rtFindRoute(plan, g1, "openai-chat", rtModel)
-		if r == nil {
-			return false, "主路由暂不可见"
-		}
-		primaries, _ = r["primary"].([]any)
-		return len(primaries) > 0, fmt.Sprintf("gen=%d primary=%v", gen, primaries)
-	})
+			qualified := 0
+			for _, aid := range []int64{accA, accB, accE} {
+				if got[aid] >= 30 {
+					qualified++
+				}
+			}
+			return qualified >= 2, fmt.Sprintf("iter=%d qualified=%d per=%v", iters, qualified, got)
+		})
+	// 镜像 B 稳定等待：事件驱动重编译（质量落库边界 → RequestCompile）后，
+	// primary 连续两次读取非空且名单相同才算稳定输入；不做任何管理面写 nudge。
+	t.Logf("durable 收敛达成（%d 轮），等待事件驱动重编译 primary 稳定（gen 起点=%d）", iters, genBefore)
+	settled := rtPlanPrimarySettled(t, env, g1, 120*time.Second)
+	primaries := settled.Primary
 	genAfter, _ := rtPlan(t, env)
-	t.Logf("事件驱动重编译后 gen=%d primary=%v", genAfter, primaries)
+	t.Logf("事件驱动重编译后 gen=%d primary=%v candidates=%v degraded=%v",
+		genAfter, primaries, settled.Candidates, settled.Degraded)
 	require.Greater(t, genAfter, genBefore, "质量 influx 必须推进 plan generation（无管理面写）")
 	// durable TTFT 和：事实表充分候选（n>=30）ttft 和/平方和非零（缺陷 C 特征
 	// 即计数有、和零；首帧限速后 ~2ms 样本的对数和恒非零）。未充分候选豁免
 	// （区间本就要求 n>=30）。
 	rtPollLong(t, "事实表 TTFT 和非零（充分候选）", 120*time.Second, func() (bool, string) {
-		rows, err := env.pg.Query(context.Background(), `
-			SELECT encode(candidate_fingerprint,'hex') AS fp,
-				COALESCE(sum(ttft_n),0) AS n,
-				COALESCE(sum(ttft_sum_log_q32),0) AS s,
-				COALESCE(sum(ttft_sumsq_log_q32),0) AS sq
-			FROM routing_quality_fact GROUP BY 1`)
-		if err != nil {
-			return false, err.Error()
-		}
-		defer rows.Close()
-		got := map[int64][3]int64{}
-		for rows.Next() {
-			var fp string
-			var n, s, sq int64
-			if err := rows.Scan(&fp, &n, &s, &sq); err != nil {
-				break
-			}
-			if aid, ok := fpAcc[fp]; ok {
-				got[aid] = [3]int64{n, s, sq}
-			}
-		}
+		got := rtQualityTTFT(t, env, fpAcc)
 		qualified := 0
 		for _, aid := range []int64{accA, accB, accE} {
 			v := got[aid]
@@ -941,27 +1120,8 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 需新流量，确定性）→ Primary 全员按成本升序（B 贵 2.5× 居末）。
 	t.Log("阶段 4b：探索份额注活 → 单隔离协同 + 成本序")
 	require.NotEmpty(t, primaries, "4a 必须已产生领袖 primary：%v", primaries)
-	// rtQualityCounts 事实表 attempts 快照（fp→aid 经 fpAcc 落定）。
-	rtQualityCounts := func() map[int64]int64 {
-		t.Helper()
-		rows, err := env.pg.Query(context.Background(), `
-			SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
-			FROM routing_quality_fact GROUP BY 1`)
-		require.NoError(t, err)
-		defer rows.Close()
-		got := map[int64]int64{}
-		for rows.Next() {
-			var fp string
-			var n int64
-			if err := rows.Scan(&fp, &n); err != nil {
-				break
-			}
-			if aid, ok := fpAcc[fp]; ok {
-				got[aid] = n
-			}
-		}
-		return got
-	}
+	// rtQualityCounts（镜像 A durable 读原语）已在 4a 定义：4b 复用同一实现，
+	// 不重复读表；其 require 计数与断言面仍是同一个（gate 口径）。
 	allIDs := []int64{accA, accB, accE}
 	// rtPrimaryIDs 读 plan 主路由当前 primary 名单。
 	rtPrimaryIDs := func() []int64 {
@@ -980,58 +1140,93 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	}
 
 	// ---- 4b(i) 探索份额注活（零隔离）：Primary 在位时未知候选必须持续
-	// 积累样本。基线快照后打节奏化流量（10/轮，与 4a 同节奏，flush 跟得
-	// 上）：有界 300 请求内至少一名非 primary 候选严格增长即命中（此处
-	// bp≈367，零注活概率 ~1e-5，early-exit，通常数十请求即命中），且
-	// primary 同步增长（排除流量整体停滞的伪命中）。DB 事实表为断言源
-	// （durable，非 live cell）。
+	// 积累样本。轮询开始前先做**镜像 B** 的有界稳定等待（连续两次非空且相同），
+	// 让 leaders 是稳定输入而非单点快照；若始终没有 primary（分钟级窗口可见性
+	// 空洞未愈合），按编译语义"无 primary ⇒ bp=10000 全探索"分派到免 leader
+	// 交叉确认路径——绝不进入 leaders=[] 时数学恒假的交叉确认轮询（P1 全套 #1
+	// 的 300s 必超时形）。断言源是镜像 A（durable 事实表，非 live cell）：
+	// 有界轮询内至少一名非 primary 候选严格增长即命中（bp≈367，early-exit，
+	// 通常数十请求即命中），且 primary 同步增长（排除流量整体停滞的伪命中）。
 	t.Log("4b(i)：探索份额注活（零隔离）")
-	base := rtQualityCounts()
 	leaders := map[int64]bool{}
-	for _, aid := range rtPrimaryIDs() {
-		leaders[aid] = true
+	if snapI, seenI, okI := rtPlanPrimarySettledTry(t, env, g1, 90*time.Second); okI {
+		for _, aid := range snapI.Primary {
+			leaders[aid] = true
+		}
+	} else {
+		for _, aid := range seenI {
+			leaders[aid] = true
+		}
 	}
+	base := rtQualityCounts()
 	var laggards []int64
 	for _, aid := range allIDs {
 		if !leaders[aid] {
 			laggards = append(laggards, aid)
 		}
 	}
-	t.Logf("4b(i) 基线 per=%v leaders=%v laggards=%v", base, rtPrimaryIDs(), laggards)
+	t.Logf("4b(i) leaders=%v laggards=%v（稳定输入，plan 面镜像 B）plan=%s",
+		leaders, laggards, rtRouteSnapNow(t, env, g1))
+	t.Logf("4b(i) 基线 per=%v", base)
 	// 条件断言：4a 收敛轮内若多名候选同轮过门，首个重编译可能直接全员协
 	// 同——此时"非 primary 增长"空真（无非 primary 可增长），跳过注活轮询
 	// （否则 300s 超时是测试自杀，不是产品问题）；4b(ii) 的免隔离分支与
 	// 全员协同断言覆盖此形。
 	grew := ""
-	if len(laggards) == 0 {
+	switch {
+	case len(laggards) == 0:
 		t.Log("4b(i) 跳过注活：4a 已全员协同（条件空真）")
-	} else {
-		rtPollLong(t, "非 primary 候选样本增长（探索份额注活）", 300*time.Second, func() (bool, string) {
-			for j := 0; j < 10; j++ {
-				if c, rb := rtChat(t, env, k1, rtModel, nil); c != 200 {
-					return false, fmt.Sprintf("注活流量异常 status=%d body=%.120s", c, rb)
+	case len(leaders) == 0:
+		// 语义分派（诊断 §4-A）：plan 无 primary ⇒ ExploreBP=10000，全部请求
+		// 100% explore，所有候选都是非 primary。此时"leader 交叉确认"自条件
+		// 空真（没有 leader），注活证据 = 任一候选 durable attempts 增长
+		// （流量活着由每轮 10 个 200 断言）。
+		t.Log("4b(i) plan 无 primary（100% explore 语义）→ 免 leader 交叉确认注活路径")
+		rtWaitQualityPredicate(t, env, k1, 10, 300*time.Second,
+			"非 primary 候选样本增长（无 primary ⇒ 100% explore 注活）", rtQualityCounts,
+			func(got map[int64]int64) (bool, string) {
+				for _, aid := range allIDs {
+					if got[aid] > base[aid] {
+						grew = fmt.Sprintf("acc=%d %d→%d per=%v", aid, base[aid], got[aid], got)
+						return true, grew
+					}
 				}
-			}
-			got := rtQualityCounts()
-			for _, aid := range laggards {
-				if got[aid] > base[aid] {
-					// 存活交叉检查：任一 leader 增长即证明流量整体活着。必须
-					// 是"任一"而非"全部"——primary[1..] 会在 primary[0]
-					// 健康时位置性冻结（同 sticky 逻辑在 primary 车道内；
-					// benign：已充分收敛，只是不服务），全员增长永不成立。
-					// leader 增长若尚未落库可见（flush 滞后），不判失败只
-					// 继续轮询——有界轮询吸收滞后，无 sleep 同步。
-					for lid := range leaders {
-						if got[lid] > base[lid] {
-							grew = fmt.Sprintf("acc=%d %d→%d per=%v", aid, base[aid], got[aid], got)
+				return false, fmt.Sprintf("per=%v base=%v plan=%s", got, base, rtRouteSnapNow(t, env, g1))
+			})
+		t.Logf("4b(i) 100%% explore 注活命中：%s", grew)
+	default:
+		rtWaitQualityPredicate(t, env, k1, 10, 300*time.Second,
+			"非 primary 候选样本增长（探索份额注活）", rtQualityCounts,
+			func(got map[int64]int64) (bool, string) {
+				snapNow := rtRouteSnapNow(t, env, g1)
+				for _, aid := range laggards {
+					if got[aid] > base[aid] {
+						// 存活交叉检查：任一 leader 增长即证明流量整体活着。必须
+						// 是"任一"而非"全部"——primary[1..] 会在 primary[0]
+						// 健康时位置性冻结（同 sticky 逻辑在 primary 车道内；
+						// benign：已充分收敛，只是不服务），全员增长永不成立。
+						// leader 增长若尚未落库可见（flush 滞后），不判失败只
+						// 继续轮询——有界轮询吸收滞后，无 sleep 同步。
+						for lid := range leaders {
+							if got[lid] > base[lid] {
+								grew = fmt.Sprintf("acc=%d %d→%d per=%v", aid, base[aid], got[aid], got)
+								return true, grew
+							}
+						}
+						// 轮询期间若 plan 落到"无 primary"（窗口可见性空洞），编译
+						// 语义临时为 100% explore：leader 交叉确认自条件空真，
+						// laggard 增长本身即注活证据（不把瞬时空洞升级成必然超时）。
+						if len(snapNow.Primary) == 0 {
+							grew = fmt.Sprintf("acc=%d %d→%d（plan 无 primary ⇒ 100%% explore）per=%v",
+								aid, base[aid], got[aid], got)
 							return true, grew
 						}
+						return false, fmt.Sprintf("laggard acc=%d 已增长，待 leader 交叉确认 per=%v base=%v leaders=%v plan=%s",
+							aid, got, base, leaders, snapNow)
 					}
-					return false, fmt.Sprintf("laggard acc=%d 已增长，待 leader 交叉确认 per=%v base=%v", aid, got, base)
 				}
-			}
-			return false, fmt.Sprintf("per=%v base=%v", got, base)
-		})
+				return false, fmt.Sprintf("per=%v base=%v leaders=%v plan=%s", got, base, leaders, snapNow)
+			})
 		t.Logf("4b(i) 探索份额注活命中：%s", grew)
 	}
 
@@ -1052,8 +1247,24 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	disabled := map[int64]bool{}
 	if !needIsolation {
 		t.Logf("4b(ii) 免隔离：探索份额已自然推全员充分 per=%v", got)
+	} else if leadersNow := rtPrimaryIDs(); len(leadersNow) == 0 {
+		// 语义分派（诊断 §4-A）：plan 无 primary ⇒ 编译道 ExploreBP=10000
+		// （100% explore），全部流量确定性落到所有候选——此形无需也无法
+		// "失能 primary 注活"（没有 primary 可失能）；以同节奏探索流量把
+		// 落后者推过门，收敛到与隔离分支相同的后继断言（全员 durable>=30）。
+		t.Log("4b(ii) plan 无 primary（100% explore 语义）→ 免失能注活")
+		rtWaitQualityPredicate(t, env, k1, 10, 300*time.Second,
+			"落后者全员 n>=30（无 primary ⇒ 100% explore 注活）", rtQualityCounts,
+			func(got2 map[int64]int64) (bool, string) {
+				for _, aid := range allIDs {
+					if got2[aid] < 30 {
+						return false, fmt.Sprintf("per=%v", got2)
+					}
+				}
+				return true, fmt.Sprintf("全员充分 per=%v", got2)
+			})
+		t.Logf("4b(ii) 100%% explore 注活达标 per=%v", rtQualityCounts())
 	} else {
-		leadersNow := rtPrimaryIDs()
 		require.NotEmpty(t, leadersNow, "隔离前 primary 名单不得为空")
 		gen, _ := rtPlan(t, env)
 		for _, aid := range leadersNow {
@@ -1078,23 +1289,19 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 			}
 			return true, "已排除"
 		})
-		// 节奏化隔离流量（10/轮 + 每轮读 DB）：背靠背连发会压垮 PG flush
-		// 预算（2s/轮超时 → 延期重试 → durable 可见性滞后约 60s），轮询节奏
-		// 让 flush 跟上；一旦全员充分即停。
-		rtPollLong(t, "落后者全员 n>=30", 300*time.Second, func() (bool, string) {
-			for j := 0; j < 10; j++ {
-				if c, rb := rtChat(t, env, k1, rtModel, nil); c != 200 {
-					return false, fmt.Sprintf("隔离晋升流量异常 status=%d body=%.120s", c, rb)
+		// 节奏化隔离流量（10/轮 + 每轮读 DB，镜像 A 等待原语）：背靠背连发会
+		// 压垮 PG flush 预算（2s/轮超时 → 延期重试 → durable 可见性滞后约
+		// 60s），轮询节奏让 flush 跟上；一旦全员充分即停。
+		rtWaitQualityPredicate(t, env, k1, 10, 300*time.Second,
+			"落后者全员 n>=30", rtQualityCounts,
+			func(got2 map[int64]int64) (bool, string) {
+				for _, aid := range allIDs {
+					if got2[aid] < 30 {
+						return false, fmt.Sprintf("per=%v", got2)
+					}
 				}
-			}
-			got2 := rtQualityCounts()
-			for _, aid := range allIDs {
-				if got2[aid] < 30 {
-					return false, fmt.Sprintf("per=%v", got2)
-				}
-			}
-			return true, fmt.Sprintf("全员充分 per=%v", got2)
-		})
+				return true, fmt.Sprintf("全员充分 per=%v", got2)
+			})
 		t.Logf("4b(ii) 隔离达标 per=%v，恢复 %v", rtQualityCounts(), disabled)
 		genCur, _ := rtPlan(t, env)
 		for aid := range disabled {
@@ -1110,27 +1317,34 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 全员协同断言：全员充分后静态全量重编译看到全员充分 → Primary 全员
 	// 按成本升序（有隔离则恢复后重编译已发布；免隔离则事件驱动重编译已发
 	// 布——两种路径收敛到同一 plan 态）。B 最贵 → 居末；A/E 同价 ×1.0 不锁相对序。
-	var primariesB []any
-	rtPollLong(t, "全员协同 Primary 且 B 居末", 120*time.Second, func() (bool, string) {
-		_, plan := rtPlan(t, env)
-		r := rtFindRoute(plan, g1, "openai-chat", rtModel)
-		if r == nil {
-			return false, "主路由暂不可见"
-		}
-		primariesB, _ = r["primary"].([]any)
-		pos := map[int64]int{}
-		for i, id := range primariesB {
-			if f, ok := id.(float64); ok {
-				pos[int64(f)] = i
+	// 断言源是镜像 B（plan/窗口）。恢复后网关安静时只有分钟边界重编译一次，
+	// 120s 预算内可能只看到"缺员"的旧视图（P1 全套 #2）；因此每轮发 10 个
+	// keepalive 触发 quality influx → PG flush → RequestCompile（事件驱动，
+	// 不再只依赖分钟边界），预算 ≥3 个分钟边界（180s）。失败消息同时带
+	// candidates/degraded（plan 面）与 durable/窗口近似计数，便于定性缺员镜像。
+	var primariesB []int64
+	rtPollLong(t, "全员协同 Primary 且 B 居末（keepalive 触发质量流入/重编译）", 180*time.Second, func() (bool, string) {
+		for j := 0; j < 10; j++ {
+			if c, rb := rtChat(t, env, k1, rtModel, nil); c != 200 {
+				return false, fmt.Sprintf("协同 keepalive 第 %d/10 个请求异常 status=%d body=%.120s", j+1, c, rb)
 			}
 		}
+		snapB := rtRouteSnapNow(t, env, g1)
+		primariesB = snapB.Primary
+		pos := map[int64]int{}
+		for i, id := range primariesB {
+			pos[id] = i
+		}
+		diag := fmt.Sprintf("durable=%v window5m=%v", rtQualityCounts(), rtQualityWindowCounts(t, env, fpAcc))
 		for _, aid := range []int64{accA, accB, accE} {
 			if _, ok := pos[aid]; !ok {
-				return false, fmt.Sprintf("primary=%v 缺 %d", primariesB, aid)
+				return false, fmt.Sprintf("primary=%v 缺 %d；candidates=%v degraded=%v %s",
+					primariesB, aid, snapB.Candidates, snapB.Degraded, diag)
 			}
 		}
 		if pos[accB] != len(primariesB)-1 {
-			return false, fmt.Sprintf("B 须居末 primary=%v", primariesB)
+			return false, fmt.Sprintf("B 须居末 primary=%v；candidates=%v degraded=%v %s",
+				primariesB, snapB.Candidates, snapB.Degraded, diag)
 		}
 		return true, fmt.Sprintf("全员协同 primary=%v", primariesB)
 	})
@@ -1149,27 +1363,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	require.Equal(t, float64(25000), bp[accB], "B 成本 ×2.5 → 25000bp：%v", bp)
 	// 全员 durable 和 + frontier 真实（缺陷 C 在协同路径同样成立）。
 	rtPollLong(t, "全员事实表 TTFT 和非零", 120*time.Second, func() (bool, string) {
-		rows, err := env.pg.Query(context.Background(), `
-			SELECT encode(candidate_fingerprint,'hex') AS fp,
-				COALESCE(sum(ttft_n),0) AS n,
-				COALESCE(sum(ttft_sum_log_q32),0) AS s,
-				COALESCE(sum(ttft_sumsq_log_q32),0) AS sq
-			FROM routing_quality_fact GROUP BY 1`)
-		if err != nil {
-			return false, err.Error()
-		}
-		defer rows.Close()
-		got := map[int64][3]int64{}
-		for rows.Next() {
-			var fp string
-			var n, s, sq int64
-			if err := rows.Scan(&fp, &n, &s, &sq); err != nil {
-				break
-			}
-			if aid, ok := fpAcc[fp]; ok {
-				got[aid] = [3]int64{n, s, sq}
-			}
-		}
+		got := rtQualityTTFT(t, env, fpAcc)
 		for _, aid := range []int64{accA, accB, accE} {
 			v := got[aid]
 			if v[0] < 30 || v[1] == 0 || v[2] == 0 {

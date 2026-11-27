@@ -74,6 +74,36 @@ go test -tags e2e -run '^TestBillingE2E$' ./tools/e2e -count=1 -v -timeout 900s
 - dependabot 分支拿不到 secrets → ci.yml 的 test/e2e job 跳过，dependabot-ci.yml
   （`pull_request_target`）负责其 test（checkout 同样 `fetch-depth: 0`）。
 
+## 单进程全套（CI 形态）与分钟边界竞态（P1 fix2）
+
+- **CI 形态 = 单命令单进程全套**：`go test -tags e2e -count=1 -timeout 20m ./tools/e2e`
+  （6 个业务 e2e 同进程串行）。**不改为逐 Test 独立进程**——独立进程只降低分钟边界
+  竞态的触发概率，不消除 Test 内/产品视图内的竞态，还会掩盖真实缺口（诊断报告结论）。
+- P1 fix2 只做**测试侧结构性修复**（不弱化/不删断言、不用 sleep/重试掩盖）：
+  `TestIntelligentRoutingE2E` 的 4a→4b 收敛链把两个质量镜像分开等待与断言
+  （见 `routing_e2e_test.go` 文件头「双镜像读/等待原语」）：
+  - 镜像 A（durable）= `routing_quality_fact` 全时段、5s 级落库 → 只断言累计样本量；
+    等待原语 `rtWaitQualityPredicate`。
+  - 镜像 B（plan/窗口）= `[M-5m, M)` settled 分钟 + live 分钟、PG 半部每分钟才刷新、
+    primary 还叠加 TTFT/区间带 → 只断言当前决策面；等待原语 `rtPlanPrimarySettledTry` /
+    `rtPlanPrimarySettled`（连续两次非空且相同才算稳定）。
+  - 4a 收敛门改为「durable ≥2 候选 n>=30」+ plan primary 稳定；4b(i) 轮询前有界等待
+    primary 稳定，且**绝不在 leaders=[] 时进入 leader 交叉确认轮询**（该条件数学恒假，
+    P1 全套 #1 的 300s 必超时就是此形）；leaders 为空时按编译语义「无 primary ⇒
+    bp=10000 100% explore」分派到免交叉确认注活路径。
+  - 4b(ii) 恢复后「全员协同」轮询每轮发 10 个 keepalive（与其它阶段同节奏）触发
+    quality influx → PG flush → `RequestCompile`，预算 180s（≥3 个分钟边界），失败消息
+    带 candidates/degraded/durable/window5m 计数。
+- **产品侧 backlog（不在 e2e 内改生产代码）**：windowed quality provider 的 PG settled 半部
+  只在 evaluated minute 前进时刷新（`internal/scheduler/quality_provider.go`），而刚 flush
+  的分钟行会从 live 半部消失（`internal/quality/live_window.go`）——存在分钟级**可见性
+  空洞**：该分钟在 M 内既不在 live 也不在缓存的 PG 里，编译视图瞬时少一个 bucket。
+  修复方向（诊断 §4-B）：live source 增 flush watermark/epoch（watermark 前进即局部刷新
+  settled），或 PG 窗读扩到 `[M-5m, M]` 并按 minute label 用 settled∩live 去重；并加
+  「M 前进后 1s 内完成 bucket flush，随后编译仍看到该分钟」的回归测试 + ops 诊断面
+  （SettledBoundary/live 分钟集合）。在此之前 e2e 用两镜像分离写法规避，不得把该抖动
+  记成测试 flaky 或加 sleep 掩盖。
+
 ## 断言基线（防漂移）
 
 - `testdata/assertion_baseline.json` 由 BASE/source commit **机械生成**：per-Test require 计数 +
