@@ -1,9 +1,64 @@
 {
-  "source_commit": "786b0072f8def5861e1e7d32b666caca7491023a",
+  "source_commit": "8771fc672b1a09205f12000bf8b897cb40d35041",
   "tests": {
+    "TestAllocLoopbackAddr": {
+      "file": "harness_process_test.go",
+      "requires": 4,
+      "fatalf": 0,
+      "fingerprints": {
+        "033d705268aee259": 1,
+        "4969014414ab4535": 1,
+        "c5ed62112d2a855a": 1,
+        "d975fe627e7ac060": 1
+      }
+    },
+    "TestAssertionBaselineGenerate": {
+      "file": "assertion_surface_gate_test.go",
+      "requires": 3,
+      "fatalf": 0,
+      "fingerprints": {
+        "0a07f8ec01b41eda": 1,
+        "d975fe627e7ac060": 1,
+        "d9e541bbbe8124ed": 1
+      }
+    },
+    "TestAssertionRemovalScope": {
+      "file": "assertion_surface_gate_test.go",
+      "requires": 2,
+      "fatalf": 0,
+      "fingerprints": {
+        "48db89e440e94c11": 1,
+        "b5e9680b4c3f94ef": 1
+      }
+    },
+    "TestAssertionSurfaceGate": {
+      "file": "assertion_surface_gate_test.go",
+      "requires": 9,
+      "fatalf": 0,
+      "fingerprints": {
+        "1436f5baa2e4542b": 1,
+        "37da8c41807b6f0f": 1,
+        "72b56725f2a8e4d4": 1,
+        "739f2313d8cb73b6": 1,
+        "995b425eff4e810b": 1,
+        "9b53a74a0a0b1ecf": 1,
+        "ba90a3c2b4957e06": 1,
+        "f5d60a734c6d24a9": 1,
+        "fc3852f699fef4b5": 1
+      }
+    },
+    "TestAssertionUnreachableScanner": {
+      "file": "assertion_surface_gate_test.go",
+      "requires": 2,
+      "fatalf": 0,
+      "fingerprints": {
+        "2bcf72c7d6d3d142": 1,
+        "534879be3dd64746": 1
+      }
+    },
     "TestBillingE2E": {
       "file": "billing_e2e_test.go",
-      "requires": 135,
+      "requires": 122,
       "fatalf": 0,
       "fingerprints": {
         "0042b2210f72021e": 1,
@@ -14,7 +69,6 @@
         "07dbeebe5c13e977": 1,
         "0ddc4975f71db856": 1,
         "1098b4003bc4e8e1": 1,
-        "10ac36fab2fb9181": 1,
         "12f69bd2072bcfa8": 1,
         "130859d4e5be7d83": 1,
         "1adbaa150d7690b4": 1,
@@ -57,7 +111,6 @@
         "7026f873629ecb59": 1,
         "736cd338b6f59e58": 1,
         "7464b637ce41666a": 1,
-        "7b0efd1403358a97": 1,
         "7b14caa425bedb4f": 1,
         "7bd68c55308e684e": 1,
         "7ca49aadafbf2cef": 1,
@@ -88,7 +141,6 @@
         "a8357d4ac385a023": 1,
         "a8cf3749df86aecf": 1,
         "a8eb011add5d6a83": 1,
-        "a9b4469c3ecea2c7": 1,
         "acc3308562a3d9e8": 1,
         "af5cfd2504fe0f57": 1,
         "b32f2a708340fcf8": 1,
@@ -111,22 +163,87 @@
         "d1d9e4bd5772b299": 1,
         "d20907e137a84836": 1,
         "d2cdccff6ba87548": 1,
-        "d5d5b073b7d10286": 1,
-        "d65280e555efc633": 1,
         "d65f607440abb837": 1,
         "d95f7b7444cbaa49": 1,
-        "d975fe627e7ac060": 14,
+        "d975fe627e7ac060": 9,
         "dc67f47d65e90037": 1,
-        "dd6acf4c014fc2b5": 1,
-        "dee4ab9f5c50bfd7": 1,
         "e2f106cdc5b2f2ed": 1,
         "e31ce5eb94ca5db7": 1,
         "eec1cf3afb13a101": 1,
-        "f67aed743f07cef6": 1,
         "f85b175a6d88e16c": 1,
         "fb07eb8ede0cce4c": 1,
         "fb6885485409e5f1": 1,
         "ff621bf0a4de8e8a": 1
+      }
+    },
+    "TestE2EHarness": {
+      "file": "harness_selftest_test.go",
+      "requires": 0,
+      "fatalf": 0,
+      "fingerprints": {}
+    },
+    "TestHarnessBoundaryGate": {
+      "file": "harness_boundary_gate_test.go",
+      "requires": 2,
+      "fatalf": 0,
+      "fingerprints": {
+        "1a6df4dd281e6f3e": 1,
+        "d8546582f225bcf8": 1
+      }
+    },
+    "TestHarnessBoundaryGateComputedPort": {
+      "file": "harness_boundary_gate_test.go",
+      "requires": 4,
+      "fatalf": 0,
+      "fingerprints": {
+        "28c0f81c9b19b6c7": 1,
+        "58fd5bd10fe8c962": 1,
+        "bfc225af99e3fd12": 1,
+        "e0e73926820a8f6c": 1
+      }
+    },
+    "TestHarnessGateMutationRed": {
+      "file": "harness_gate_test.go",
+      "requires": 39,
+      "fatalf": 0,
+      "fingerprints": {
+        "07048abdd4c81587": 1,
+        "0e3157fddea88b92": 1,
+        "12b0d95b76548b5d": 1,
+        "155087cbe5092b86": 1,
+        "29292e799cdde93a": 1,
+        "37534aba5ee2e868": 1,
+        "38627ccdce71002a": 1,
+        "3d94425046ba5ea8": 1,
+        "49bd7b267ff3b5b1": 1,
+        "58bdca3f5d8269d2": 1,
+        "67db40f816f872f9": 1,
+        "68b2c9d54ad05ba5": 1,
+        "69ad1a1d8a1570ed": 1,
+        "6db5002e284c175b": 1,
+        "7264a723c5712157": 1,
+        "818dd33de8db947c": 1,
+        "83fd2d3aaeb7b078": 1,
+        "8675c31e89d925d6": 1,
+        "9bb6a38c22c8e4b5": 1,
+        "ab3bfddc0ef3a738": 1,
+        "ae0cdd1b50a428b7": 1,
+        "b6b9acb6845215ee": 1,
+        "c14953913f7957c0": 1,
+        "c6bd9eaebbd5a740": 1,
+        "c9f4cbb07bf81e88": 1,
+        "d0642d7b716b03e5": 1,
+        "d286cabda709a8cb": 1,
+        "d975fe627e7ac060": 3,
+        "df4adf435e55b871": 1,
+        "e1dc20e7743268ea": 1,
+        "e6f206fef4888788": 1,
+        "f0bc5dc1387e18ba": 1,
+        "f4e502346fcfce9a": 1,
+        "f661a986ac73cb0c": 1,
+        "f72a8e1d000d01d8": 1,
+        "fdb3d193afe9dc8e": 1,
+        "fefb9d3fcaf2252a": 1
       }
     },
     "TestIntelligentRoutingE2E": {
@@ -140,19 +257,19 @@
         "1d66058e2d4e5343": 1,
         "1f2140ae898a5129": 1,
         "1f61252f10b4687b": 1,
-        "211d18241e50dfe3": 1,
         "221159e90228a423": 1,
         "23fbb5c6f2827984": 1,
+        "279c1c463a8d1f76": 1,
         "28a13404262043a4": 1,
         "2f25b075793b6a59": 1,
         "306cc061c80d5004": 1,
+        "31848a753451fcee": 1,
         "3da6c047a11eadd3": 1,
         "3ec02eccc1fff633": 1,
-        "3ef0e4caed6ec65d": 1,
         "3f8ed54bdfaf53a7": 1,
         "517164a0dd138f71": 1,
-        "59d0d604d1b88f2f": 1,
         "5bf5f7ecaf77ed8a": 1,
+        "5e8231c4c37b050a": 1,
         "65f28eb50758ec56": 1,
         "68180ba4a0815590": 1,
         "70c0f76a3025bc43": 1,
@@ -165,7 +282,7 @@
         "7d06fce644e43b46": 1,
         "805697263cba794d": 1,
         "84ef310032a0746b": 1,
-        "894d4580a14ffd74": 1,
+        "8c55e5a5f735ac47": 1,
         "8f75cc3d5dc8a12c": 1,
         "9527e9463ce5cd57": 1,
         "9b7a5769c42d7ac6": 1,
@@ -177,29 +294,29 @@
         "a2dc21d2ae6b963e": 1,
         "a88282e6139ddc5e": 1,
         "a9e838d8a9dfcc87": 1,
+        "b0bbb09a0ee54cdc": 1,
         "ba0f87694e7eb70a": 1,
         "bcc5a71d06686292": 1,
+        "bf0303a4280aaa6e": 1,
         "c78d0c38a91a455f": 1,
         "ca3b8f403e52ecbd": 1,
         "cb6d34b05317240d": 1,
-        "d12012acf2173617": 1,
         "d24781f90eb1b931": 1,
         "d92c5615d8772e9c": 1,
         "d975fe627e7ac060": 2,
-        "de92f5c32ff26326": 1,
         "e2a7883986ca9e10": 1,
         "ea9f66a237a58796": 1,
         "eae6453833cdb6d2": 1,
         "eb26fe2947fd5ac6": 1,
         "f582e287e8099364": 1,
-        "f79b0947adb9ff01": 1,
+        "f94257f2b428c664": 1,
         "fbc713a1ff478ff8": 1,
         "fdc34588f81edd0b": 1
       }
     },
     "TestIntelligentRoutingMultiInstanceE2E": {
       "file": "routing_multi_e2e_test.go",
-      "requires": 67,
+      "requires": 71,
       "fatalf": 3,
       "fingerprints": {
         "043f3fdf285e2a10": 1,
@@ -216,7 +333,6 @@
         "19842e8fb01e1183": 1,
         "1edc3029db646575": 1,
         "20b652dc856ed42b": 1,
-        "21c3374e5fe361a6": 1,
         "21e27f5b9372cb4f": 1,
         "23d48a890ebbe91d": 1,
         "254eb02baecdd35c": 1,
@@ -229,19 +345,19 @@
         "30ecc4484a2d3c50": 1,
         "33d6f692344377d9": 1,
         "357e309990cfcb59": 1,
-        "3602692f88ea8ea5": 1,
         "40a6d5f82e82c2fe": 1,
         "40f76791fa46c25d": 1,
         "4bcc98b417ad68f6": 1,
         "4ecae373264fdc9e": 1,
         "5047d7e7e5e67e42": 1,
         "53fa5b31f128297b": 1,
+        "55e9aebebac32bf9": 1,
         "58f76faca88a509b": 1,
         "5c5adac95ecd2021": 1,
+        "5db983c157f60b3a": 1,
         "60cd2a477c972f48": 1,
         "611bfc4a55f2681b": 1,
         "69ec2e201535ce58": 1,
-        "6ee80138b7a4199b": 1,
         "77e18130b3b69966": 1,
         "7b64444bf6976f33": 1,
         "85856592408eaa2d": 1,
@@ -249,17 +365,22 @@
         "8c4d01ec03bbe229": 1,
         "8db0c5861b123da3": 1,
         "8f75cc3d5dc8a12c": 1,
+        "905ccc996523bf75": 1,
         "91969e2a11816241": 1,
         "962427c018bf08af": 1,
         "96859d159167de5a": 1,
         "a17e16ceaacddfb1": 1,
         "a26db730d3093c3d": 1,
+        "a32af3351e70349b": 1,
         "b1a463199ed50731": 1,
         "b815a06e4cade3fa": 1,
         "b9de43857e15c9d6": 1,
         "ba38eb5d74ef7bd2": 1,
+        "c33eada6933ace13": 1,
         "c524fff54abb3ea8": 1,
+        "c724126f7ee16eec": 1,
         "c73dde2b9628e3cd": 1,
+        "ca121e0d44f55d7c": 1,
         "d8d75711d5703cfa": 1,
         "d96df40c8fe612d4": 1,
         "d975fe627e7ac060": 1,
@@ -269,6 +390,83 @@
         "ea776cc21c94651a": 1,
         "eed45f95a04f6452": 1,
         "f821362519accab6": 1
+      }
+    },
+    "TestProcCreationTimeAndForceKill": {
+      "file": "harness_process_test.go",
+      "requires": 7,
+      "fatalf": 0,
+      "fingerprints": {
+        "018c6bf1e288dda8": 1,
+        "2d14d3a44d89747e": 1,
+        "36b7c5936e105fc3": 1,
+        "b604e4a7118dead3": 1,
+        "cf763ecf3b074836": 1,
+        "e5edab88465656b4": 1,
+        "f835247499e10402": 1
+      }
+    },
+    "TestProcHelperChild": {
+      "file": "harness_process_test.go",
+      "requires": 0,
+      "fatalf": 0,
+      "fingerprints": {}
+    },
+    "TestReapingTakeoverCrashedSweeper": {
+      "file": "harness_registry_test.go",
+      "requires": 6,
+      "fatalf": 0,
+      "fingerprints": {
+        "3283dbe5801c8217": 1,
+        "51b6bc6154b9085e": 1,
+        "d975fe627e7ac060": 2,
+        "e159293c12482947": 1,
+        "e56c2444de109bcd": 1
+      }
+    },
+    "TestReclaimKeepsRecordOnRedisLockOwnerMismatch": {
+      "file": "harness_registry_test.go",
+      "requires": 10,
+      "fatalf": 0,
+      "fingerprints": {
+        "1f1d831a4b572003": 1,
+        "59b1fb7924263de2": 1,
+        "67b479714b9d5f55": 1,
+        "85dd33221326c033": 1,
+        "8a40f007ca6ee39e": 1,
+        "9b58da8b9e822b32": 1,
+        "ad95160f6ca9b6eb": 1,
+        "ca433c71e438637b": 1,
+        "d975fe627e7ac060": 2
+      }
+    },
+    "TestRedisIndexAllocationUnique": {
+      "file": "harness_registry_test.go",
+      "requires": 6,
+      "fatalf": 0,
+      "fingerprints": {
+        "24a445b7ade34f5d": 1,
+        "313a382c94daa721": 1,
+        "37925a2b56d4d377": 1,
+        "5c608b037560df9b": 1,
+        "941b6db01150ebc8": 1,
+        "d975fe627e7ac060": 1
+      }
+    },
+    "TestRedisIndexManualOverride": {
+      "file": "harness_registry_test.go",
+      "requires": 13,
+      "fatalf": 0,
+      "fingerprints": {
+        "22cf6113c90a88d6": 1,
+        "60549e5413d2c00c": 1,
+        "646f0b91a16f4e78": 1,
+        "78bcf410999526d9": 1,
+        "99990563ac988116": 1,
+        "c1eb7d3133d54f7a": 1,
+        "ccd9e03cbddbe283": 1,
+        "d975fe627e7ac060": 5,
+        "f265d1e14c97326d": 1
       }
     },
     "TestRequestPatchE2E": {
@@ -404,11 +602,79 @@
         "f30c4678187bfa91": 1
       }
     },
+    "TestRunRecordStateMachine": {
+      "file": "harness_registry_test.go",
+      "requires": 9,
+      "fatalf": 0,
+      "fingerprints": {
+        "29216b6dcabfd29a": 1,
+        "46f3e12ee9563e13": 1,
+        "75e297459fd4222c": 1,
+        "7c26b1c1f3097615": 1,
+        "950b7fcf0c4137dd": 1,
+        "ac41be1ca3b09f16": 1,
+        "b819cc1d825b74a3": 1,
+        "d975fe627e7ac060": 1,
+        "e9af1a2c1e0fc0ac": 1
+      }
+    },
+    "TestRunTempDirValidation": {
+      "file": "harness_registry_test.go",
+      "requires": 5,
+      "fatalf": 0,
+      "fingerprints": {
+        "0ea862b1ac016d7d": 1,
+        "39a535a4083348f0": 1,
+        "5de5cb825521220c": 1,
+        "a19ee00efb1c46da": 1,
+        "d975fe627e7ac060": 1
+      }
+    },
+    "TestSanitizeFileName": {
+      "file": "harness_process_test.go",
+      "requires": 3,
+      "fatalf": 0,
+      "fingerprints": {
+        "3a953301b22255b6": 1,
+        "56daf16a85ccab09": 1,
+        "a231654a65068cf3": 1
+      }
+    },
+    "TestStaleClaimTakeoverReclaims": {
+      "file": "harness_registry_test.go",
+      "requires": 7,
+      "fatalf": 0,
+      "fingerprints": {
+        "215e5d68eb1394eb": 1,
+        "2bea16884de5c67e": 1,
+        "4b875b706d71cfbc": 1,
+        "6b12de78139bd757": 1,
+        "8ad8339100bd7659": 1,
+        "a842546a8109bdeb": 1,
+        "d975fe627e7ac060": 1
+      }
+    },
+    "TestSubprocessEnvFiltersHarnessPrefixes": {
+      "file": "harness_process_test.go",
+      "requires": 8,
+      "fatalf": 0,
+      "fingerprints": {
+        "2a7ecacf3464709d": 1,
+        "3b0147c025536deb": 1,
+        "453ec55c9b042942": 1,
+        "507b6052ade8bd03": 1,
+        "61929486a2fb9124": 1,
+        "8ea09f29d7d9b427": 1,
+        "905dabdc3874ee57": 1,
+        "a2f18047a8ead1c0": 1
+      }
+    },
     "TestSupplierEarningsE2E": {
       "file": "supplier_earnings_e2e_test.go",
-      "requires": 37,
-      "fatalf": 1,
+      "requires": 24,
+      "fatalf": 0,
       "fingerprints": {
+        "053d15acbdb94442": 1,
         "1d25b3c35663ca52": 1,
         "3a2c9bab0dac04a8": 1,
         "40e4519cca155e5b": 1,
@@ -417,305 +683,50 @@
         "499d712cb8bc159b": 1,
         "610b6c0e565feaa0": 1,
         "694cc6e3dd7f3d1a": 1,
-        "69a9ae4a59d2a2c6": 1,
         "6d5b6c30ffd44d53": 1,
         "6e498085b53a0193": 1,
+        "759fee845e7e134c": 1,
         "8bef747608464b65": 1,
         "a2d5434e91d34684": 1,
         "a33092c10d56108d": 1,
         "a345da01c7b11784": 2,
         "a3d87722f7dee570": 1,
-        "a9b4469c3ecea2c7": 1,
-        "ac7444aab71d52a2": 1,
-        "b6baba5300c9f39b": 1,
-        "d65280e555efc633": 1,
         "d819c61a5c3f7dcd": 1,
-        "d975fe627e7ac060": 5,
         "dab61d2f29e7d86a": 1,
         "dd20d7f339cc693d": 1,
-        "dee4ab9f5c50bfd7": 1,
-        "e08fb212dffe5b67": 1,
         "e90d2b33745223dc": 1,
         "ec155e77f0061354": 1,
-        "f49ca957c4e62327": 1,
-        "f67aed743f07cef6": 1,
-        "f8b0fb2a115de4f5": 1,
         "fb6885485409e5f1": 1
+      }
+    },
+    "TestSweepCASOnlyOneWinner": {
+      "file": "harness_registry_test.go",
+      "requires": 2,
+      "fatalf": 0,
+      "fingerprints": {
+        "d2427148c242519a": 1,
+        "edf991420052cd6d": 1
+      }
+    },
+    "TestSweepConservativePolicy": {
+      "file": "harness_registry_test.go",
+      "requires": 13,
+      "fatalf": 0,
+      "fingerprints": {
+        "109b52b3e728857d": 1,
+        "19f9cb4809f25e6b": 1,
+        "1c4a4fda87b994e9": 1,
+        "2d2bdfccf3251b7d": 1,
+        "853d4c397e043c8d": 1,
+        "8c6a194352e41c29": 1,
+        "8d5b0984b034f4b1": 1,
+        "c1751d58fe80ac40": 1,
+        "d975fe627e7ac060": 2,
+        "e3d3c6920638385f": 1,
+        "e7d3c9b9a5b6080a": 1,
+        "ecfa7073a41a0bbd": 1
       }
     }
   },
-  "allowed_removals": [
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "a9b4469c3ecea2c7",
-      "evidence": "C3API_REDIS_ADDR is required"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "dee4ab9f5c50bfd7",
-      "evidence": "require.NoError(t, cmd.Run(), \"build %s\", pkg)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "f67aed743f07cef6",
-      "evidence": "up.Start()"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "e08fb212dffe5b67",
-      "evidence": "supplierCfgTOML(supplierE2EAddr, jwtSecret, dsn, redisAddr, true)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "69a9ae4a59d2a2c6",
-      "evidence": "require.NoError(t, cmd.Start())"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "d65280e555efc633",
-      "evidence": "require.NoError(t, srv.Start())"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "f49ca957c4e62327",
-      "evidence": "supplierCfgTOML(supplierE2EDisabledAddr, jwtSecret, dsn, redisAddr, false)"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "b6baba5300c9f39b",
-      "evidence": "停用态 + 残留 liability ⇒ 拒绝启动"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "fatalf",
-      "evidence": "停用态网关未在 60s 内退出"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "f8b0fb2a115de4f5",
-      "evidence": "jsonGet(t, rb, \"Id\")"
-    },
-    {
-      "file": "supplier_earnings_e2e_test.go",
-      "test": "TestSupplierEarningsE2E",
-      "kind": "require",
-      "old_fingerprint": "ac7444aab71d52a2",
-      "evidence": "jsonGet(t, rb, \"Status\")"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "a9b4469c3ecea2c7",
-      "evidence": "C3API_REDIS_ADDR is required"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d975fe627e7ac060",
-      "evidence": "require.NoError(t, err)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "dee4ab9f5c50bfd7",
-      "evidence": "require.NoError(t, cmd.Run(), \"build %s\", pkg)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "f67aed743f07cef6",
-      "evidence": "up.Start()"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d5d5b073b7d10286",
-      "evidence": "os.WriteFile(cfgPath"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "d65280e555efc633",
-      "evidence": "srv.Start()"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "7b0efd1403358a97",
-      "evidence": "优雅停机信号"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "10ac36fab2fb9181",
-      "evidence": "stopGracefully(srv2)"
-    },
-    {
-      "file": "billing_e2e_test.go",
-      "test": "TestBillingE2E",
-      "kind": "require",
-      "old_fingerprint": "dd6acf4c014fc2b5",
-      "evidence": "stopGracefully(srv3)"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "211d18241e50dfe3",
-      "evidence": "fail 后上游 D 必须零尝试"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "3ef0e4caed6ec65d",
-      "evidence": "G 必须成功 15 次"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "59d0d604d1b88f2f",
-      "evidence": "dx 域 key 不得由 E 处理"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "894d4580a14ffd74",
-      "evidence": "限流冻结期上游必须零尝试"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "d12012acf2173617",
-      "evidence": "首错必须到达上游 D"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "de92f5c32ff26326",
-      "evidence": "dy 域 key 必须由 E 处理"
-    },
-    {
-      "file": "routing_e2e_test.go",
-      "test": "TestIntelligentRoutingE2E",
-      "kind": "require",
-      "old_fingerprint": "f79b0947adb9ff01",
-      "evidence": "失能后 E 必须零处理"
-    },
-    {
-      "file": "routing_multi_e2e_test.go",
-      "test": "TestIntelligentRoutingMultiInstanceE2E",
-      "kind": "require",
-      "old_fingerprint": "21c3374e5fe361a6",
-      "evidence": "fail 后 A 侧上游须零尝试"
-    },
-    {
-      "file": "routing_multi_e2e_test.go",
-      "test": "TestIntelligentRoutingMultiInstanceE2E",
-      "kind": "require",
-      "old_fingerprint": "3602692f88ea8ea5",
-      "evidence": "B 跟随须钉住 A 首呼账号"
-    },
-    {
-      "file": "routing_multi_e2e_test.go",
-      "test": "TestIntelligentRoutingMultiInstanceE2E",
-      "kind": "require",
-      "old_fingerprint": "6ee80138b7a4199b",
-      "evidence": "首错须到达上游"
-    }
-  ]
+  "allowed_removals": []
 }

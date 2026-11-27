@@ -15,8 +15,8 @@
 //   - 子进程 env 设置（cmd.Env = ... / os.Setenv；env deny-list 是 harness 独占能力）；
 //   - t.Parallel（e2e 必须串行）。
 //
-// 豁免 = **显式文件白名单**（不接受 harness_* 前缀模式）+ P0 legacy allowlist
-// （billing/routing/routing_multi 尚未迁移；P1 删除 allowlist 后全目录生效）。
+// 豁免 = **显式文件白名单**（不接受 harness_* 前缀模式）。P1 迁移完成后全目录生效：
+// 不再存在 legacy 文件名 allowlist（billing/routing/routing_multi 与其它场景同权扫描）。
 package e2e
 
 import (
@@ -57,13 +57,6 @@ var boundaryExemptFiles = map[string]bool{
 	// 断言 gate 本身也是 harness 文件（只读 git/BASE 源码，不持有外部资源）；它读取
 	// E2E_BASELINE_* 生成器开关，属于 gate 实现而非场景。
 	"assertion_surface_gate_test.go": true,
-}
-
-// boundaryLegacyAllowlist P0 legacy：尚未迁移的文件（P1 迁移后删除 allowlist，全目录生效）。
-var boundaryLegacyAllowlist = map[string]bool{
-	"billing_e2e_test.go":       true,
-	"routing_e2e_test.go":       true,
-	"routing_multi_e2e_test.go": true,
 }
 
 var (
@@ -141,7 +134,7 @@ func scanBoundaryViolations(files map[string][]byte) []boundaryViolation {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if boundaryExemptFiles[name] || boundaryLegacyAllowlist[name] {
+		if boundaryExemptFiles[name] {
 			continue
 		}
 		fset := token.NewFileSet()
@@ -230,6 +223,22 @@ func formatBoundaryViolations(violations []boundaryViolation) string {
 		lines = append(lines, v.String())
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestHarnessBoundaryGateNoLegacyExemption 全目录生效自测（P1）：boundary gate 不再按
+// 文件名放行任何场景文件——即使文件名叫 billing_e2e_test.go / routing_e2e_test.go /
+// routing_multi_e2e_test.go（P0 legacy allowlist），固定端口字面量也照常红。
+func TestHarnessBoundaryGateNoLegacyExemption(t *testing.T) {
+	files := map[string][]byte{
+		"billing_e2e_test.go":       []byte("package e2e\n\nimport \"testing\"\n\nconst legacyFixedAddr = \"127.0.0.1:18090\"\n\nfunc TestLegacy(t *testing.T) { _ = legacyFixedAddr }\n"),
+		"routing_e2e_test.go":       []byte("package e2e\n\nimport \"testing\"\n\nconst rtFixedAddr = \"127.0.0.1:18093\"\n\nfunc TestRT(t *testing.T) { _ = rtFixedAddr }\n"),
+		"routing_multi_e2e_test.go": []byte("package e2e\n\nimport \"testing\"\n\nconst rmFixedAddr = \"127.0.0.1:18094\"\n\nfunc TestRM(t *testing.T) { _ = rmFixedAddr }\n"),
+	}
+	violations := scanBoundaryViolations(files)
+	require.Len(t, violations, 3, "legacy 文件名不再豁免（全目录生效）：%s", formatBoundaryViolations(violations))
+	for _, v := range violations {
+		require.Contains(t, v.Reason, "禁止固定端口字面量", "违规原因：%s", v.String())
+	}
 }
 
 // TestHarnessBoundaryGateComputedPort 计算型固定端口 / 自建监听启发式自测（spec §13 /

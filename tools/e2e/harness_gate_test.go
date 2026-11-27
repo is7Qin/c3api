@@ -286,6 +286,7 @@ func assertionRemovalScope(file string) bool {
 
 // checkAllowedRemovals 白名单校验：作用域=场景 *_test.go；evidence 必须能在 BASE
 // 文件原文找到且与被移除断言相关；old_fingerprint 必须确实存在于 BASE 该 Test 的指纹里。
+// baseline-v2 后白名单为空，本函数保留为机制与变异测试（AV-D）的事实源。
 func checkAllowedRemovals(t *testing.T, baseline *assertionBaseline, baseFiles map[string][]byte, base assertionCollector) error {
 	removalsByTest := map[string]map[string]int{} // test -> fingerprint -> count
 	fatalfByTest := map[string]int{}
@@ -851,7 +852,15 @@ func TestHarnessGateMutationRed(t *testing.T) {
 		"同 commit 只改 baseline JSON 加白名单 + 删断言必须红（白名单唯一事实源在 gate 源码）")
 
 	// 变异⑤：白名单 evidence 取 BASE 任意无关 token（模拟连代码侧白名单一起改）=> 红。
+	// baseline-v2 清空白名单后代码侧为空：合成一条 BASE 存在的条目继续验证 evidence
+	// 相关性检查仍然生效（否则「证据相关性」在 v2 后再无变异覆盖）。
 	evilRemovals := append([]assertionRemoval{}, assertionAllowedRemovals...)
+	if len(evilRemovals) == 0 {
+		evilRemovals = append(evilRemovals, assertionRemoval{
+			File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require",
+			OldFingerprint: "a9b4469c3ecea2c7", Evidence: "C3API_REDIS_ADDR is required",
+		})
+	}
 	require.NotEmpty(t, evilRemovals, "白名单自检：代码侧必须有条目")
 	evilRemovals[0].Evidence = "unrelated-token-not-in-base"
 	evilBaseline := assertionBaseline{
