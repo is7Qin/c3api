@@ -217,7 +217,7 @@ var revisionVocabulary = map[string]string{
 	"identityRevision":               "K：参数/字段名（latch、continuation、失效重试）",
 	"persistMissingRevision":         "K：RuleEngine 原子计数（缺乏期望 K 的 persist 失败）",
 	"persistStaleRevision":           "K：RuleEngine 原子计数（K 已陈旧的 persist 失败）",
-	"revision":                       "泛化名：编译器事实的候选内容代际（值 = K）、SetProbing 的 K 参数",
+	"revision":                       "泛化名：编译器事实的候选内容代际（值 = K）、健康键的 K 参数",
 	"scanAccountExtRevision":         "K：仓库层扫描器名（一条 SQL 读出凭据投影 + 父行 K；名字里的 Revision 指它读出的那个 K）",
 }
 

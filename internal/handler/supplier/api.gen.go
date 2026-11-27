@@ -1272,7 +1272,7 @@ type ServerInterface interface {
 	// 读取账号的全部分组 id（编辑回显；不随账号列表返回）
 	// (GET /api/user/supplier/accounts/{id}/groups)
 	GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64)
-	// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+	// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
 	// (POST /api/user/supplier/accounts/{id}/recover)
 	PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64)
 	// 对本人归属的单个账号发起一次单模型探测（不落库、不计费；越域 ⇒ 404）
@@ -1419,7 +1419,7 @@ func (_ Unimplemented) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
 // (POST /api/user/supplier/accounts/{id}/recover)
 func (_ Unimplemented) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

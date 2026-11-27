@@ -5,7 +5,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,17 +20,9 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// hProber 记录 recover→PROBING 写入（service.RecoverProber 契约面 handler 侧证据）。
-type hProber struct{ calls [][2]int64 }
-
-func (p *hProber) SetProbing(_ context.Context, accountID, revision int64) error {
-	p.calls = append(p.calls, [2]int64{accountID, revision})
-	return nil
-}
-
 // newLifecycleTestHandler 生命周期端点装配：直种 rev=5 已失效账号（enabled=true、
-// 倍率 25000、共享域）+ recover prober 注入。
-func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, func(method, path, body string) *httptest.ResponseRecorder) {
+// 倍率 25000、共享域）。
+func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, func(method, path, body string) *httptest.ResponseRecorder) {
 	t.Helper()
 	store := newFakeStore()
 	store.tpls[1] = &domain.Template{ID: 1, Name: "tpl", CredentialType: "api_key"}
@@ -44,8 +35,7 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
 		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: new(25000), CacheDomain: &dom,
 	}
-	prober := &hProber{}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Mount("/", h.Router())
@@ -56,14 +46,14 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 		r.ServeHTTP(rec, req)
 		return rec
 	}
-	return h, store, prober, do
+	return h, store, do
 }
 
 // TestAccountLifecycleReadContract 读面契约：GET 详情与列表视图都平铺生命周期
 // 字段（Enabled/FailedAt/FailureSource/LifecycleRevision/UpstreamCostMultiplier/
 // CacheDomain）；倍率边界换算 bp→正常值（25000 ↔ 2.5）。
 func TestAccountLifecycleReadContract(t *testing.T) {
-	_, _, _, do := newLifecycleTestHandler(t)
+	_, _, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodGet, "/api/admin/accounts/1", "")
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -93,14 +83,13 @@ func TestAccountLifecycleReadContract(t *testing.T) {
 }
 
 // TestAccountRecoverEndpoint recover：stale revision → 409；正确 revision → 200
-// 清失效三字段 + 新代际 + PROBING 落在新 revision；缺 id → 404。
+// 清失效三字段 + 新代际 + 清健康记录（不写任何新记录）；缺 id → 404。
 func TestAccountRecoverEndpoint(t *testing.T) {
-	_, store, prober, do := newLifecycleTestHandler(t)
+	_, store, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPost, "/api/admin/accounts/1/recover", `{"expected_revision":4}`)
 	require.Equal(t, 409, rec.Code, "stale revision 必须 409: %s", rec.Body.String())
 	require.NotNil(t, store.accs[1].FailedAt, "409 不得清失效")
-	require.Empty(t, prober.calls)
 
 	rec = do(http.MethodPost, "/api/admin/accounts/1/recover", `{"expected_revision":5}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -110,9 +99,6 @@ func TestAccountRecoverEndpoint(t *testing.T) {
 	require.Nil(t, acc.FailureSource)
 	require.NotNil(t, acc.LifecycleRevision)
 	require.Equal(t, int64(6), *acc.LifecycleRevision)
-	// PROBING 以**身份代际 K**（=3）落键，不是 CAS 后的 C（=6）：健康记录按 K
-	// 隔离，EffectiveState 以 K 查询。取 3≠5≠6 是刻意的——传 C 即失败。
-	require.Equal(t, [][2]int64{{1, 3}}, prober.calls, "PROBING 必须以 K 落键（不是 C）")
 
 	require.Equal(t, 404, do(http.MethodPost, "/api/admin/accounts/999/recover", `{"expected_revision":1}`).Code)
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/accounts/1/recover", `{}`).Code, "expected_revision 必填")
@@ -121,7 +107,7 @@ func TestAccountRecoverEndpoint(t *testing.T) {
 // TestAccountPatchEnabled enabled 经唯一写面：落值 + 推进 C；enable 不清失效
 // 字段（恢复唯一入口 recover）。
 func TestAccountPatchEnabled(t *testing.T) {
-	_, store, _, do := newLifecycleTestHandler(t)
+	_, store, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"enabled":false}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -136,7 +122,7 @@ func TestAccountPatchEnabled(t *testing.T) {
 
 // TestAccountPatchCostMultiplier 倍率经唯一写面：正常值 → bp 换算落库；越界 → 400。
 func TestAccountPatchCostMultiplier(t *testing.T) {
-	_, store, _, do := newLifecycleTestHandler(t)
+	_, store, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"upstream_cost_multiplier":1.5}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -152,7 +138,7 @@ func TestAccountPatchCostMultiplier(t *testing.T) {
 // TestAccountPatchCacheDomain 缓存域经唯一写面：设置；null = 清空（回私有域）；
 // "" → 400（哨兵已取消）；非法域 → 400。
 func TestAccountPatchCacheDomain(t *testing.T) {
-	_, store, _, do := newLifecycleTestHandler(t)
+	_, store, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"cache_domain":"other.example.com"}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -171,13 +157,13 @@ func TestAccountPatchCacheDomain(t *testing.T) {
 // TestAccountPatchRejectsEmptyBody 空补丁（无任何字段）→ 400：写面不接受无字段
 // 请求（否则等于一次纯 C 推进的空写）。
 func TestAccountPatchRejectsEmptyBody(t *testing.T) {
-	_, _, _, do := newLifecycleTestHandler(t)
+	_, _, do := newLifecycleTestHandler(t)
 	require.Equal(t, 400, do(http.MethodPatch, "/api/admin/accounts/1", `{}`).Code)
 }
 
 // TestAccountCreateCacheDomain 创建带 cache_domain → 回显；非法域 → 400。
 func TestAccountCreateCacheDomain(t *testing.T) {
-	_, _, _, do := newLifecycleTestHandler(t)
+	_, _, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPost, "/api/admin/accounts", `{"name":"acc2","template_id":1,"upstream_key":"sk-b","cache_domain":"pool.example.com"}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -192,7 +178,7 @@ func TestAccountCreateCacheDomain(t *testing.T) {
 // TestAccountPatchLeavesUnmentionedFieldsUntouched 补丁**未提及**的字段必须保持
 // 原值（三态：缺省 = 不变）——enabled/倍率/缓存域不在补丁里就一个都不动。
 func TestAccountPatchLeavesUnmentionedFieldsUntouched(t *testing.T) {
-	_, store, _, do := newLifecycleTestHandler(t)
+	_, store, do := newLifecycleTestHandler(t)
 	store.accs[1].FailedAt = nil
 
 	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"name":"renamed"}`)
@@ -207,7 +193,7 @@ func TestAccountPatchLeavesUnmentionedFieldsUntouched(t *testing.T) {
 // TestRuleTypedActionContract typed Throttle/FailAccount wire 往返：open/retry_after
 // 合法组合回显；互斥违规 → 400。
 func TestRuleTypedActionContract(t *testing.T) {
-	_, _, _, do := newLifecycleTestHandler(t)
+	_, _, do := newLifecycleTestHandler(t)
 
 	rec := do(http.MethodPost, "/api/admin/rules", `{"name":"r-open","priority":1,"when":{"kind":"429"},"then":{"throttle":{"scope":"account","mode":"open","duration_ms":60000,"use_reset":false}}}`)
 	require.Equal(t, 201, rec.Code, rec.Body.String())

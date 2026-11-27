@@ -233,7 +233,10 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 		require.NoError(t, h.Close(closeCtx), "Close must join both loops")
 	})
 
-	require.NoError(t, h.SetProbing(context.Background(), 1, 5))
+	// 用 Throttle 直接写一条 PROBING 前置（生产已无 SetProbing：它曾让 recover
+	// 制造出「必须等探针」的选号阻断态）。键必须与 EffectiveState 的查询对齐：
+	// 探针按条目自身的 (quality, identity, K) 探测并回写，故这里写具体身份。
+	mustProbing(t, h, 1, 5)
 	// 先等探针真正跑满两次（同 gen 两次成功才 READY；也排除视图尚未同步时
 	// EffectiveState 空视图默认 READY 的假阳性），再等 READY 落定。
 	require.Eventually(t, func() bool {
@@ -245,8 +248,19 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 
 	// 再入 PROBING 后探测持续失败：重开，不得 READY。
 	codex.setFail(true)
-	require.NoError(t, h.SetProbing(context.Background(), 1, 5))
+	mustProbing(t, h, 1, 5)
 	require.Eventually(t, func() bool {
 		return scheduler.StateOPEN == h.EffectiveState(1, "*", healthTestIdentity, 5)
 	}, 8*time.Second, 200*time.Millisecond, "probe failure must reopen the record")
+}
+
+// mustProbing 写一条 PROBING 健康记录作为探针测试的前置状态。生产代码里没有
+// 「直接写 PROBING」的入口了（见 RuntimeHealth 注释）——本 helper 只服务测试，
+// 走与规则限流同一个 Throttle 写面。
+func mustProbing(t *testing.T, h *scheduler.RuntimeHealth, accountID, revision int64) {
+	t.Helper()
+	_, err := h.Throttle(context.Background(), scheduler.HealthKey{
+		AccountID: accountID, Quality: "*", Identity: healthTestIdentity, IdentityRevision: revision,
+	}, scheduler.StateProbing, 30*time.Second)
+	require.NoError(t, err)
 }

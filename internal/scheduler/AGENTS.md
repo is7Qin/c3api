@@ -33,6 +33,16 @@
   凭据**填，非 Codex 为空；预留只做字段拷贝（私有域拼接放进预留会每次分配）。源字段已在
   静态键里，换值即换叶子。
 - `MaxConcurrency=0`（无池）时预留不 panic，按现状零身份。
+- **健康面里 `PROBING` 只能由 Sync 的保留转换产出**（OPEN/RETRY_AFTER 自然到期），
+  任何同步写面都不得直接创建它。选号门要求 `EffectiveState == StateReady`，而
+  PROBING 的离开条件完全在探针环手里——探针环是**可选组件**（可能没 `Start`、
+  `rendezvous` 没选到本实例、`permit` 饥饿、或返回 `ErrProbeStaleRevision`）。
+  一旦某个同步写面能造出 PROBING，「该写面是否生效」就绑死在一个可选项上，形成
+  无界等待。人工恢复正是因为写了通配 PROBING 而把账号永久禁用过。
+- **「无记录」与「READY」在选号语义上等价**（`EffectiveState` 把查不到的键当
+  READY）。恢复/清除类动作因此只需「清空」，不需要写一条"更好"的记录。
+- `identityAny`（`"*"`）只是 `EffectiveState` 枚举通配组合用的常量；写入面仅剩
+  Sync 保留转换。规则引擎的 throttle 永远写具体指纹。
 
 ## 边界
 

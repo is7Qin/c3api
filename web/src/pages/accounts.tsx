@@ -185,7 +185,7 @@ const fmtMult = (v?: number | null): string => (v == null ? '—' : `×${Number(
 // + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻）
 // + 冷却（health.state = open/retry_after 时标琥珀，tooltip 携带到期时刻/路由数）。
 // 两个运行时轴都可经 /recover 人工清除：红 = 终态摘除（必须人工），
-// 琥珀 = 自愈冷却（默认可自愈；强制恢复会 bump LifecycleRevision 并置 30s PROBING）。
+// 琥珀 = 自愈冷却（默认可自愈；强制恢复会 bump LifecycleRevision 并清空健康记录）。
 function LifecycleBadges({ a }: { a: AccountView }) {
   const { t } = useTranslation()
   const enabled = a.Enabled === true
@@ -907,7 +907,7 @@ export default function Accounts() {
     onError: lifecycleErr,
   })
   // 失效恢复唯一入口（/recover）：清 failed_at/last_error/failure_source + revision +1
-  // → 新代际 PROBING（探针环接管，READY 前不吃正常流量）。
+  // → 清空健康记录（无记录 = READY，账号立即可选，不依赖探针环）。
   const recover = useMutation({
     mutationFn: (a: AccountView) => api.recoverAccount(a.ID!, { expected_revision: a.LifecycleRevision ?? 0 }),
     onSuccess: () => {
@@ -1306,8 +1306,9 @@ export default function Accounts() {
                           {a.Enabled === true ? <Ban /> : <CircleCheck />}
                         </Button>
                         {/* 恢复入口：终态失效或冷却中都可人工清除（enable 不清失效/冷却）。
-                            /recover 会 CAS +1、清健康记录并写 30s PROBING；冷却的默认
-                            路径是到期自愈，这里是强制干预（会立即重新探测上游）。 */}
+                            /recover 会 CAS +1 并清空健康记录（无记录 = READY，账号立即
+                            可选，不依赖探针环）；冷却的默认路径是到期自愈，这里是强制
+                            干预（会立即重新探测上游）。 */}
                         {(a.FailedAt || isCooling(a.health)) && (
                           <Button
                             variant="ghost"

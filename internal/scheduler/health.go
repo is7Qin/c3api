@@ -61,9 +61,14 @@ func (s HealthState) severity() int {
 	}
 }
 
-// identityAny 是身份指纹分量的通配值。只由 recover 链路的 SetProbing 写入：
-// recover 是显式的健康重置动作（先按账号清记录、再置 PROBING），且该链路拿不到
-// 账号编译期的候选指纹。其余写入点（规则引擎的 throttle 动作）一律写具体指纹。
+// identityAny 是质量类/身份指纹两个分量的通配值。EffectiveState 用它枚举
+// 通配组合（一条账号级判决对同账号所有候选生效）。
+//
+// 写入面：通配键**只由 Sync 的保留转换**产出（OPEN/RETRY_AFTER 到期转 PROBING
+// 时沿用原键，原键可能本就是通配），以及历史数据遗留。recover 链路**不写**通配
+// 键——人工恢复是纯清除动作（见 RuntimeHealth.ClearAccount）。它曾经写的通配
+// PROBING 让账号在「还没被探过」时就被选号门拒掉：可选组件（探针环）于是成了
+// 恢复生效的必要条件。规则引擎的 throttle 动作一律写具体指纹。
 const identityAny = "*"
 
 // HealthKey is the immutable composite key account+quality|*+identity|*+revision.
@@ -78,12 +83,12 @@ const identityAny = "*"
 //
 // IdentityRevision 是**身份代际 K**（identity_revision），不是客户端 CAS 令牌
 // C（lifecycle_revision）。健康记录按 K 隔离：K 推进 ⇒ 旧记录不再被查询。
-// 命名承重——泛化的 Revision 会让调用点把 C 静默传进来（SetProbing 曾如此，
-// 导致 recover 写的 PROBING 记录在 EffectiveState 的 K 查询下永不命中）。
+// 命名承重——泛化的 Revision 会让调用点把 C 静默传进来（历史上曾如此，导致
+// 写下的记录在 EffectiveState 的 K 查询下永不命中）。
 type HealthKey struct {
 	AccountID        int64
 	Quality          string // hex or "*"
-	Identity         string // 候选身份指纹 hex，或 "*"（仅 recover 的 PROBING 写）
+	Identity         string // 候选身份指纹 hex，或 "*"（通配：仅 Sync 保留转换产出）
 	IdentityRevision int64
 }
 
@@ -413,7 +418,9 @@ type ProbeFunc func(context.Context, HealthKey) error
 // one permit, two current-gen successes READY, failure reopen.
 // 探针不变量：probeTick 只探测 StateProbing 条目；OPEN/RETRY_AFTER 在其窗口内永不
 // 被探测（窗口跑满 TTL，到期处理权在 Sync retention 转换逻辑，本循环不碰）；
-// PROBING 条目只来自 recover 链路 SetProbing 与 Sync 保留转换。
+// PROBING 条目**只来自 Sync 保留转换**（OPEN/RETRY_AFTER 到期）。任何同步写面都
+// 不直接创建 PROBING——这一点承重：PROBING 是唯一需要探针推进才能离开的状态，
+// 若某个同步写面（例如人工恢复）能造出它，账号的可选性就绑死在一个可选组件上。
 type RuntimeHealth struct {
 	client     *redis.Client
 	selfID     string
@@ -618,7 +625,7 @@ func (h *RuntimeHealth) ThrottleUntil(ctx context.Context, key HealthKey, state 
 // 返回 (0,nil)。这是 429 补拉写回面（与 latch 的 ThrottleUntil 相对）。不存在 /
 // 异状态 / 已过截止 ⇒ 不推进 generation、不写任何键，调用方按拒绝计数。
 //
-// 这是 429 补拉与运维手动恢复（ClearAccount + SetProbing）、其他失败类别
+// 这是 429 补拉与运维手动恢复（ClearAccount）、其他失败类别
 // （5xx 的 OPEN 判决）以及自然到期之间的唯一边界：迟到的补拉只能延长"它自己
 // 那条判决"，绝不能把已被清除/改写/过期的冷却复活。
 func (h *RuntimeHealth) ExtendCooldown(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
@@ -698,24 +705,6 @@ func (h *RuntimeHealth) ClearAccount(ctx context.Context, accountID int64) (int6
 		return 0, fmt.Errorf("health: clear account %d: %w", accountID, err)
 	}
 	return res, nil
-}
-
-// SetProbing writes the wildcard PROBING record for (account, newRevision)
-// after a successful recover CAS (satisfies the recover-side health prober
-// contract). Rides the standard Throttle Lua path so generation bump, record
-// HASH, active ZSET membership and tombstone clearing stay atomic. Non-positive
-// revision is rejected fail-closed; old-revision records stay isolated by key.
-//
-// 身份分量写作通配 identityAny：recover 先按账号清掉全部健康记录、再置
-// PROBING，是显式的健康重置；该链路拿不到账号编译期的候选指纹。PROBING 是
-// 30s 瞬时态（探针环接管），通配不会让"旧判决"复活——判决类记录（OPEN /
-// RETRY_AFTER）一律由规则引擎按具体指纹写入。
-func (h *RuntimeHealth) SetProbing(ctx context.Context, accountID int64, identityRevision int64) error {
-	if identityRevision <= 0 {
-		return fmt.Errorf("health: invalid probing identity revision %d for account %d", identityRevision, accountID)
-	}
-	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: identityAny, Identity: identityAny, IdentityRevision: identityRevision}, StateProbing, 30*time.Second)
-	return err
 }
 
 // EffectiveState returns the severity-most health for the account at the given

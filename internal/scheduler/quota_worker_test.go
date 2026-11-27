@@ -202,9 +202,13 @@ func TestQuotaWorkerExtendsDeadline(t *testing.T) {
 }
 
 // TestQuotaWorkerRejectsWhenRecoveryClearedRecord（B1 端到端，放行条件）：
-// sink 入队一条 use_reset/ResetAt==nil 的 429 补拉 → 运维恢复（ClearAccount +
-// SetProbing，等同 RecoverAccount）→ worker 才消费到这条迟到任务。补拉必须被
-// ExtendCooldown 的闸门拒绝：PROBING 不被改写、记录不被重建、extended 不涨。
+// sink 入队一条 use_reset/ResetAt==nil 的 429 补拉 → 运维恢复（= ClearAccount，
+// 等同 RecoverAccount 的健康面动作）→ worker 才消费到这条迟到任务。补拉必须被
+// ExtendCooldown 的闸门拒绝：记录不被重建、extended 不涨。
+//
+// 恢复**不写**任何新记录（尤其不写 PROBING）：清空即「无记录」，而
+// EffectiveState 把无记录判作 READY。这条断言同时钉住「迟到补拉不得复活运维
+// 已清除的判决」与「恢复后账号立即可选」两件事。
 func TestQuotaWorkerRejectsWhenRecoveryClearedRecord(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	ctx := context.Background()
@@ -221,7 +225,12 @@ func TestQuotaWorkerRejectsWhenRecoveryClearedRecord(t *testing.T) {
 	cleared, err := h.ClearAccount(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cleared, "恢复必须清掉那条判决记录")
-	require.NoError(t, h.SetProbing(ctx, 1, 5)) // 等同 RecoverAccount 的 PROBING 写
+	// 恢复不写任何新记录 ⇒ 该账号回到「无记录 = READY」。ClearAccount 已就地改写
+	// Redis 与墓碑，但**内存视图**由 Sync 周期（生产 500ms）收敛，故先同步一次再
+	// 断言——与选号热路径看到的状态是同一个。
+	require.NoError(t, h.Sync(ctx))
+	require.Equal(t, StateReady, h.EffectiveState(1, "q1", testIdentity, 5),
+		"恢复后账号必须立即可选（无记录 = READY），不得被恢复自己制造的状态挡住")
 
 	until := time.Now().Add(7 * 24 * time.Hour).Truncate(time.Second)
 	resolver := &fakeQuotaResolver{fn: func(context.Context, *domain.Account) (time.Time, bool, error) {
@@ -237,12 +246,13 @@ func TestQuotaWorkerRejectsWhenRecoveryClearedRecord(t *testing.T) {
 	require.Equal(t, 1, resolver.callCount())
 
 	require.NoError(t, h.Sync(ctx))
-	require.Equal(t, StateProbing, h.EffectiveState(1, "q1", testIdentity, 5),
-		"运维恢复写的 PROBING 不得被迟到的补拉改写")
+	require.Equal(t, StateReady, h.EffectiveState(1, "q1", testIdentity, 5),
+		"运维恢复后的无记录态不得被迟到的补拉改写")
 	taskField := HealthKey{AccountID: 1, Quality: "q1", Identity: testIdentity, IdentityRevision: 5}.String()
 	require.False(t, mr.Exists(healthRecordPrefix+taskField), "迟到的补拉不得重建已被清除的记录")
 	probingField := HealthKey{AccountID: 1, Quality: identityAny, Identity: identityAny, IdentityRevision: 5}.String()
-	require.True(t, mr.Exists(healthRecordPrefix+probingField), "PROBING 记录必须仍在")
+	require.False(t, mr.Exists(healthRecordPrefix+probingField),
+		"恢复不得留下任何通配 PROBING 记录（可选组件会成为恢复生效的必要条件）")
 }
 
 // TestQuotaWorkerSkipsWithoutWindow 门禁 6/21：补拉成功但无有效窗口 ⇒ 不写

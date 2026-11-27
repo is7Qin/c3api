@@ -521,9 +521,6 @@ type Service struct {
 	settings *settingssnap.Snapshot
 	// priceSnapshot 统一价格快照：entries + variants
 	priceSnapshot atomic.Pointer[priceSnapshot]
-	// recoverProber 恢复→PROBING 健康写入面（New 经 Deps.RecoverProber
-	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
-	recoverProber RecoverProber
 	// recoverLatch 恢复→latch 显式释放面（New 经 Deps.RecoverLatch
 	// 注入；nil = 未装配，跳过释放）。
 	recoverLatch RecoverLatchReleaser
@@ -647,9 +644,6 @@ type Deps struct {
 	// ClearBalanceWarningCooldown 余额预警偏好变更后的 Redis 已知键清理：
 	// nil = 禁用清理（仅做偏好持久化）。
 	ClearBalanceWarningCooldown CooldownClearer
-	// RecoverProber 恢复→PROBING 健康写入面：nil = 跳过 PROBING 写
-	// （调度器同步周期兜底收敛）。
-	RecoverProber RecoverProber
 	// RecoverLatch 恢复→latch 显式释放面：nil = 跳过释放。
 	RecoverLatch RecoverLatchReleaser
 	// RecoverHealthClear 恢复→健康记录显式清除面：nil = 跳过清除。
@@ -737,7 +731,6 @@ func (d Deps) Validate() error {
 		{"Auth", d.Auth},
 		{"SupplierViewReload", d.SupplierViewReload},
 		{"EmailCodeStore", d.EmailCodeStore},
-		{"RecoverProber", d.RecoverProber},
 		{"RecoverLatch", d.RecoverLatch},
 		{"RecoverHealthClear", d.RecoverHealthClear},
 		{"CompileNotify", d.CompileNotify},
@@ -791,7 +784,6 @@ func (d Deps) Features() []string {
 	add("publisher", d.Publisher != nil)
 	add("recover_health_clear", d.RecoverHealthClear != nil)
 	add("recover_latch", d.RecoverLatch != nil)
-	add("recover_prober", d.RecoverProber != nil)
 	add("rule_reload", d.RuleReload != nil)
 	add("supplier_view_reload", d.SupplierViewReload != nil)
 	add("time_zone", d.TimeLocation != nil)
@@ -808,7 +800,7 @@ func New(deps Deps) *Service {
 		inv: deps.Invalidate, pub: deps.Publisher,
 		ruleReload: deps.RuleReload, keys: deps.Auth, mgmtKeys: deps.Auth, log: deps.Log,
 		supplierViewReload: deps.SupplierViewReload,
-		emailCodes:         deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
+		emailCodes:         deps.EmailCodeStore, tzLoc: deps.TimeLocation,
 		recoverLatch: deps.RecoverLatch, recoverHealthClear: deps.RecoverHealthClear,
 		defaultMaxConcurrency:       deps.DefaultMaxConcurrency,
 		compileNotify:               deps.CompileNotify,

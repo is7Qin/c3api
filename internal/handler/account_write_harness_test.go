@@ -40,12 +40,11 @@ type enabledFilterHarness struct {
 	do func(method, path, body string) *httptest.ResponseRecorder
 }
 
-func newEnabledFilterRouter(t *testing.T) (*enabledFilterHarness, *fakeStore, *hProber) {
+func newEnabledFilterRouter(t *testing.T) (*enabledFilterHarness, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()
 	store.tpls[1] = &domain.Template{ID: 1, Name: "tpl", CredentialType: "api_key"}
-	prober := &hProber{}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Mount("/", h.Router())
@@ -56,7 +55,7 @@ func newEnabledFilterRouter(t *testing.T) (*enabledFilterHarness, *fakeStore, *h
 		r.ServeHTTP(rec, req)
 		return rec
 	}
-	return &enabledFilterHarness{do: do}, store, prober
+	return &enabledFilterHarness{do: do}, store
 }
 
 func serviceForDefaults(t *testing.T) *service.Service {

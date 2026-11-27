@@ -3672,7 +3672,7 @@ type ServerInterface interface {
 	// 读取账号的全部分组 id（编辑回显；不随账号列表返回）
 	// (GET /accounts/{id}/groups)
 	GetAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64)
-	// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+	// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
 	// (POST /accounts/{id}/recover)
 	PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64)
 	// 对单个账号发起一次单模型探测（不落库、不计费、不改账号状态）
@@ -4030,7 +4030,7 @@ func (_ Unimplemented) GetAccountsIdGroups(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
 // (POST /accounts/{id}/recover)
 func (_ Unimplemented) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

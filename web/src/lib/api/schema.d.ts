@@ -290,16 +290,16 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+         * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
          * @description 运行时恢复入口：终态失效（rule 判死/SDK fatal）与运行冷却（health.state =
          *     open/retry_after）共用。CAS expected_revision 命中才清失效三字段并 +1，
-         *     随后尽力清除该账号全部健康记录（含 Redis 墓碑）、释放失效锁存，并对新 revision
-         *     写通配 PROBING（探针环接管：READY 前不吃正常流量）。冷却的默认路径是到期
-         *     自愈；本端点用于上游已恢复但记录仍压住账号时的强制干预——会立即重新探测
-         *     上游，若是 429 限流可能再次被判冷却。健康清除是尽力而为：Redis 失败只记
-         *     日志、不影响 200（记录按 TTL/Sync 收敛，必要时重试恢复）。expected_revision
-         *     过期 → 409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled
-         *     独立，经 PATCH /accounts/{id} 修改）。
+         *     随后清除该账号全部健康记录（含 Redis 墓碑）、释放失效锁存。**成功后账号
+         *     立即可选**：健康面回到「无记录」，等价于 READY，不写任何新记录、不等待探针。
+         *     冷却的默认路径是到期自愈；本端点用于上游已恢复但记录仍压住账号时的强制干预
+         *     ——会立即重新探测上游，若是 429 限流可能再次被判冷却（那是新的一次真实判决）。
+         *     健康清除是尽力而为：Redis 失败只记日志、不影响 200（记录按 TTL/Sync 收敛，
+         *     必要时重试恢复）。expected_revision 过期 → 409（前端须重读账号后重试）；
+         *     本端点不启用被禁用的账号（enabled 独立，经 PATCH /accounts/{id} 修改）。
          */
         post: operations["PostAccountsIdRecover"];
         delete?: never;
@@ -2309,12 +2309,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
+         * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 立即可选
          * @description 复用管理面恢复入口：终态失效与运行冷却（health.state = open/retry_after）
          *     共用。CAS expected_revision 命中才清失效三字段并 +1，随后清该账号全部健康
-         *     记录（尽力而为：失败只记日志）、释放失效锁存，并对新 revision 写通配
-         *     PROBING（探针环接管）。冷却默认到期自愈；强制恢复会立即重新探测上游。
-         *     expected_revision 过期 → 409；本端点
+         *     记录（尽力而为：失败只记日志）、释放失效锁存。**成功后账号立即可选**：健康面
+         *     回到「无记录」等价于 READY，不写新记录、不等待探针。冷却默认到期自愈；
+         *     强制恢复会立即重新探测上游。expected_revision 过期 → 409；本端点
          *     不启用被禁用的账号（enabled 独立，经 PATCH /api/user/supplier/accounts/{id} 修改）。
          */
         post: operations["PostSupplierAccountsIdRecover"];

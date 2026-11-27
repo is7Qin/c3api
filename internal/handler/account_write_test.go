@@ -121,7 +121,7 @@ func TestAccountWriteTriState(t *testing.T) {
 // TestAccountPatchIfMatch If-Match 前置条件：匹配 → 生效；陈旧 → 412；缺席 →
 // 生效；语法非法（W/、多值、*、非整数）→ 400。
 func TestAccountPatchIfMatch(t *testing.T) {
-	h, store, _, _ := newLifecycleTestHandler(t)
+	h, store, _ := newLifecycleTestHandler(t)
 	r := newIfMatchRouter(h)
 
 	do := func(id, body, ifMatch string, setHeader bool) *httptest.ResponseRecorder {
@@ -195,7 +195,7 @@ func TestAccountBatchUpdateRevisions(t *testing.T) {
 // TestAccountCreateEnabledFalseAndFilter 显式 enabled:false 在创建时生效；
 // enabled 列表过滤只返回匹配行。
 func TestAccountCreateEnabledFalseAndFilter(t *testing.T) {
-	hh, _, _ := newEnabledFilterRouter(t)
+	hh, _ := newEnabledFilterRouter(t)
 
 	rec := hh.do(http.MethodPost, "/api/admin/accounts", `{"name":"on","template_id":1,"upstream_key":"sk-x"}`)
 	require.Equal(t, 200, rec.Code, "create default: %s", rec.Body.String())

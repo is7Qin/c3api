@@ -279,7 +279,6 @@ func newBillingFace(d billingDeps) *billingFace {
 			Stats:  cfg.Usage.StatsRetentionDays,
 		},
 		ClearBalanceWarningCooldown:     bwCooldown,
-		RecoverProber:                   runtimeHealth,
 		RecoverLatch:                    latchStore,
 		RecoverHealthClear:              runtimeHealth,
 		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,

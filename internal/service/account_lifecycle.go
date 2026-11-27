@@ -12,13 +12,6 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// RecoverProber recover→PROBING 健康写入面（*scheduler.RuntimeHealth 满足）：
-// 恢复 CAS 成功后对新 revision 写通配 PROBING，探针环接管后续。nil = 未装配
-// （测试/降级），recover 仍完成持久恢复（调度器周期同步兜底收敛）。
-type RecoverProber interface {
-	SetProbing(ctx context.Context, accountID int64, revision int64) error
-}
-
 // RecoverLatchReleaser recover→latch 显式释放面（*latch.LatchStore 满足）：
 // 恢复 CAS 成功后清除该账号的失效锁存，否则该账号永久不可选。nil = 未装配
 // （跳过释放）。
@@ -28,24 +21,32 @@ type RecoverLatchReleaser interface {
 
 // RecoverHealthClearer recover→健康记录显式清除面（*scheduler.RuntimeHealth
 // 满足）：恢复 CAS 成功后清除该账号的全部健康记录，否则旧代际的 per-route
-// OPEN 记录仍压住新 PROBING。nil = 未装配（跳过清除）。
+// OPEN 记录仍压住该账号。nil = 未装配（跳过清除）。
+//
+// 这是恢复的**唯一**健康面动作，且必须是纯清除：清空即「无记录」，而
+// EffectiveState 把无记录视作 READY，账号因此立即可选。**不要在这里写任何
+// 新记录**——尤其不要写 PROBING：它是唯一需要探针推进才能离开的状态，写它就
+// 等于把「恢复是否生效」绑死在一个可选组件上。
 type RecoverHealthClearer interface {
 	ClearAccount(ctx context.Context, accountID int64) (int64, error)
 }
 
 // RecoverAccount 生命周期 fenced 恢复：CAS expectedRevision 清失效三字段
-// （failed_at/last_error/failure_source）并 +1 → 显式释放 latch + 显式清除该
-// 账号健康记录 → 新 revision 写 PROBING（best effort，失败仅 Warn——恢复已持
-// 久，探针环由同步周期兜底）→ 组级失效 + NOTIFY。revision 过期 →
-// ErrConflict（409）；账号缺 id → ErrNotFound（404）。
+// （failed_at/last_error/failure_source）并 +1 → 显式释放 latch → 显式清除该
+// 账号全部健康记录 → 组级失效 + NOTIFY。revision 过期 → ErrConflict（409）；
+// 账号缺 id → ErrNotFound（404）。
+//
+// **返回成功即意味着账号可选**：清空健康记录后 EffectiveState 判为 READY，
+// 选号门（attempt_plan_reservation 的 StateReady 等式）不再拒绝它。恢复链路
+// 不写任何新健康记录，因此不依赖探针环是否在跑——「可选组件不得是命令生效的
+// 必要条件」是这条链路的硬约束。
 func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64) (*domain.Account, error) {
 	if expectedRevision < 1 {
 		return nil, ErrInvalidInput
 	}
-	acct, err := s.store.GetAccount(ctx, id)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
+	// 没有任何前置读：CAS 自身区分「账号不存在」（ErrNotFound）与「代际过期」
+	// （ErrConflict），预读只会制造一个用不上的窗口（读到的账号状态在 CAS 前
+	// 就可能过期）。恢复也不推 K，因此不需要事先拿到 K。
 	if err := mapRepoErr(s.store.RecoverAccountCAS(ctx, id, expectedRevision)); err != nil {
 		return nil, err
 	}
@@ -55,14 +56,6 @@ func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64
 	if s.recoverHealthClear != nil {
 		if _, err := s.recoverHealthClear.ClearAccount(ctx, id); err != nil {
 			s.log.Warn("recover health clear failed", logx.Int64("account_id", id), logx.Error(err))
-		}
-	}
-	if s.recoverProber != nil {
-		// 健康记录按 K（identity_revision）隔离——EffectiveState 以 K 查询，
-		// 故 PROBING 必须以 K 写入，否则该记录永不被命中。恢复**不是身份写入**：
-		// K 不变，故 CAS 前取到的 K 仍然有效（无需重取）。
-		if err := s.recoverProber.SetProbing(ctx, id, acct.IdentityRevision); err != nil {
-			s.log.Warn("recover probing health write failed", logx.Int64("account_id", id), logx.Error(err))
 		}
 	}
 	s.invalidateAccountLifecycle(ctx, id)
