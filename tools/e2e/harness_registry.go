@@ -13,7 +13,8 @@
 //     尚处 starting|services_up|spawning 一律不回收（warn），宁可泄漏不可误删；
 //   - 回收前用 CAS（rename run-*.json -> run-*.json.reaping.<sweeper>）独占记录；
 //     强杀前逐个校验 creation_time（PID 复用安全）；PG 有活跃连接不 DROP；
-//     Redis 锁 owner uuid 不匹配只 warn 不删。
+//     Redis 锁 owner uuid 不匹配 => 保留记录与锁并返回可重试 error（下次 sweep 重试；
+//     绝不删除记录让孤儿索引失去追踪，P0 review momus Minor-3 / spec §13）。
 package e2e
 
 import (
@@ -787,7 +788,8 @@ func reclaimRunRecord(rec *runRecord, logf func(string, ...any)) error {
 			return fmt.Errorf("DROP PG 库失败: %w", err)
 		}
 	}
-	// 3) Redis 预留：owner uuid 匹配才删（不匹配只 warn 不删，spec §9.4）。
+	// 3) Redis 预留：owner uuid 匹配才删；不匹配 => 保留记录 + 保留锁 + 返回可重试 error
+	//    （调用方把 .reaping 恢复为正式记录，下次 sweep 重试；spec §9.4/§13）。
 	if rec.AllocatedRedisDB >= e2eRedisDBMin && rec.LockUUID != "" {
 		lock, err := readRedisLock(rec.AllocatedRedisDB)
 		if err != nil {
