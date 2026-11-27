@@ -26,8 +26,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
-	"github.com/is7qin/c3api/internal/supplier"
+	"github.com/is7qin/c3api/internal/supplierport"
 )
 
 // supplierTxTimeout 单个记账/解冻事务预算（per-batch 有界 ctx，§5.7）。
@@ -51,7 +52,7 @@ type SupplierRepoConfig struct {
 	RiskReviewMaxAge     time.Duration
 }
 
-// SupplierRepo 供应商记账链 / 解冻链持久面（实现 supplier.CreditStore；另暴露
+// SupplierRepo 供应商记账链 / 解冻链持久面（实现 supplierport.CreditStore；另暴露
 // 视图装载 / lag / 启动校验 / 会话锁）。
 type SupplierRepo struct {
 	client *ent.Client
@@ -63,9 +64,9 @@ var errSupplierNoPool = errors.New("supplier repo: pgx pool not configured (repo
 
 // 编译期断言：*SupplierRepo 实现供应商消费面接口。
 var (
-	_ supplier.CreditStore = (*SupplierRepo)(nil)
-	_ supplier.ThawStore   = (*SupplierRepo)(nil)
-	_ supplier.ViewStore   = (*SupplierRepo)(nil)
+	_ supplierport.CreditStore = (*SupplierRepo)(nil)
+	_ supplierport.ThawStore   = (*SupplierRepo)(nil)
+	_ supplierport.ViewStore   = (*SupplierRepo)(nil)
 )
 
 // ---------------------------------------------------------------------------
@@ -172,11 +173,11 @@ type SupplierOverride struct {
 }
 
 // ---------------------------------------------------------------------------
-// 记账链（supplier.CreditStore）
+// 记账链（supplierport.CreditStore）
 // ---------------------------------------------------------------------------
 
 // FetchCreditBatch 取批（消费索引①；`ORDER BY id LIMIT`，与索引①同谓词）。
-func (r *SupplierRepo) FetchCreditBatch(ctx context.Context, limit int) ([]supplier.BatchRow, error) {
+func (r *SupplierRepo) FetchCreditBatch(ctx context.Context, limit int) ([]domain.BatchRow, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -192,9 +193,9 @@ ORDER BY id LIMIT $1`
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]supplier.BatchRow, 0, limit)
+	out := make([]domain.BatchRow, 0, limit)
 	for rows.Next() {
-		var b supplier.BatchRow
+		var b domain.BatchRow
 		if err := rows.Scan(&b.ID, &b.UID, &b.Cost, &b.Earn, &b.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -240,7 +241,7 @@ func (r *SupplierRepo) FreezeHoursByUID(ctx context.Context, uids []int64) (map[
 		if !ok {
 			ov = nil
 		}
-		out[uid] = supplier.EffectiveFreezeHours(r.cfg.FreezeEnabled, ov, r.cfg.FreezeHoursDefault)
+		out[uid] = domain.EffectiveFreezeHours(r.cfg.FreezeEnabled, ov, r.cfg.FreezeHoursDefault)
 	}
 	return out, nil
 }
@@ -255,14 +256,14 @@ func (r *SupplierRepo) FreezeHoursByUID(ctx context.Context, uids []int64) (map[
 //	D UPDATE usage_logs SET supplier_credited=TRUE（标记计数守卫 == 批大小）。
 //
 // 任一步失败整事务回滚（含守卫不齐）；错误原样上抛（40P01/55P03 由 worker 分类重试）。
-func (r *SupplierRepo) ApplyCreditTx(ctx context.Context, batch []supplier.BatchRow, freezeByUID map[int64]int) error {
+func (r *SupplierRepo) ApplyCreditTx(ctx context.Context, batch []domain.BatchRow, freezeByUID map[int64]int) error {
 	if len(batch) == 0 {
 		return nil
 	}
 	if r.pool == nil {
 		return errSupplierNoPool
 	}
-	totals, recon, err := supplier.AggregateBatch(batch, freezeByUID)
+	totals, recon, err := domain.AggregateBatch(batch, freezeByUID)
 	if err != nil {
 		return err
 	}
@@ -284,7 +285,7 @@ func (r *SupplierRepo) ApplyCreditTx(ctx context.Context, batch []supplier.Batch
 	return tx.Commit(ctx)
 }
 
-func (r *SupplierRepo) applyCredit(ctx context.Context, tx pgx.Tx, batch []supplier.BatchRow, totals []supplier.UIDCredit, recon []supplier.DayRecon, freezeByUID map[int64]int) error {
+func (r *SupplierRepo) applyCredit(ctx context.Context, tx pgx.Tx, batch []domain.BatchRow, totals []domain.UIDCredit, recon []domain.DayRecon, freezeByUID map[int64]int) error {
 	g := r.cfg.GranularitySeconds
 	if g <= 0 {
 		g = 3600
@@ -444,9 +445,9 @@ func (r *SupplierRepo) ThawDueChunks(ctx context.Context, limit int) (int, error
 // ThawBucketStats 冻结桶物理观测（spec §7.2/G7）：单条聚合查询，零缓存。bucket_lag
 // = 最老未解冻桶 available_at 距 DB now 的秒数（全部未来 / 空 = 0，GREATEST 夹负）；
 // overdue = available_at <= now() 的桶。DAL 直读，供 thaw worker 每轮刷新 ops 面。
-func (r *SupplierRepo) ThawBucketStats(ctx context.Context) (supplier.ThawBucketSnapshot, error) {
+func (r *SupplierRepo) ThawBucketStats(ctx context.Context) (domain.ThawBucketSnapshot, error) {
 	if r.pool == nil {
-		return supplier.ThawBucketSnapshot{}, errSupplierNoPool
+		return domain.ThawBucketSnapshot{}, errSupplierNoPool
 	}
 	const q = `SELECT
     COUNT(*)::bigint,
@@ -454,11 +455,11 @@ func (r *SupplierRepo) ThawBucketStats(ctx context.Context) (supplier.ThawBucket
     COUNT(*) FILTER (WHERE available_at <= now())::bigint,
     COALESCE(SUM(amount) FILTER (WHERE available_at <= now()), 0)::bigint
 FROM supplier_frozen_chunks`
-	var st supplier.ThawBucketSnapshot
+	var st domain.ThawBucketSnapshot
 	if err := r.pool.QueryRow(ctx, q).Scan(
 		&st.BucketRows, &st.BucketLagSeconds, &st.OverdueRows, &st.OverdueAmount,
 	); err != nil {
-		return supplier.ThawBucketSnapshot{}, err
+		return domain.ThawBucketSnapshot{}, err
 	}
 	return st, nil
 }
@@ -522,7 +523,7 @@ RETURNING supplier_user_id, amount`
 		if _, ok := deltaByUID[uid]; !ok {
 			order = append(order, uid)
 		}
-		sum, err := supplier.AddChecked(deltaByUID[uid], amt)
+		sum, err := domain.AddChecked(deltaByUID[uid], amt)
 		if err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("supplier thaw: %w", err)

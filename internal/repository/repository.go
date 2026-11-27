@@ -158,7 +158,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 }
 
 // SupplierRepo 用本门面的 client/driver/pool 与供应商配置构造记账链/解冻链
-// 持久面（实现 supplier.CreditStore 等消费面接口）。cfg 携带记账链读取所需的
+// 持久面（实现 supplierport.CreditStore 等消费面接口）。cfg 携带记账链读取所需的
 // 生效默认（share_bp_default / freeze 默认与开关 / 粒度）。
 func (r *Repository) SupplierRepo(cfg SupplierRepoConfig) *SupplierRepo {
 	r.supplier = &SupplierRepo{client: r.Client, pool: r.pool, cfg: cfg}

@@ -35,6 +35,7 @@
 | 价格同步/预览的**结果值**（handler 侧消费方接口、`FetchError` 谓词） | `pricingresult/AGENTS.md` + `handler/AGENTS.md` |
 | PostgreSQL 事务可重试错误分类（SQLSTATE） | `pgretry/AGENTS.md` |
 | 实体状态枚举（active/disabled）的权威定义 | `statusenum/AGENTS.md` |
+| 供应商记账/解冻/视图链的**存储契约**（worker 声明、repository 实现） | `supplierport/AGENTS.md` |
 | codex 协议的**纯解析/纯数据**（account id 派生、用量错误分类类型） | `codexproto/AGENTS.md` + `handler/AGENTS.md` |
 | 规则引擎 | `rule/AGENTS.md` |
 | 路由装配 / 中间件 | `server/AGENTS.md` |
@@ -49,6 +50,7 @@
 **中立叶子包**（只依赖 stdlib，`to: []string{}`）：`modelmap` / `identityenv` / `pkg/headervalid`（头 wire 判据，`pkg/*` 不受 legacy 通道管辖）/ `pricingresult` / `codexproto`。
 **只依赖第三方驱动的叶子**：`pgretry`（只 import `pgconn，零内部依赖）、
 `statusenum`（零 import）。
+**只依赖 domain 的契约叶子**：`supplierport`、`loadport`。
 ⚠ `codexproto` **禁止** import 任何 `internal/*` 或 `pkg/*`（尤其禁止"薄包 sdkbridge"——那会带进 218 个传递依赖，中立叶子失效）；它的 JWT 解析与第三方 `codexsdk.AccountIDFromToken` 是**两份实现**，一致性由 `codexproto_test.go` 的对照用例钉住。
 **测试夹具特权**（`testFixtureAllow`，跨层是允许的）：`testsupport/`、`ent/`、`db/migrate`、
 `repository`、`rulepersist`、`sdkbridge`、`server`、`billing`。

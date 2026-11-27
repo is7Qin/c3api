@@ -10,15 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/is7qin/c3api/internal/supplierport"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
-
-// ViewStore 供应商视图装载持久面（repository 实现：accounts 归属 + supplier_balances
-// 分成率，同一一致性视图；§4.3）。
-type ViewStore interface {
-	LoadSupplierView(ctx context.Context) (owner map[int64]int64, share map[int64]int, err error)
-}
 
 // ViewSink 视图发布面（*SupplierSnapshot 实现：单原子指针换入一致视图；失败
 // 保留旧视图 fail-safe）。
@@ -151,3 +146,6 @@ func (l *ViewLoader) warnRateLimited(msg string, fields ...logx.Field) {
 	l.lastWarnMs.Store(now)
 	l.log.Warn(msg, fields...)
 }
+
+// ViewStore 的 canonical 定义在 internal/supplierport（见该包文档）。
+type ViewStore = supplierport.ViewStore

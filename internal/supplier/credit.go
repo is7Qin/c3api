@@ -15,29 +15,8 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 
 	"github.com/is7qin/c3api/internal/pgretry"
+	"github.com/is7qin/c3api/internal/supplierport"
 )
-
-// CreditStore credit 链持久面（repository 实现绑定真实 PG；测试注入 fake）。
-// 每个方法自持事务边界（ApplyCreditTx 单事务含阶段 A→D 与两条守卫 + 守恒）。
-type CreditStore interface {
-	// FetchCreditBatch 取批（消费索引①；`ORDER BY id LIMIT`，双谓词
-	// `NOT supplier_credited AND supplier_earn_millis > 0`）。返回行携带
-	// uid/cost/earn/created_at（§5.1 ①）。
-	FetchCreditBatch(ctx context.Context, limit int) ([]BatchRow, error)
-	// FreezeHoursByUID 各 uid 生效冻结小时（全局开关优先 + NULL 注入默认，§2.4）。
-	FreezeHoursByUID(ctx context.Context, uids []int64) (map[int64]int, error)
-	// ApplyCreditTx 单事务（阶段 A chunks → B 按 uid 升序预锁 balances → C 建行/
-	// 累加 → D 标记 usage_logs credited）：余额覆盖守卫 + 标记计数守卫 + 金额守恒；
-	// 任一失败整事务回滚。封账按源日 upsert（§3.10）。
-	ApplyCreditTx(ctx context.Context, batch []BatchRow, freezeByUID map[int64]int) error
-	// ReleaseFrozenNoWait freeze_enabled=false 的存量释放（忽略 available_at，
-	// 保留 LIMIT 每周期一批）——最终收敛语义（§5.4）。
-	ReleaseFrozenNoWait(ctx context.Context, limit int) (int, error)
-	// CreditLagHead 头行快速 lag（游标头 id 定位，低成本；高频）。
-	CreditLagHead(ctx context.Context) (int64, error)
-	// CreditLagFull 完整 backlog COUNT + SUM（O(backlog) 成本；降频）。
-	CreditLagFull(ctx context.Context) (rows int64, sumEarn int64, err error)
-}
 
 // CreditConfig credit worker 配置。
 type CreditConfig struct {
@@ -379,13 +358,6 @@ func uniqueUIDs(batch []BatchRow) []int64 {
 // 返回本哨兵 → 空转下轮。
 var ErrNotLeader = errors.New("supplier: not leader")
 
-// CreditLocker 记账链取批的 leader/会话锁面（repository *SupplierRepo 实现；单实例/
-// 测试用具名 NoopLocker）。I4：多实例用会话锁取批，标记计数守卫继续作锁丢失后的安全
-// 后盾（§5.2）。
-type CreditLocker interface {
-	AcquireSupplierLock(ctx context.Context) (release func(), ok bool, err error)
-}
-
 // NoopLocker 单实例/测试用 leader 锁：恒获取成功、release 为 no-op（与「未配置锁」
 // 等价，但不依赖类型断言）。
 type NoopLocker struct{}
@@ -410,3 +382,12 @@ func (w *CreditWorker) withLeaderLock(ctx context.Context, fn func()) (ok bool) 
 	fn()
 	return true
 }
+
+// 以下名字的 canonical 定义在 internal/supplierport（存储契约与行值的中立叶子）。
+// 别名而非新类型：worker 编排与既有调用点一字未动。
+type (
+	// CreditStore 记账链持久面。
+	CreditStore = supplierport.CreditStore
+	// CreditLocker 记账链串行化。
+	CreditLocker = supplierport.CreditLocker
+)

@@ -7,47 +7,17 @@
 // 无 DB 依赖，纯函数可单测（冻结参数、桶时刻、聚合法定/守恒、重试分类）。
 package supplier
 
-import "time"
+import "github.com/is7qin/c3api/internal/domain"
 
-// EffectiveFreezeHours 生效冻结小时（全局开关优先，§2.4）：
-//
-//	生效 = freeze_enabled ? COALESCE(row.freeze_hours, globalDefault) : 0
-//
-// rowOverride = nil ⇒ 继承 globalDefault；= &0 ⇒ 不冻结；> 0 ⇒ 覆盖。
-func EffectiveFreezeHours(freezeEnabled bool, rowOverride *int, globalDefault int) int {
-	if !freezeEnabled {
-		return 0
-	}
-	if rowOverride != nil {
-		return *rowOverride
-	}
-	return globalDefault
-}
+// freeze.go 冻结参数与桶时刻的**别名**：canonical 实现已下沉 internal/domain
+// 的 supplier_rules.go（持久化实现与 worker 编排都要用这些纯函数，
+// 而 repository 不该反向依赖 worker 编排包）。此处保留别名，既有调用点零改动。
 
-// BucketAvailableAt 桶时刻（写时算定，纯整数，单位统一到秒；§2.4）：
-//
-//	available_at = ceil_to(credited, g) + H×3600
-//	ceil_to(t, g) = (t + g − 1) / g × g   （整数运算；不用 time.Truncate）
-//
-// credited 取 DB clock_timestamp()（M1：不由各实例时钟决定）。g<=0 ⇒ 兜底 1s。
-func BucketAvailableAt(credited time.Time, g time.Duration, freezeHours int) time.Time {
-	gs := int64(g / time.Second)
-	if gs <= 0 {
-		gs = 1
-	}
-	t := credited.Unix()
-	ceil := ((t + gs - 1) / gs) * gs
-	return time.Unix(ceil+int64(freezeHours)*3600, 0).UTC()
-}
+// EffectiveFreezeHours 生效冻结小时（全局开关优先）。
+var EffectiveFreezeHours = domain.EffectiveFreezeHours
 
-// MaxActiveBuckets 数学紧上界 N(x) = ceil(x/g) − floor((x−H)/g) 的闭式上界
-// （§2.4/G7 第一层）：`g ∤ H` 与 `g | H` 均为 `ceil(H/g)+1`。默认 H=24,g=2h ⇒ 13。
-// 物理行数（G7 第二层）停摆/多代可超此界，不承诺无条件容量上界。
-func MaxActiveBuckets(g time.Duration, freezeHours int) int64 {
-	gs := int64(g / time.Second)
-	if gs <= 0 {
-		gs = 1
-	}
-	h := max(int64(freezeHours)*3600, 0)
-	return (h+gs-1)/gs + 1
-}
+// BucketAvailableAt 桶时刻（写时算定）。
+var BucketAvailableAt = domain.BucketAvailableAt
+
+// MaxActiveBuckets 活跃桶数紧上界。
+var MaxActiveBuckets = domain.MaxActiveBuckets

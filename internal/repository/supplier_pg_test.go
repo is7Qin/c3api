@@ -20,7 +20,6 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
-	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // ---- helpers ----
@@ -496,7 +495,7 @@ func TestPGSupplierAdminStateMachine(t *testing.T) {
 	require.NotNil(t, st.RiskReview)
 	// risk_review 严格反序列化 + 校验。
 	rr := pgText(t, pool, `SELECT risk_review FROM supplier_settlements WHERE id=$1`, st.ID)
-	require.NoError(t, supplier.ParseAndValidateRiskReview(rr, admin.ID, st.Revision-1, time.Now().UTC(), 24*time.Hour))
+	require.NoError(t, domain.ParseAndValidateRiskReview(rr, admin.ID, st.Revision-1, time.Now().UTC(), 24*time.Hour))
 
 	// claim 金额 != 单据金额 ⇒ 400（在置 paying 之前）。
 	_, err = sr.ClaimSettlement(ctx, st.ID, st.Revision, st.AmountMillis+1, testPayeeSnapshot("payee-acc-1"), testRiskEvidence(st.Revision), aActor)
@@ -640,11 +639,11 @@ func TestPGSupplierClaimRiskMatrix(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.SettlementPaying, st.Status)
 	rrRaw := pgText(t, pool, `SELECT risk_review FROM supplier_settlements WHERE id=$1`, st.ID)
-	rr, err := supplier.ParseRiskReview(rrRaw)
+	rr, err := domain.ParseRiskReview(rrRaw)
 	require.NoError(t, err)
 	require.Equal(t, admin.ID, rr.OperatorID)
-	require.Equal(t, supplier.RiskReviewScope, rr.Scope)
-	require.Equal(t, supplier.RiskReviewDecision, rr.Decision)
+	require.Equal(t, domain.RiskReviewScope, rr.Scope)
+	require.Equal(t, domain.RiskReviewDecision, rr.Decision)
 	require.Equal(t, approvedRev, rr.ApprovedRevision)
 	require.Equal(t, "bank-ref", rr.Evidence.Reference)
 	require.Equal(t, "checked bank statement and ledger", rr.Evidence.Summary)
@@ -674,7 +673,7 @@ func TestPGSupplierPayoutGate(t *testing.T) {
 	st, err = sr.ApproveSettlement(ctx, st.ID, st.Revision, aActor)
 	require.NoError(t, err)
 	_, err = sr.ClaimSettlement(ctx, st.ID, st.Revision, st.AmountMillis, testPayeeSnapshot("payee"), testRiskEvidence(st.Revision), aActor)
-	require.ErrorIs(t, err, supplier.ErrPayoutGate, "billing 关闭 ⇒ 拒绝放行")
+	require.ErrorIs(t, err, domain.ErrPayoutGate, "billing 关闭 ⇒ 拒绝放行")
 	// 仍为 approved（未置 paying）。
 	require.Equal(t, "approved", pgText(t, pool, `SELECT status FROM supplier_settlements WHERE id=$1`, st.ID))
 
@@ -685,7 +684,7 @@ func TestPGSupplierPayoutGate(t *testing.T) {
 	pgExec(t, pool, `INSERT INTO usage_logs (request_id, model, format, error_type, cost, created_at, billed)
 		VALUES ('gate-backlog','m','openai-chat','none',100, now() - interval '1 hour', false)`)
 	_, err = sr2.ClaimSettlement(ctx, st.ID, st.Revision, st.AmountMillis, testPayeeSnapshot("payee"), testRiskEvidence(st.Revision), aActor)
-	require.ErrorIs(t, err, supplier.ErrPayoutGate, "队头滞留超阈值 ⇒ 拒绝")
+	require.ErrorIs(t, err, domain.ErrPayoutGate, "队头滞留超阈值 ⇒ 拒绝")
 
 	// 清理 backlog 后放行。
 	pgExec(t, pool, `UPDATE usage_logs SET billed = true WHERE request_id = 'gate-backlog'`)

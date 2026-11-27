@@ -179,6 +179,7 @@ var structFieldSpecs = []structFieldSpec{
 var revisionVocabulary = map[string]string{
 	"AccountRevision":            "C：批量更新响应条目（回显）",
 	"ApprovedRevision":           "结算单审批的 CAS revision（风险评估核对绑定；非账号代际 C/K）",
+	"approvedRevision":           "结算单审批的 CAS revision 的形参写法（与 ApprovedRevision 同义：BuildRiskReview/ValidateRiskReview 的入参；非账号代际 C/K）",
 	"ConfigRevision":             "配置代际：payment_accounts.config_revision（spec 支付网关 v2 §3-1：每次 config 变更 +1，与 account_key 一起构成 service 配置缓存键；非账号代际 C/K）",
 	"AddConfigRevision":          "配置代际：ent 相对自增（payment_accounts.config_revision 随 config 变更 +1 ⇒ 配置缓存键失效；spec 支付网关 v2 §3-1）",
 	"AddIdentityRevision":        "K：ent 相对自增",
@@ -227,6 +228,7 @@ var revisionTags = map[string]string{
 	// 与 C 无关——保留"_revision"后缀是刻意与既有哨兵名对齐，不是复用泛化名。
 	`json:"persist_failures_missing_revision"`: "K：缺期望身份代际的 persist 失败计数（观测面）",
 	`json:"persist_failures_stale_revision"`:   "K：K 已陈旧（被管理面推进）的 persist 失败计数（观测面）",
+	`json:"approved_revision"`:                 "结算单审批的 CAS revision（risk_review JSON 字段；与 ApprovedRevision/approvedRevision 同义，非账号代际 C/K）",
 }
 
 // --- 扫描基础设施 ---

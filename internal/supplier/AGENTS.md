@@ -22,10 +22,17 @@
   `domain.UsageLog` 的 `SupplierEarnMillis` 字段注释。
 - **归属随选中固定**（非收尾重查）：转属/删除不改在途请求归属。
 
-## 已知架构债
+## 与 `internal/supplierport` 的分工
 
-`repository → supplier`（`productionLedger`）——repository 反向依赖本聚合。修复需把供应商视图
-抽成端口，属架构改造级（上一轮探明：14 个方法转发 + 8 处业务函数），**不要顺手做**。
+本包**只放 worker 编排**（生命周期、周期、重试编排、快照发布）。两类东西已迁出：
+
+| 内容 | 去处 | 理由 |
+|---|---|---|
+| 存储契约（`CreditStore`/`ThawStore`/`ViewStore`/`CreditLocker`） | `internal/supplierport` | 契约应由双方共享的中立叶子承载，否则实现方（repository）被迫依赖编排包 |
+| 纯规则与行值（`EffectiveFreezeHours`/`EvaluatePayoutGate`/风险三函数/`AggregateBatch`/`BatchRow` 等） | `internal/domain`（`supplier_rules.go`） | 无状态纯函数，持久化实现也要用；本包保留了**别名**，调用点零改动 |
+| PG 事务重试分类（`IsRetryableTxErr`） | `internal/pgretry` | SQLSTATE 是基础设施事实，不是领域规则 |
+
+`repository → supplier` 这条账本债因此已消除（`productionLedger` 现在 0 条）。
 
 ## 验证
 

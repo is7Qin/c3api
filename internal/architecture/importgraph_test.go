@@ -287,6 +287,10 @@ var allowRules = []allowRule{
 	// P3：实体状态枚举的唯一权威。零内部依赖（只有两个字符串）——
 	// 正因如此 ent schema（codegen 输入）才能直接依赖它。
 	{from: "internal/statusenum", to: []string{}},
+	// P4-3：供应商记账/解冻/视图链的存储契约。接口由消费方（worker 编排）声明、
+	// 由实现者（repository）实现——正确的倒置方向；抽到中立叶子后双方不再互相认识。
+	// 行值在 domain（本包只引用它们），因此唯一许可边是 domain。
+	{from: "internal/supplierport", to: []string{"internal/domain"}},
 
 	// P6-2：internal/codexproto 装 codex 协议的**纯数据与纯解析**（account id 的
 	// JWT claims 解析 + 用量查询失败的分类类型），零内部依赖、只 import stdlib。
@@ -375,7 +379,7 @@ var allowRules = []allowRule{
 	// 本包只留同值别名）。两者都是叶子包，不可能反向 import 本包。
 	{from: "internal/repository", to: []string{
 		"internal/domain", "internal/credential", "internal/ent", "internal/loadport", "internal/storeerr",
-		"internal/qualitymodel", "internal/inputmodel", "internal/paymenterr",
+		"internal/qualitymodel", "internal/inputmodel", "internal/paymenterr", "internal/supplierport",
 	}},
 
 	// 中立契约层（P3b）：数据面/控制面共享的 Selection 结构 + 4 方法句柄 + 2 方法计划面。
@@ -537,7 +541,7 @@ var allowRules = []allowRule{
 	// 结构上自动满足），只引用 internal/storeerr 的 ErrConflict 哨兵。
 	{from: "internal/rule", to: []string{"internal/domain", "internal/storeerr", "internal/worker", "pkg/logx"}},
 	{from: "internal/settingssnap", to: []string{"internal/domain", "pkg/logx"}},
-	{from: "internal/supplier", to: []string{"internal/domain", "internal/pgretry", "internal/worker", "pkg/logx"}},
+	{from: "internal/supplier", to: []string{"internal/domain", "internal/pgretry", "internal/supplierport", "internal/worker", "pkg/logx"}},
 	{from: "internal/usage", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
 	{from: "internal/verification", to: []string{"internal/domain"}},
 	{from: "internal/worker", to: []string{"pkg/logx"}},
@@ -795,7 +799,7 @@ const (
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "3f7cbb42c3ae7eaae051f7a95d2739cd539fefc42076bf3254f9e181fc70897d"
+	allowMatrixFingerprint = "0df3be9ad3ba9a21c0ce7c2418ba3953cfd2028370439370c440a8c72299eb60"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -971,10 +975,9 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 1,
+	debtMax: 0,
 	keepMax: 2,
-	debt: []legacyRow{
-		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
+	debt:    []legacyRow{
 		// P6-2 删行（debtMax 4 → 3，只减不增）：{internal/handler,
 		// internal/sdkbridge} 这条边已**真删**——handler 不再直接 import
 		// sdkbridge（account id 派生改调中立叶子 internal/codexproto，PAT 在线查询

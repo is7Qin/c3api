@@ -14,30 +14,14 @@ import (
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/pgretry"
+	"github.com/is7qin/c3api/internal/supplierport"
 )
 
 // retryMaxAttempts 是 40P01/55P03 重试的上界（§5.7）。两个 worker（thaw 与
 // credit）共用同一个上界，不许各自再写一份字面量。
 const retryMaxAttempts = 5
-
-// ThawStore 解冻链持久面（repository 实现：四步独立顺序 SQL + 单连接契约 + 提交前
-// 覆盖守卫；§5.3）。ThawDueChunks 返回本批删除的桶行数。
-type ThawStore interface {
-	ThawDueChunks(ctx context.Context, limit int) (int, error)
-	// ThawBucketStats 冻结桶物理观测（§7.2/G7）：bucket_rows（总行数）、
-	// bucket_lag（最老未解冻桶 available_at 距今秒数；全部未来/空 = 0）、overdue
-	// 行数/金额。物理行数在停摆/多代可超数学上界，故容量以观测保证。
-	ThawBucketStats(ctx context.Context) (ThawBucketSnapshot, error)
-}
-
-// ThawBucketSnapshot 冻结桶物理观测（spec §7.2/G7）：DAL 直读，零缓存。
-type ThawBucketSnapshot struct {
-	BucketRows       int64 // supplier_frozen_chunks 总行数
-	BucketLagSeconds int64 // 最老未解冻桶 available_at 距 now 秒数（全部未来/空 = 0）
-	OverdueRows      int64 // 已到期（available_at <= now）桶行数
-	OverdueAmount    int64 // 已到期桶金额合计（millis）
-}
 
 // thawRateWindow 解冻速率滚动窗口（spec §7.2：滚动 5 min 成功删除行/s）。
 const thawRateWindow = 5 * time.Minute
@@ -265,3 +249,11 @@ func (w *ThawWorker) Close(ctx context.Context) error {
 	w.refreshBucketStats(ctx)
 	return nil
 }
+
+// canonical 定义在 internal/supplierport（见该包文档）。
+type (
+	// ThawStore 解冻链持久面。
+	ThawStore = supplierport.ThawStore
+	// ThawBucketSnapshot 冻结桶物理观测。
+	ThawBucketSnapshot = domain.ThawBucketSnapshot
+)

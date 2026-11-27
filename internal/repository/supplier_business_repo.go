@@ -21,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // SupplierOverview 供应商收益概览（§6.1）。
@@ -76,7 +75,7 @@ LEFT JOIN LATERAL (
 		v := int(*freezeHours)
 		fh = &v
 	}
-	ov.FreezeHours = supplier.EffectiveFreezeHours(r.cfg.FreezeEnabled, fh, r.cfg.FreezeHoursDefault)
+	ov.FreezeHours = domain.EffectiveFreezeHours(r.cfg.FreezeEnabled, fh, r.cfg.FreezeHoursDefault)
 	return &ov, nil
 }
 

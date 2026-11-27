@@ -29,7 +29,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // --- 停用 liability 校验（I6/A23，§5.5）---
@@ -431,7 +430,7 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	amountMillis, payee, risk = cmd.AmountMillis, cmd.Payee, cmd.Risk
-	riskEvidence := supplier.Evidence{Reference: risk.Reference, Summary: risk.Summary}
+	riskEvidence := domain.Evidence{Reference: risk.Reference, Summary: risk.Summary}
 	payeeSnapshot, err := encodePayeeSnapshot(payee)
 	if err != nil {
 		return nil, err
@@ -473,13 +472,13 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
 			return err
 		}
-		cfg := supplier.PayoutGateConfig{
+		cfg := domain.PayoutGateConfig{
 			BillingEnabled: r.cfg.BillingEnabled,
 			MaxBacklogRows: r.cfg.PayoutMaxBacklogRows,
 			MaxBacklogAge:  r.cfg.PayoutMaxBacklogAge,
 			MaxObserveAge:  r.cfg.PayoutMaxObserveAge,
 		}
-		if err := supplier.EvaluatePayoutGate(cfg, probe, dbNow); err != nil {
+		if err := domain.EvaluatePayoutGate(cfg, probe, dbNow); err != nil {
 			return err
 		}
 		riskReview, err := buildRiskReview(actor, riskEvidence, expectedRevision, dbNow, r.cfg.RiskReviewMaxAge)
@@ -595,8 +594,8 @@ func (r *SupplierRepo) AdminApplySettlement(ctx context.Context, req domain.Appl
 // 判据 = NOT billed + billableSQL + cost > 0，必须与账本消费面同一事实源
 // （billable_sql.go）；否则已交付失败行不计入 backlog，供应商提现门禁会被少算
 // 的积压量放行。
-func (r *SupplierRepo) billingProbe(ctx context.Context, tx pgx.Tx) (supplier.BillingProbe, error) {
-	var p supplier.BillingProbe
+func (r *SupplierRepo) billingProbe(ctx context.Context, tx pgx.Tx) (domain.BillingProbe, error) {
+	var p domain.BillingProbe
 	const q = `SELECT count(*)::bigint, MIN(created_at), statement_timestamp()
 FROM usage_logs WHERE NOT billed AND ` + billableSQL + ` AND cost > 0`
 	if err := tx.QueryRow(ctx, q).Scan(&p.BacklogRows, &p.OldestCreatedAt, &p.ObservedAt); err != nil {
@@ -610,16 +609,16 @@ FROM usage_logs WHERE NOT billed AND ` + billableSQL + ` AND cost > 0`
 // expires_at（decided_at + max_age），绑定 approved_revision；evidence（reference +
 // summary）由客户端结构化提供并校验非空。**落库前对构建出的记录做严格反序列化 +
 // 校验（round-trip）**——任何非良构记录失败闭合（A22 拒绝矩阵）。返回持久化文本。
-func buildRiskReview(actor domain.FundsActor, evidence supplier.Evidence, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (string, error) {
-	rr, err := supplier.BuildRiskReview(actor.UserID, evidence, expectedRevision, decidedAt, maxAge)
+func buildRiskReview(actor domain.FundsActor, evidence domain.Evidence, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (string, error) {
+	rr, err := domain.BuildRiskReview(actor.UserID, evidence, expectedRevision, decidedAt, maxAge)
 	if err != nil {
 		return "", err
 	}
-	raw, err := supplier.MarshalRiskReview(rr)
+	raw, err := domain.MarshalRiskReview(rr)
 	if err != nil {
 		return "", err
 	}
-	if err := supplier.ParseAndValidateRiskReview(raw, actor.UserID, expectedRevision, decidedAt, maxAge); err != nil {
+	if err := domain.ParseAndValidateRiskReview(raw, actor.UserID, expectedRevision, decidedAt, maxAge); err != nil {
 		return "", err
 	}
 	return raw, nil
