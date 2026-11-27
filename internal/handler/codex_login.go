@@ -44,14 +44,14 @@ func (h *AdminAPI) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.R
 
 // PostAccountsCodexDeviceLoginComplete performs exactly one manual completion.
 // BPS profile generation is server-side in the SDK adapter; the client submits
-// only the device grant, template and optional group.
+// only the device grant, template, optional group and optional egress proxy.
 func (h *AdminAPI) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
 	var in CodexDeviceLoginCompleteBody
 	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	res, err := h.svc.CompleteDeviceLogin(r.Context(), loginProvider(in.Provider), in.DeviceAuthId, in.UserCode, in.TemplateId, in.GroupId)
+	res, err := h.svc.CompleteDeviceLogin(r.Context(), loginProvider(in.Provider), in.DeviceAuthId, in.UserCode, in.TemplateId, in.GroupId, in.ProxyId)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

@@ -4236,6 +4236,10 @@ components:
         enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
+        # 出口代理绑定（仅**新建行**生效，与 enabled/cache_domain 同款）：导入面没有
+        # 「解绑」语义，故不是三态——缺省/0 = 直连，>0 = 绑定，<0 → 400 整批拒绝。
+        # 谓词与创建面同源（spec-proxy-pool §3.6）：不可见/不可绑 → 404，整批一行不落库。
+        proxy_id: { type: integer, format: int64, description: "可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）" }
         # 归属（spec §2.5）：供应商面导入体出现该字段（含 null）⇒ 400；供应商面
         # 归属恒写 JWT 本人。管理面（导入端点仅 /api/admin）保留字段以便 400 显式拒绝。
         supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
@@ -4256,6 +4260,8 @@ components:
         enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
+        # 出口代理绑定（同上：仅新建行生效、非三态、谓词与创建面同源）。
+        proxy_id: { type: integer, format: int64, description: "可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）" }
         supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
     DeviceLoginProvider:
       type: string
@@ -4284,6 +4290,9 @@ components:
         user_code: { type: string, description: "发起响应原样回传" }
         template_id: { type: integer, format: int64, description: "模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。" }
         group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（不存在 → 404，且不消费上游授权码）" }
+        # 出口代理绑定（仅**新建行**生效）：缺省/0 = 直连，>0 = 绑定，<0 → 400。
+        # 谓词与创建面同源——不可见/不可绑 → 404，且不消费上游授权码（与 group_id 同序）。
+        proxy_id: { type: integer, format: int64, description: "可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400）" }
     CodexDeviceLoginResult:
       type: object
       required: [status]

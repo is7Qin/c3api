@@ -994,6 +994,9 @@ type CodexDeviceLoginCompleteBody struct {
 	// Provider 登录上游；省略 = codex。
 	Provider *DeviceLoginProvider `json:"provider,omitempty"`
 
+	// ProxyId 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400）
+	ProxyId *int64 `json:"proxy_id,omitempty"`
+
 	// TemplateId 模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。
 	TemplateId int64 `json:"template_id"`
 
@@ -1061,6 +1064,9 @@ type CodexOAuthImportBody struct {
 	GroupId *int64                 `json:"group_id"`
 	Items   []CodexOAuthImportItem `json:"items"`
 
+	// ProxyId 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）
+	ProxyId *int64 `json:"proxy_id,omitempty"`
+
 	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
 	SupplierUserId *int64 `json:"supplier_user_id"`
 
@@ -1103,6 +1109,9 @@ type CodexPATImportBody struct {
 	// GroupId 可选：新建账号归组（不存在 → 行级 failed）
 	GroupId *int64               `json:"group_id"`
 	Items   []CodexPATImportItem `json:"items"`
+
+	// ProxyId 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）
+	ProxyId *int64 `json:"proxy_id,omitempty"`
 
 	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
 	SupplierUserId *int64 `json:"supplier_user_id"`

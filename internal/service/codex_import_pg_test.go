@@ -337,7 +337,7 @@ func TestBPSImportCoexistsWithCodexAccountPG(t *testing.T) {
 		},
 		code: domain.CodexDeviceCode{AuthID: "auth-coexist", UserCode: "code"},
 	}}
-	bpsRes, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-coexist", "code", bpsTpl.ID, nil)
+	bpsRes, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-coexist", "code", bpsTpl.ID, nil, nil)
 	require.NoError(t, err, "同一上游身份不得阻塞 BPS 登录")
 	require.Equal(t, domain.CodexLoginAuthorized, bpsRes.Status)
 	require.True(t, bpsRes.Imported, "BPS 必须新建独立账号行")

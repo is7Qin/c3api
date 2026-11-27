@@ -38,6 +38,8 @@ const proxyPage = read('../components/proxy-pool-page.tsx')
 const proxyForm = read('../lib/proxy-form.ts')
 const enLocale = read('../locales/en.ts')
 const zhLocale = read('../locales/zh.ts')
+const importDialog = read('../components/codex-import/import-dialog.tsx')
+const loginDialog = read('../components/codex-import/login-dialog.tsx')
 
 // 取 `const NAME ... = [ ... ]` 的数组字面量主体（导航项 source-text 断言的锚点）。
 function navBlock(src: string, name: string): string {
@@ -495,5 +497,53 @@ describe('批量探测接线（spec batch-probe §1）', () => {
 
   it('选中集跑完不清空（失败的常常要重试）', () => {
     assert.ok(!/setSelected\(\[\]\)/.test(batchRunner), '批量路径不得清空选中集')
+  })
+})
+
+// 三条**创建**路径（新建 / 导入 / 设备码登录）都能在创建时选出口代理。
+// 新建是纯前端缺口（proxy_id 本来就是 AccountCreate 的字段），导入与登录是 wire 缺口。
+describe('账号创建三条路径的代理接线（源码形状）', () => {
+  it('新建对话框不再把代理选择器藏在编辑态后面', () => {
+    // 判据取**正向**：在代理块窗口里必须能改草稿的 proxy，且标签之前不得有
+    // `{editing && (` 之类的门。只否定一种旧写法会被 `{editing ? (…) : null}` /
+    // `<Field hidden={!editing}>` 绕过去；注释先剥掉，免得注释里的旧形状假红。
+    const code = accounts.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const at = code.indexOf("t('accounts.proxy.label')")
+    assert.ok(at > 0, '找不到代理块标签')
+    const before = code.slice(Math.max(0, at - 320), at)
+    assert.ok(!/\{editing && \(/.test(before), '代理块不得再被 editing 包裹（创建态也要能选）')
+    assert.ok(!/hidden=\{!editing\}/.test(before), '代理块不得用 hidden 藏起来')
+    const block = code.slice(at, code.indexOf('</div>', at))
+    assert.match(block, /update\('proxy', parseProxySelectValue\(v\)\)/, '创建态必须能写进草稿')
+    // 创建态用自己的提示文案（「不动这一项就保持原绑定」在建号时无对象）。
+    assert.match(code, /editing \? t\('accounts\.proxy\.hint'\) : t\('accounts\.proxy\.createHint'\)/)
+    // 不可见绑定提示仍只在编辑态出现（创建态回显恒为 null）。
+    assert.match(code, /\{editing && echoMayHideBinding\(kind, editing\.proxy_id\) && \(/)
+  })
+
+  it('代理候选查询在两个导入/登录对话框打开时也会拉取，且候选是同一个 query', () => {
+    assert.match(accounts, /enabled: dialogOpen \|\| batchUpdateOpen \|\| importOpen \|\| loginOpen/)
+    // 候选以 prop 下发（不在对话框里另开一个 query key——那会抄第二份作用域逻辑）。
+    const handed = accounts.match(/proxies=\{proxiesQ\.data\?\.rows \?\? \[\]\}/g) ?? []
+    assert.equal(handed.length, 2, '登录与导入两个对话框都要拿到同一批候选')
+    assert.equal(/useQuery/.test(importDialog), false, '导入对话框不自建 query')
+    assert.equal(/useQuery/.test(loginDialog), false, '登录对话框不自建 query')
+  })
+
+  it('导入的 proxy_id 进的是 body 级配置（直连 = 不发键）', () => {
+    assert.match(importDialog, /proxy_id\?: number/)
+    assert.match(importDialog, /if \(proxy\.kind === 'bind'\) cfg\.proxy_id = proxy\.id/)
+    assert.match(importDialog, /setCfgProxy\(PROXY_DIRECT_VALUE\)/, '重开对话框必须回到直连')
+  })
+
+  it('登录完成体带 proxy_id（直连 = 不发键）', () => {
+    assert.match(loginDialog, /proxy_id: proxy\.kind === 'bind' \? proxy\.id : undefined/)
+    assert.match(loginDialog, /setProxyId\(PROXY_DIRECT_VALUE\)/, 'reset 必须回到直连')
+  })
+
+  it('创建态提示文案两侧都有', () => {
+    for (const locale of [enLocale, zhLocale]) {
+      assert.ok(locale.includes('"createHint"'), 'accounts.proxy.createHint 必须两侧同时存在')
+    }
   })
 })

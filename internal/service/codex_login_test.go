@@ -91,7 +91,7 @@ func TestBPSLoginGeneratesProfileOnlyAfterAuthorization(t *testing.T) {
 	}
 	svc := New(Deps{Store: store, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes, BPSLogin: provider})
 
-	res, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginBPS, "auth-1", "code", 3, nil)
+	res, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginBPS, "auth-1", "code", 3, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexLoginPending, res.Status)
 	require.Equal(t, 0, provider.profileHits, "pending authorization must not create a profile")
@@ -99,7 +99,7 @@ func TestBPSLoginGeneratesProfileOnlyAfterAuthorization(t *testing.T) {
 	provider.status = domain.CodexLoginAuthorized
 	provider.tokens = &domain.CodexLoginTokens{Email: "user@example.com", AccountID: "acct", AccessToken: "at", RefreshToken: "rt"}
 	provider.profileErr = errors.New("profile generation failed")
-	_, err = svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginBPS, "auth-1", "code", 3, nil)
+	_, err = svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginBPS, "auth-1", "code", 3, nil, nil)
 	require.Error(t, err)
 	require.Equal(t, 1, provider.profileHits, "authorized BPS login must generate profile through provider SDK")
 }
@@ -142,7 +142,7 @@ func TestCompleteCodexOAuthDeviceLoginPending(t *testing.T) {
 	svc, store, provider := codexLoginFixture(t)
 	provider.status = domain.CodexLoginPending
 
-	res, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "ABCD-EFGHI", 1, nil)
+	res, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "ABCD-EFGHI", 1, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexLoginPending, res.Status)
 	require.Equal(t, "auth-1", provider.lastAuth, "回传凭据直接用于轮询")
@@ -158,23 +158,31 @@ func TestCompleteCodexOAuthDeviceLoginValidationBeforePoll(t *testing.T) {
 	provider.status = domain.CodexLoginAuthorized
 	provider.tokens = &domain.CodexLoginTokens{RefreshToken: "rt", AccountID: "a", Email: "e@example.com"}
 
-	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 2, nil) // codex-pat 模板
+	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 2, nil, nil) // codex-pat 模板
 	require.ErrorIs(t, err, ErrInvalidInput)
 	require.Equal(t, 0, provider.pollHits, "类型错配不得消费上游授权码")
 
 	missing := int64(99)
-	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &missing)
+	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &missing, nil)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Equal(t, 0, provider.pollHits, "分组不存在不得消费上游授权码")
 	require.Empty(t, store.accs)
 
-	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "", "code", 1, nil)
+	// 出口代理：与 group 同序（**轮询之前**）。不可绑 → 404 且码未消费——否则用户
+	// 拿着合法的设备码被一个写错的 proxy_id 烧掉，只能重新登录。
+	missingProxy := int64(4242)
+	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, &missingProxy)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Equal(t, 0, provider.pollHits, "代理不可绑不得消费上游授权码")
+	require.Empty(t, store.accs)
+
+	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "", 1, nil)
+	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "", 1, nil, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	bare := New(Deps{Store: newFakeStore(), EmailCodeStore: testEmailCodes})
-	_, err = bare.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err = bare.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrUnavailable)
 }
 
@@ -186,14 +194,14 @@ func TestCompleteCodexOAuthDeviceLoginTerminalStates(t *testing.T) {
 
 	for _, want := range []domain.CodexLoginStatus{domain.CodexLoginExpired, domain.CodexLoginDenied} {
 		provider.status = want
-		res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+		res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, want, res.Status)
 		require.Empty(t, store.accs)
 	}
 
 	provider.pollErr = errors.New("network down")
-	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrUpstream)
 }
 
@@ -209,7 +217,10 @@ func TestCompleteCodexOAuthDeviceLoginImports(t *testing.T) {
 		AccessToken: "at-1", RefreshToken: "rt-1", AccountID: "acc-1", Email: "a@example.com", ExpiresAt: &expires,
 	}
 
-	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &gid)
+	proxyID, err := svc.CreateProxy(ctx, validProxyInput())
+	require.NoError(t, err)
+
+	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &gid, &proxyID)
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexLoginAuthorized, res.Status)
 	require.True(t, res.Imported)
@@ -236,12 +247,14 @@ func TestCompleteCodexOAuthDeviceLoginImports(t *testing.T) {
 	require.Equal(t, 25, acc.MaxConcurrency, "导入面并发缺省 25")
 	require.True(t, acc.Enabled, "缺省启用")
 	require.Equal(t, int64(0), acc.SupplierUserID, "管理面建号归平台")
+	require.NotNil(t, acc.ProxyID, "登录参数里的代理落到新建行")
+	require.Equal(t, proxyID, *acc.ProxyID)
 
 	// 同键再次完成（凭据更新路径）：updated、账号行 id 不变、身份沿用。
 	provider.tokens = &domain.CodexLoginTokens{
 		AccessToken: "at-2", RefreshToken: "rt-2", AccountID: "acc-1", Email: "a@example.com", ExpiresAt: &expires,
 	}
-	res2, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &gid)
+	res2, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, &gid, nil)
 	require.NoError(t, err)
 	require.False(t, res2.Imported, "同键 → 凭据更新")
 	require.Equal(t, res.AccountID, res2.AccountID)
@@ -249,6 +262,10 @@ func TestCompleteCodexOAuthDeviceLoginImports(t *testing.T) {
 	ext, err = store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "at-2", *ext.CodexOAuthToken)
+	acc, err = store.GetAccount(ctx, ext.AccountID)
+	require.NoError(t, err)
+	require.NotNil(t, acc.ProxyID, "凭据更新不得动代理绑定")
+	require.Equal(t, proxyID, *acc.ProxyID, "凭据更新不得动代理绑定")
 }
 
 // TestCompleteCodexOAuthDeviceLoginSupplierScope 供应商面完成：账号归属 = JWT 本人
@@ -259,7 +276,7 @@ func TestCompleteCodexOAuthDeviceLoginSupplierScope(t *testing.T) {
 	provider.tokens = &domain.CodexLoginTokens{AccessToken: "at", RefreshToken: "rt", AccountID: "acc", Email: "s@example.com"}
 
 	ctx := domain.WithAccountScope(context.Background(), domain.SupplierAccountScope(42))
-	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexLoginAuthorized, res.Status)
 
@@ -297,7 +314,7 @@ func TestCompleteCodexOAuthDeviceLoginRejectsIncompleteTokens(t *testing.T) {
 	}
 	for name, tokens := range cases {
 		provider.tokens = tokens
-		_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+		_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 		require.ErrorIs(t, err, ErrUpstream, name)
 
 		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
@@ -318,13 +335,13 @@ func TestCompleteCodexOAuthDeviceLoginSupplierReload(t *testing.T) {
 	svc := New(Deps{Store: store, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes, CodexLogin: provider, SupplierViewReload: reload})
 
 	provider.tokens = &domain.CodexLoginTokens{AccessToken: "at", RefreshToken: "rt", AccountID: "acc-1", Email: "a@example.com"}
-	_, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.NoError(t, err)
 	require.Zero(t, reload.calls, "管理面不触发供应商视图换代")
 
 	supplierCtx := domain.WithAccountScope(context.Background(), domain.SupplierAccountScope(42))
 	provider.tokens = &domain.CodexLoginTokens{AccessToken: "at2", RefreshToken: "rt2", AccountID: "acc-2", Email: "s@example.com"}
-	_, err = svc.CompleteDeviceLogin(supplierCtx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err = svc.CompleteDeviceLogin(supplierCtx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, reload.calls, "供应商面完成登录须触发财务视图换代")
 }
@@ -336,13 +353,13 @@ func TestCompleteCodexOAuthDeviceLoginMissingClaims(t *testing.T) {
 	provider.status = domain.CodexLoginAuthorized
 	provider.tokens = &domain.CodexLoginTokens{AccessToken: "at", RefreshToken: "rt", AccountID: "acc-1"}
 
-	_, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err := svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrUpstream)
 	require.Empty(t, store.accs, "缺 claims 不得落账号")
 	require.Empty(t, store.accExts)
 
 	provider.tokens = nil
-	_, err = svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err = svc.CompleteDeviceLogin(context.Background(), domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrUpstream)
 }
 
@@ -365,7 +382,7 @@ func TestCompleteCodexOAuthDeviceLoginRowErrorClassification(t *testing.T) {
 	svc := New(Deps{Store: store, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes, CodexLogin: provider})
 
 	// 首次成功（建立同键账号）
-	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.NoError(t, err)
 	ext, err := store.FindAccountExtByCodexKey(ctx, "c@example.com", "acc-c", credential.TypeCodexOAuth)
 	require.NoError(t, err)
@@ -375,7 +392,7 @@ func TestCompleteCodexOAuthDeviceLoginRowErrorClassification(t *testing.T) {
 	store.mu.Unlock()
 
 	// 软删同键 → 冲突（WriteServiceErr 映射 409），不是 500。
-	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err = svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.ErrorIs(t, err, ErrConflict, "软删同键是可操作冲突：%v", err)
 	require.NotContains(t, err.Error(), "db down")
 
@@ -383,7 +400,7 @@ func TestCompleteCodexOAuthDeviceLoginRowErrorClassification(t *testing.T) {
 	broken := newFakeStore()
 	broken.tpls[1] = &domain.Template{ID: 1, Name: "t", CredentialType: credential.TypeCodexOAuth}
 	brokenSvc := New(Deps{Store: errTxStore{broken}, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes, CodexLogin: provider})
-	_, err = brokenSvc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
+	_, err = brokenSvc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil, nil)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrConflict)
 }
@@ -418,7 +435,7 @@ func TestBPSLoginCoexistsWithCodexAccountForSameUpstreamIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, codex.Imported)
 
-	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-1", "code", 3, nil)
+	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-1", "code", 3, nil, nil)
 	require.NoError(t, err, "同一上游身份不得阻塞 BPS 登录")
 	require.Equal(t, domain.CodexLoginAuthorized, res.Status)
 	require.True(t, res.Imported, "BPS 必须新建独立账号行")

@@ -35,7 +35,9 @@ import (
 //     或身份代际——代理 CRUD 的失效走**全量 reload**（KindTemplates →
 //     Sched.InvalidateAll，与模板变更同一条 seam），不推进 C/K；账号侧的绑定变更
 //     仍只能经收口三动词（CreateAccount/PatchAccount/UpdateAccountsBatch）落到
-//     account.proxy_id。
+//     account.proxy_id。**新建行的初始绑定**是例外：ImportCodexOAuth|PATAccounts
+//     与 CompleteDeviceLogin 在 INSERT 时就把它写进去（它们只执行新建，已存在的
+//     幂等键命中只换凭据，不改绑定），谓词仍共用 resolveBindableProxy。
 //   - 代理批量导入（spec-proxy-import）：ImportProxies 逐行走**同一个** createProxyOnce
 //     （归一 + 私网判据 + 落库），唯一区别是失效收在循环之后（N 行一次重载）。它没有
 //     自己的写语义，因此也不推进任何代际。

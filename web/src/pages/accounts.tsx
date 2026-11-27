@@ -787,11 +787,11 @@ export default function Accounts() {
 
   // 出口代理候选（spec proxy-pool §7）：管理面 = GET /proxies（全部，含平台与各供应商
   // 私池），供应商面 = GET /api/user/supplier/proxies（只有自己的）。同一批相对路径方法，
-  // 切 base 即切作用域。仅在两个对话框打开时拉取（列表本身不显示代理名）。
+  // 切 base 即切作用域。任一打开着的账号对话框（新建/编辑/批量/导入/登录）都需要候选。
   const proxiesQ = useQuery({
     queryKey: ['proxies', kind],
     queryFn: () => api.listProxies(),
-    enabled: dialogOpen || batchUpdateOpen,
+    enabled: dialogOpen || batchUpdateOpen || importOpen || loginOpen,
   })
   const proxyItems = useMemo(
     () => {
@@ -1501,32 +1501,32 @@ export default function Accounts() {
               </div>
             )}
             {/* 出口代理（spec proxy-pool §7）：选项 = 直连 + 当前调用方可见的代理列表。
+                **创建态也必须可选**（proxy_id 是 AccountCreate 的字段，创建面本来就能落）；
+                编辑态额外提示回显可能掩盖的绑定。
                 **codex 账号同样可选**（v7 已覆盖 codex 面）——此处刻意不按凭据类型置灰。
                 未改动（草稿里没有该键）⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
-            {editing && (
-              <div className="space-y-1.5">
-                <Label>{t('accounts.proxy.label')}</Label>
-                <Select
-                  items={proxyItems}
-                  value={proxySelectValue(view.proxy)}
-                  onValueChange={v => update('proxy', parseProxySelectValue(v))}
-                >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={PROXY_DIRECT_VALUE} label={t('accounts.proxy.direct')}>{t('accounts.proxy.direct')}</SelectItem>
-                    {Object.entries(proxyItems)
-                      .filter(([v]) => v !== PROXY_DIRECT_VALUE && v !== PROXY_UNCHANGED_VALUE)
-                      .map(([v, label]) => (
-                        <SelectItem key={v} value={v} label={label}>{label}</SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">{t('accounts.proxy.hint')}</p>
-                {echoMayHideBinding(kind, editing.proxy_id) && (
-                  <p className="text-xs text-muted-foreground">{t('accounts.proxy.invisibleHint')}</p>
-                )}
-              </div>
-            )}
+            <div className="space-y-1.5">
+              <Label>{t('accounts.proxy.label')}</Label>
+              <Select
+                items={proxyItems}
+                value={proxySelectValue(view.proxy)}
+                onValueChange={v => update('proxy', parseProxySelectValue(v))}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PROXY_DIRECT_VALUE} label={t('accounts.proxy.direct')}>{t('accounts.proxy.direct')}</SelectItem>
+                  {Object.entries(proxyItems)
+                    .filter(([v]) => v !== PROXY_DIRECT_VALUE && v !== PROXY_UNCHANGED_VALUE)
+                    .map(([v, label]) => (
+                      <SelectItem key={v} value={v} label={label}>{label}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{editing ? t('accounts.proxy.hint') : t('accounts.proxy.createHint')}</p>
+              {editing && echoMayHideBinding(kind, editing.proxy_id) && (
+                <p className="text-xs text-muted-foreground">{t('accounts.proxy.invisibleHint')}</p>
+              )}
+            </div>
             {/* 生命周期直配（创建/编辑表单）：倍率默认 ×1，缓存域留空 =
                 账号私有域。随创建/PATCH 请求体一次落库（编辑态仅变化项才带）；
                 列表行内弹窗保留（点击倍率/缓存域单元格）。 */}
@@ -2065,6 +2065,7 @@ export default function Accounts() {
         onOpenChange={setLoginOpen}
         templates={templates}
         groups={groups}
+        proxies={proxiesQ.data?.rows ?? []}
         onDone={() => qc.invalidateQueries({ queryKey: ['accounts'] })}
       />
       <CodexImportDialog
@@ -2072,6 +2073,7 @@ export default function Accounts() {
         onOpenChange={setImportOpen}
         templates={templates}
         groups={groups}
+        proxies={proxiesQ.data?.rows ?? []}
         onDone={() => qc.invalidateQueries({ queryKey: ['accounts'] })}
       />
     </div>

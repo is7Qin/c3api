@@ -16,6 +16,7 @@ import { PreviewTable } from './preview-table'
 import { ResultView } from './result-view'
 import { getAdapter, type SourceId } from '@/lib/codex-import/adapters'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
+import { PROXY_DIRECT_VALUE, parseProxySelectValue, proxySelectItems } from '@/lib/account-proxy'
 import { importSequential } from '@/lib/codex-import/chunk'
 import type { CredentialKind, NormalizedRow } from '@/lib/codex-import/normalize'
 import type { components } from '@/lib/api/schema'
@@ -23,8 +24,9 @@ import { useScopedApi } from '@/lib/api/scope'
 
 type Template = components['schemas']['Template']
 type Group = components['schemas']['Group']
+type Proxy = components['schemas']['Proxy']
 
-export function CodexImportDialog({ open, onOpenChange, templates, groups, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; onDone: () => void }) {
+export function CodexImportDialog({ open, onOpenChange, templates, groups, proxies, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; proxies: Proxy[]; onDone: () => void }) {
   // 作用域客户端：管理面 /api/admin、供应商面 /api/user/supplier（spec §6.1 复用）。
   const api = useScopedApi()
   const { t } = useTranslation()
@@ -46,6 +48,8 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
   const [cfgEnabled, setCfgEnabled] = useState<'default' | 'true' | 'false'>('default')
   const [cfgDomain, setCfgDomain] = useState('')
   const [cfgMultiplier, setCfgMultiplier] = useState('')
+  // 出口代理（同上：body 级、只作用于本次新建账号）。哨兵值 = 直连（不发 proxy_id）。
+  const [cfgProxy, setCfgProxy] = useState(PROXY_DIRECT_VALUE)
   const [parseState, setParseState] = useState<{ rows: NormalizedRow[]; parseError?: string }>({ rows: [] })
   const [isPending, setIsPending] = useState(false)
   const [progress, setProgress] = useState<[number, number] | null>(null)
@@ -55,12 +59,17 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   const availableTemplates = useMemo(() => templates.filter(tp => tp.CredentialType === kind), [templates, kind])
+  // 代理选项（与账号编辑表单同源拼法；导入面没有「不变」态，故不传 unchangedLabel）
+  const proxyItems = useMemo(
+    () => proxySelectItems(proxies, { directLabel: t('accounts.proxy.direct'), disabledSuffix: t('accounts.proxy.disabledSuffix') }),
+    [proxies, t],
+  )
   const validRows = parseState.rows.filter((row: any) => row.item)
   const invalidCount = parseState.rows.length - validRows.length
 
   useEffect(() => {
     if (!open) return
-    setStep(1); setKind('codex-oauth'); setSource('cpa'); setTab('text'); setRawText(''); setFileName(''); setTemplateId(''); setGroupId(''); setParseState({ rows: [] }); setResult(null); setProgress(null); setCfgEnabled('default'); setCfgDomain(''); setCfgMultiplier('')
+    setStep(1); setKind('codex-oauth'); setSource('cpa'); setTab('text'); setRawText(''); setFileName(''); setTemplateId(''); setGroupId(''); setParseState({ rows: [] }); setResult(null); setProgress(null); setCfgEnabled('default'); setCfgDomain(''); setCfgMultiplier(''); setCfgProxy(PROXY_DIRECT_VALUE)
   }, [open])
   useEffect(() => { setTemplateId(''); setSource('cpa'); setParseState({ rows: [] }) }, [kind])
   useEffect(() => {
@@ -150,10 +159,13 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
   }
   const importConfig = () => {
     const d = cfgDomain.trim()
-    const cfg: { enabled?: boolean; cache_domain?: string; upstream_cost_multiplier?: number } = {}
+    const cfg: { enabled?: boolean; cache_domain?: string; upstream_cost_multiplier?: number; proxy_id?: number } = {}
     if (cfgEnabled !== 'default') cfg.enabled = cfgEnabled === 'true'
     if (d) cfg.cache_domain = d
     if (cfgMultiplier.trim()) cfg.upstream_cost_multiplier = parseMultiplier(cfgMultiplier)!
+    // 直连（默认）不发键：服务端缺省即不绑定。
+    const proxy = parseProxySelectValue(cfgProxy)
+    if (proxy.kind === 'bind') cfg.proxy_id = proxy.id
     return cfg
   }
   const canNext = step === 1 ? true : step === 2 ? !!source : step === 3 ? validRows.length > 0 && !!templateId && configError() === null : false
@@ -298,10 +310,25 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
                     <Input id="import-mult" type="number" min={0} max={10} step="0.0001" className="h-10" value={cfgMultiplier} placeholder="1" onChange={e => setCfgMultiplier(e.target.value)} />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-sm" htmlFor="import-domain">{t('accounts.cacheDomain.label')}</Label>
-                  <Input id="import-domain" className="h-10" value={cfgDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setCfgDomain(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">{cfgDomain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-sm" htmlFor="import-domain">{t('accounts.cacheDomain.label')}</Label>
+                    <Input id="import-domain" className="h-10" value={cfgDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setCfgDomain(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">{cfgDomain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+                  </div>
+                  {/* 出口代理（body 级，仅作用于本次新建账号；默认直连 = 不发 proxy_id） */}
+                  <div className="space-y-2">
+                    <Label className="text-sm">{t('accounts.proxy.label')}</Label>
+                    <Select items={proxyItems} value={cfgProxy} onValueChange={v => setCfgProxy(v ?? PROXY_DIRECT_VALUE)}>
+                      <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(proxyItems).map(([v, label]) => (
+                          <SelectItem key={v} value={v} label={label}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">{t('accounts.proxy.createHint')}</p>
+                  </div>
                 </div>
                 {configError() && <p className="text-xs text-destructive">{configError()}</p>}
               </div>

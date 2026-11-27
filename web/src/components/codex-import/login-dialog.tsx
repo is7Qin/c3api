@@ -7,12 +7,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { copyText } from '@/components/key-box'
+import { PROXY_DIRECT_VALUE, parseProxySelectValue, proxySelectItems } from '@/lib/account-proxy'
 import { useScopedApi } from '@/lib/api/scope'
 import type { components } from '@/lib/api/schema'
 import { deviceLoginProvider, type DeviceLoginProvider } from '@/lib/device-login'
 
 type Template = components['schemas']['Template']
 type Group = components['schemas']['Group']
+type Proxy = components['schemas']['Proxy']
 type Challenge = components['schemas']['CodexDeviceLoginStart']
 
 type LoginTarget = { templateId: number; provider: DeviceLoginProvider; label: string }
@@ -29,7 +31,10 @@ type Phase = 'idle' | 'starting' | 'code' | 'checking' | 'done' | 'expired' | 'd
 //
 // 生命周期：发起响应的 expires_in_seconds 恒为正（SDK 按真客户端 15 分钟补齐），
 // 这里据此维护本地截止时间；到期即进入 expired，不再发 complete 请求。
-export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; onDone: () => void }) {
+//
+// 出口代理与归组同层：两者都只影响 complete 时的落库（新账号的行属性），
+// 因此与 group 同生命周期（授权码还在时或才改），不需要冻结。
+export function CodexLoginDialog({ open, onOpenChange, templates, groups, proxies, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; proxies: Proxy[]; onDone: () => void }) {
   const api = useScopedApi()
   const { t } = useTranslation()
   const loginTargets = useMemo(() => templates.flatMap(tp => {
@@ -41,6 +46,12 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   const [templateId, setTemplateId] = useState('')
   const [target, setTarget] = useState<LoginTarget | null>(null)
   const [groupId, setGroupId] = useState('')
+  // 出口代理：哨兵值 = 直连（complete 体不带 proxy_id）
+  const [proxyId, setProxyId] = useState(PROXY_DIRECT_VALUE)
+  const proxyItems = useMemo(
+    () => proxySelectItems(proxies, { directLabel: t('accounts.proxy.direct'), disabledSuffix: t('accounts.proxy.disabledSuffix') }),
+    [proxies, t],
+  )
   const [challenge, setChallenge] = useState<Challenge | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState('')
@@ -56,6 +67,7 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     inFlight.current = false
     setTemplateId('')
     setGroupId('')
+    setProxyId(PROXY_DIRECT_VALUE)
     setTarget(null)
     setChallenge(null)
     setPhase('idle')
@@ -130,11 +142,14 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     setPendingHint(false)
     setError('')
     try {
+      // 代理：直连（默认）时**不发键**——后端缺省即不绑定；选具体代理才发 id。
+      const proxy = parseProxySelectValue(proxyId)
       const res = await api.completeCodexDeviceLogin({
         device_auth_id: challenge.device_auth_id,
         user_code: challenge.user_code,
         template_id: target.templateId,
         group_id: groupId ? Number(groupId) : null,
+        proxy_id: proxy.kind === 'bind' ? proxy.id : undefined,
         provider: target.provider,
       })
       if (res.status === 'authorized') {
@@ -231,6 +246,28 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            {/* 出口代理：与 group 同层（都只影响 complete 时的落库）；默认直连 = 不绑定。 */}
+            <div className="space-y-1.5">
+              <Label>{t('accounts.proxy.label')}</Label>
+              <Select
+                items={proxyItems}
+                value={proxyId}
+                onValueChange={v => setProxyId(v ?? PROXY_DIRECT_VALUE)}
+                disabled={phase === 'starting' || phase === 'checking'}
+              >
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(proxyItems).map(([v, label]) => (
+                    <SelectItem key={v} value={v} label={label}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t('accounts.proxy.createHint')}</p>
             </div>
             <Alert>
               <AlertDescription className="text-sm">{t('accounts.login.ungroupedHint')}</AlertDescription>

@@ -494,6 +494,73 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		require.Equal(t, "shared.example.com", *acc.CacheDomain)
 	})
 
+	// 出口代理：导入是**创建语义**（非三态）——>0 落列；谓词与创建面同源。
+	t.Run("proxy binds the newly created account", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		proxyID, err := svc.CreateProxy(ctx, validProxyInput())
+		require.NoError(t, err)
+
+		_, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "px@example.com", CodexAccountID: "px-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{ProxyID: &proxyID})
+		require.NoError(t, err)
+
+		ext, err := store.FindAccountExtByCodexKey(ctx, "px@example.com", "px-1", credential.TypeCodexOAuth)
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.NotNil(t, acc.ProxyID, "proxy_id 必须落到新建行")
+		require.Equal(t, proxyID, *acc.ProxyID)
+	})
+
+	// 不可绑（不存在/越界）→ 整批 404，且零落库：谓词在逐行解析与任何写入之前。
+	t.Run("unbindable proxy rejects the whole batch before any write", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		missing := int64(4242)
+		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "nope@example.com", CodexAccountID: "nope-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{ProxyID: &missing})
+		require.ErrorIs(t, err, ErrNotFound)
+		require.Empty(t, store.accs, "整批拒绝：零落库")
+	})
+
+	// 供应商面：私池代理只能承载其主的账号（成功），平台代理一律 404（不泄露存在性）。
+	// 这两条把 `scopeSupplierUID(ctx)` 钉死——把它换成常量 0 就会双向失败。
+	t.Run("supplier scope binds its own private proxy only", func(t *testing.T) {
+		const uid = int64(41)
+		sctx := supplierScopeCtx(uid)
+
+		svc, store, _ := importFixture(t)
+		private := validProxyInput()
+		private.Host = "proxy.example.com" // 供应商自建入口：私网字面量会被拒（spec §3.6）
+		privateID, err := svc.CreateProxy(sctx, private)
+		require.NoError(t, err)
+		_, err = svc.ImportCodexOAuthAccounts(sctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "sup@example.com", CodexAccountID: "sup-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{ProxyID: &privateID})
+		require.NoError(t, err)
+		ext, err := store.FindAccountExtByCodexKey(ctx, "sup@example.com", "sup-1", credential.TypeCodexOAuth)
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.Equal(t, uid, acc.SupplierUserID, "供应商面归属恒为 JWT 本人")
+		require.NotNil(t, acc.ProxyID)
+		require.Equal(t, privateID, *acc.ProxyID)
+
+		svc2, store2, _ := importFixture(t)
+		platformID, err := svc2.CreateProxy(ctx, validProxyInput()) // 管理面 ⇒ 平台池
+		require.NoError(t, err)
+		_, err = svc2.ImportCodexOAuthAccounts(sctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "sup2@example.com", CodexAccountID: "sup-2",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{ProxyID: &platformID})
+		require.ErrorIs(t, err, ErrNotFound, "供应商绑平台代理 ⇒ 404")
+		require.Empty(t, store2.accs, "整批拒绝：零落库")
+	})
+
 	t.Run("absent config keeps create defaults", func(t *testing.T) {
 		svc, store, _ := importFixture(t)
 		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
@@ -526,22 +593,31 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 
 	t.Run("config does not touch an updated row", func(t *testing.T) {
 		svc, store, _ := importFixture(t)
+		proxyID, err := svc.CreateProxy(ctx, validProxyInput())
+		require.NoError(t, err)
 		item := []domain.CodexOAuthImportItem{{
 			CodexEmail: "upd@example.com", CodexAccountID: "upd-1",
 			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1",
 		}}
-		_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
+		_, err = svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
 			Enabled:                  new(false),
 			CacheDomain:              new("first.example.com"),
 			UpstreamCostMultiplierBp: new(25000),
+			ProxyID:                  &proxyID,
 		})
 		require.NoError(t, err)
 
 		item[0].CodexOAuthToken = "at-2"
+		// 第二次带**另一条**代理：updated 分支只能换凭据，不得改绑。
+		other := validProxyInput()
+		other.Name = "p2"
+		otherID, err := svc.CreateProxy(ctx, other)
+		require.NoError(t, err)
 		res, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
 			Enabled:                  new(true),
 			CacheDomain:              new("second.example.com"),
 			UpstreamCostMultiplierBp: new(10000),
+			ProxyID:                  &otherID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Updated)
@@ -555,6 +631,8 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp), "updated 不动倍率")
 		require.NotNil(t, acc.CacheDomain)
 		require.Equal(t, "first.example.com", *acc.CacheDomain, "updated 不动缓存域")
+		require.NotNil(t, acc.ProxyID, "updated 不动出口代理")
+		require.Equal(t, proxyID, *acc.ProxyID, "updated 不动出口代理")
 	})
 
 	t.Run("explicit zero multiplier is honoured", func(t *testing.T) {
@@ -582,6 +660,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 			{CacheDomain: new("UPPER.example.com")},
 			{UpstreamCostMultiplierBp: new(-1)},
 			{UpstreamCostMultiplierBp: new(100001)},
+			{ProxyID: new(int64(-1))},
 		} {
 			_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, cfg)
 			require.ErrorIs(t, err, ErrInvalidInput)

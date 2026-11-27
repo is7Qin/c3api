@@ -658,6 +658,7 @@ export default {
       "disabledSuffix": " · disabled",
       "hint": "Only proxies visible to you are listed. Leaving this untouched keeps the account's binding exactly as it is.",
       "invisibleHint": "Shown as direct when no proxy is visible to you — an administrator may have bound a platform proxy. Leaving it untouched never unbinds that.",
+      "createHint": "The new account egresses through this proxy from its very first request. Direct binds no proxy.",
       "batchHint": "Unchanged keeps each account's binding; Direct unbinds; a specific proxy binds every selected account to it."
     }
   },

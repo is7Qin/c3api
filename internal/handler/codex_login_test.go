@@ -126,6 +126,21 @@ func TestPostAccountsCodexDeviceLoginComplete(t *testing.T) {
 	require.Nil(t, pending.AccountId)
 	require.Empty(t, store.accs)
 
+	// proxy_id 是 wire 字段：映射漏了这一步，登录会**静默成功**并建出直连账号。
+	// 用必定不存在的 id 断言它真的到达了 service（404 = 绑定谓词跑过），
+	// 且与 group 同序——拒绝时不得消费上游授权码（此时 pollHits 仍只有 pending 那次）。
+	rec = do(http.MethodPost, completePath, `{"device_auth_id":"auth-1","user_code":"ABCD-EFGHI","template_id":1,"proxy_id":4242}`)
+	require.Equal(t, http.StatusNotFound, rec.Code, "unbindable proxy: %s", rec.Body.String())
+	require.Equal(t, 1, provider.pollHits, "代理校验先于轮询")
+	require.Empty(t, store.accs)
+
+	// 负值 → 400（值域与导入面同一份校验；resolveBindableProxy 对 <=0 是 no-op，
+	// 少了这一步 `proxy_id: -1` 会被静默当成直连）。
+	rec = do(http.MethodPost, completePath, `{"device_auth_id":"auth-1","user_code":"ABCD-EFGHI","template_id":1,"proxy_id":-1}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "negative proxy_id: %s", rec.Body.String())
+	require.Equal(t, 1, provider.pollHits, "值域校验先于轮询")
+	require.Empty(t, store.accs)
+
 	// 模板类型错配：400，且必须在轮询之前拒绝（一次性授权码不能被烧掉）。
 	provider.status = domain.CodexLoginAuthorized
 	provider.tokens = &domain.CodexLoginTokens{AccessToken: "at", RefreshToken: "rt", AccountID: "acc-1", Email: "a@example.com"}

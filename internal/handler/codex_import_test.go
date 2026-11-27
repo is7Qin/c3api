@@ -242,6 +242,19 @@ func TestPostAccountsBatchImportCodexConfig(t *testing.T) {
 		require.Equal(t, 400, rec.Code, "body: %s", rec.Body.String())
 		require.Empty(t, store.accs, "整批拒绝：零落库")
 	})
+
+	// proxy_id 是 wire 字段（openapi → api.gen.go）：映射漏了这里，导入会**静默成功**
+	// 而不绑定。用一个必定不可绑的 id 断言它真的到达了 service（404 = 谓词跑过）。
+	t.Run("proxy_id reaches the service", func(t *testing.T) {
+		h, store, tplID, _ := codexImportTestAPI(t)
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
+			"items": [{"codex_email":"px@example.com","codex_account_id":"px-1",
+				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
+			"template_id": `+itoa(tplID)+`,
+			"proxy_id": 4242}`)
+		require.Equal(t, 404, rec.Code, "body: %s", rec.Body.String())
+		require.Empty(t, store.accs, "不可绑代理：整批零落库")
+	})
 }
 
 // TestPostAccountsBatchImportCodexStructural400 结构错误 → 400（items 空/超

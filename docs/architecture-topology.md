@@ -248,7 +248,7 @@ pkg 职责边界：
 
 **账号写面的"存在性"语义**（`internal/domain/types.go` + `internal/service/account.go`）：
 - `upstream_cost_multiplier_bp` 是 `*int`，读走自由函数 `domain.MultBp(v)`（nil → 10000 = ×1，`types.go:419-425`）——**显式 ×0（免费）与"未提供"可区分**，创建 / PATCH / 批量三面同语义（`internal/service/account.go:54-65`、`internal/handler/convert.go:88`）。`MultBp` 刻意是**自由函数而非方法**：scheduler 的静态读闭包门按 AST 枚举字段选择器，方法调用会隐藏读路径。
-- codex 批量导入（`/accounts/batch-import-codex-oauth|pat`）的 `enabled` / `cache_domain` / `upstream_cost_multiplier` 是 **body 级**字段，**仅对本次新建行生效**——命中幂等键的已存在行只更新凭据列，不覆盖这三项配置（`internal/service/ext_codex_import.go`，与 `max_concurrency` 同款"仅创建生效"语义）。
+- codex 批量导入（`/accounts/batch-import-codex-oauth|pat`）与设备码登录完成体的 `enabled` / `cache_domain` / `upstream_cost_multiplier` / `proxy_id` 是 **body 级**字段，**仅对本次新建行生效**——命中幂等键的已存在行只更新凭据列，不覆盖这四项配置（`internal/service/ext_codex_import.go`，与 `max_concurrency` 同款"仅创建生效"语义）。`proxy_id` 的绑定谓词与创建面同源（越界 404），且在设备码登录里先于上游轮询（授权码一次性）。
 
 ## 7. 快照与注册表层级
 

@@ -446,11 +446,16 @@ type AccountExt struct {
 
 // CodexImportConfig 导入面 body 级账号配置（作用于本次**新建**账号——已存在
 // 行的凭据更新不改配置，与 max_concurrency 同款"仅创建生效"语义）。
-// 三字段皆可选：nil = 取创建默认（enabled=true / 账号私有域 / ×1）。
+// 四字段皆可选：nil = 取创建默认（enabled=true / 账号私有域 / ×1 / 直连出口）。
+//
+// ProxyID **不是三态**（与 accountPatch 的 proxy_id 不同）：导入/登录是创建语义，
+// 没有「解绑」可表达。约定同创建面——nil 或 0 = 直连（不落列），>0 = 绑定，
+// <0 → 400（validateCodexImportConfig）。绑定谓词与创建面同源（spec-proxy-pool §3.6）。
 type CodexImportConfig struct {
 	Enabled                  *bool
 	CacheDomain              *string
 	UpstreamCostMultiplierBp *int // 万分数（10000 = ×1）
+	ProxyID                  *int64
 }
 
 // CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键

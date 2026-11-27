@@ -3349,6 +3349,11 @@ export interface components {
             upstream_cost_multiplier?: number;
             /**
              * Format: int64
+             * @description 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）
+             */
+            proxy_id?: number;
+            /**
+             * Format: int64
              * @description 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
              */
             supplier_user_id?: number | null;
@@ -3375,6 +3380,11 @@ export interface components {
              * @description 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
              */
             upstream_cost_multiplier?: number;
+            /**
+             * Format: int64
+             * @description 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400 整批拒绝）
+             */
+            proxy_id?: number;
             /**
              * Format: int64
              * @description 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
@@ -3418,6 +3428,11 @@ export interface components {
              * @description 可选：新建账号归组（不存在 → 404，且不消费上游授权码）
              */
             group_id?: number | null;
+            /**
+             * Format: int64
+             * @description 可选：新建账号的出口代理绑定（缺省/0 = 直连；>0 = 绑定该代理；<0 → 400）
+             */
+            proxy_id?: number;
         };
         /** @description 完成调用的结果；pending = 用户尚未授权（可再次调用），其余为终态 */
         CodexDeviceLoginResult: {

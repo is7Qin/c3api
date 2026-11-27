@@ -545,8 +545,11 @@ func proxyOwnerMatchesAccount(owner *int64, targetSupplierUserID int64) bool {
 // 允许「先绑好、后启用」的运维顺序，代价由 Routable 承担——停用条目的绑定会让账号
 // Routable=false 而不入选（§4.1），不会把流量送出去。
 //
-// 落点：三个账号写面（CreateAccount / PatchAccount / UpdateAccountsBatch）里紧跟
-// checkGroupsExist 之后，与 supplier_user_id 的存在性/值域校验同一处、同一形态。
+// 落点：五个账号写面里紧跟 checkGroupsExist / 行解析之后，与 supplier_user_id 的
+// 存在性/值域校验同一处、同一形态——CreateAccount / PatchAccount /
+// UpdateAccountsBatch（已有行的绑定变更），以及 ImportCodexOAuth|PATAccounts 与
+// CompleteDeviceLogin（新建行的**初始**绑定）。后两者只作用于新建行（幂等键命中
+// 只换凭据），所以「已有行的绑定变更只经前三个写入动词」仍然成立。
 func (s *Service) resolveBindableProxy(ctx context.Context, proxyID *int64, targetSupplierUserID int64) error {
 	if proxyID == nil || *proxyID <= 0 {
 		return nil

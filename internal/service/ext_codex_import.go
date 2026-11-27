@@ -78,6 +78,12 @@ func importCodexBatch[T any](s *Service, ctx context.Context, items []T, rowFn f
 	if err := validateCodexImportConfig(cfg); err != nil {
 		return nil, err
 	}
+	// 出口代理绑定（仅新建行生效）：谓词与创建/补丁面是**同一实现**
+	// （resolveBindableProxy，spec-proxy-pool §3.6）。整批语义：不可绑 → 404，
+	// 且本检查先于任何写入（逐行解析与落库都在后面）⇒ 一行都不会落库。
+	if err := s.resolveBindableProxy(ctx, cfg.ProxyID, scopeSupplierUID(ctx)); err != nil {
+		return nil, err
+	}
 	res := &domain.ImportResult{}
 	rows := make([]codexImportRow, 0, len(items))
 	for i, it := range items {
@@ -215,7 +221,8 @@ func applyCodexImportConfig(row *codexImportRow, maxConc *int) {
 
 // validateCodexImportConfig 导入面 body 级配置校验（**整批**语义：非法 → 400
 // 整批拒绝，与模板类型错配同级——配置对全批生效、无行级归属）。边界与
-// validateAccountPatch 一致（倍率 0–100000 bp；缓存域复用 validateCacheDomain）。
+// validateAccountPatch 一致（倍率 0–100000 bp；缓存域复用 validateCacheDomain；
+// proxy_id < 0 → 400——与 service.go 的 validateAccountPatch 同形，0 = 直连）。
 func validateCodexImportConfig(cfg domain.CodexImportConfig) error {
 	if cfg.UpstreamCostMultiplierBp != nil && (*cfg.UpstreamCostMultiplierBp < 0 || *cfg.UpstreamCostMultiplierBp > 100000) {
 		return ErrInvalidInput
@@ -224,6 +231,9 @@ func validateCodexImportConfig(cfg domain.CodexImportConfig) error {
 		if err := validateCacheDomain(*cfg.CacheDomain); err != nil {
 			return ErrInvalidInput
 		}
+	}
+	if cfg.ProxyID != nil && *cfg.ProxyID < 0 {
+		return ErrInvalidInput
 	}
 	return nil
 }
@@ -253,6 +263,26 @@ func codexImportCacheDomain(cfg domain.CodexImportConfig) *string {
 		return &v
 	}
 	return nil
+}
+
+// codexImportProxyID 新建账号的出口代理绑定：nil / 0 = 直连（不落列），>0 = 绑定。
+// 落列判据与 CreateAccount 同形（`> 0` 才写，service/account.go），负值已由
+// validateCodexImportConfig 拒掉。
+func codexImportProxyID(cfg domain.CodexImportConfig) *int64 {
+	if cfg.ProxyID != nil && *cfg.ProxyID > 0 {
+		v := *cfg.ProxyID
+		return &v
+	}
+	return nil
+}
+
+// scopeSupplierUID 目标账号的**归属**（供应商面恒 JWT 本人；管理面 0 = 平台自有）。
+// 提取成一处表达式：绑定谓词与落库必须用同一个归属值，抄第二遍就是两条真相。
+func scopeSupplierUID(ctx context.Context) int64 {
+	if sc := domain.AccountScopeFrom(ctx); sc.Set {
+		return sc.OwnerUID
+	}
+	return 0
 }
 
 // codexImportOutcome 单行导入结果（**提交点事实**：账号 id/名称取自本次写事务，
@@ -346,10 +376,7 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 	// service.CreateAccount（invalidate/publish 副作用面在事务回滚时已发）；
 	// 副作用批末一次（importCodexAccounts）。
 	// 归属（§2.5）：供应商面导入恒写 JWT 本人（作用域注入）；管理面 = 平台自有。
-	var supplierUID int64
-	if sc := domain.AccountScopeFrom(ctx); sc.Set {
-		supplierUID = sc.OwnerUID
-	}
+	supplierUID := scopeSupplierUID(ctx)
 	var identity *domain.CodexIdentity
 	if credType != credential.TypeBPS {
 		id := NewCodexIdentity()
@@ -363,7 +390,9 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 			// 配置面（body 级）只作用于新建行——updated 路径只更新凭据列。
 			UpstreamCostMultiplierBp: codexImportMultiplierBp(cfg),
 			CacheDomain:              codexImportCacheDomain(cfg),
-			SupplierUserID:           supplierUID,
+			// 出口代理（同样仅新建行）：谓词已在批入口校验过（整批 404）。
+			ProxyID:        codexImportProxyID(cfg),
+			SupplierUserID: supplierUID,
 		})
 		if err != nil {
 			return err

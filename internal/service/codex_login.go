@@ -71,12 +71,15 @@ func (s *Service) StartDeviceLogin(ctx context.Context, provider domain.DeviceLo
 	}, nil
 }
 
-// CompleteDeviceLogin validates the local template/group before performing
+// CompleteDeviceLogin validates the local template/group/proxy before performing
 // exactly one upstream poll. For an authorized BPS login, the provider SDK
 // generates the DeviceProfile server-side before persistence. Pending is
 // returned to the browser for a manual retry; no service-side timer, Redis
 // session, or automatic request exists.
-func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.DeviceLoginProvider, authID, userCode string, tplID int64, groupID *int64) (*domain.CodexLoginResult, error) {
+//
+// proxyID 与 groupID 同序：必须在 PollDeviceFlow **之前**校验——上游授权码只能
+// 消费一次，非法代理若拖到落库才报，就把用户的码烧了。
+func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.DeviceLoginProvider, authID, userCode string, tplID int64, groupID, proxyID *int64) (*domain.CodexLoginResult, error) {
 	p, credType, err := s.loginProvider(provider)
 	if err != nil {
 		return nil, err
@@ -91,6 +94,18 @@ func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.Devic
 		if err := s.checkGroupsExist(ctx, []int64{*groupID}); err != nil {
 			return nil, err
 		}
+	}
+	// 出口代理：值域走与导入面**同一份**校验（`<0` → 400；0/缺省 = 直连），绑定谓词
+	// 再走与创建/导入**同一份**实现（spec-proxy-pool §3.6）。两者都是必需的：
+	// resolveBindableProxy 对 `<=0` 是 no-op，少了值域校验，登录面会静默接受
+	// `proxy_id: -1` 并建出一个直连账号（三个契约点都写的是 `<0` → 400）。
+	// 越界 → 404，且不与上游发生任何交互（码未消费，用户可重试）。
+	cfg := domain.CodexImportConfig{ProxyID: proxyID}
+	if err := validateCodexImportConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := s.resolveBindableProxy(ctx, cfg.ProxyID, scopeSupplierUID(ctx)); err != nil {
+		return nil, err
 	}
 	status, tokens, err := p.PollDeviceFlow(ctx, authID, userCode)
 	if err != nil {
@@ -111,10 +126,10 @@ func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.Devic
 			return nil, fmt.Errorf("%w: BPS profile 生成失败", serviceerr.ErrUpstream)
 		}
 	}
-	return s.importOAuthLogin(ctx, tokens, tplID, groupID, credType, profile)
+	return s.importOAuthLogin(ctx, tokens, tplID, groupID, credType, profile, cfg)
 }
 
-func (s *Service) importOAuthLogin(ctx context.Context, tokens *domain.CodexLoginTokens, tplID int64, groupID *int64, credType credential.Type, profile []byte) (*domain.CodexLoginResult, error) {
+func (s *Service) importOAuthLogin(ctx context.Context, tokens *domain.CodexLoginTokens, tplID int64, groupID *int64, credType credential.Type, profile []byte, cfg domain.CodexImportConfig) (*domain.CodexLoginResult, error) {
 	if tokens == nil {
 		return nil, fmt.Errorf("%w: 登录响应缺少凭据，请重新登录", serviceerr.ErrUpstream)
 	}
@@ -130,7 +145,9 @@ func (s *Service) importOAuthLogin(ctx context.Context, tokens *domain.CodexLogi
 		// 校验文案是导入面词汇（codex_oauth_*）：对外给可操作提示，细节只进日志。
 		return nil, fmt.Errorf("%w: 登录响应凭据不完整，请重新登录", serviceerr.ErrUpstream)
 	}
-	outcomes := s.importCodexAccounts(ctx, []codexImportRow{row}, tplID, groupID, credType, domain.CodexImportConfig{})
+	// 代理已在上面（轮询前）校验过；这里只把同一份配置交给共享落库核心，
+	// 「仅新建行生效」的语义由 importCodexRow 承担（已存在账号只更新凭据列）。
+	outcomes := s.importCodexAccounts(ctx, []codexImportRow{row}, tplID, groupID, credType, cfg)
 	if len(outcomes) != 1 {
 		return nil, fmt.Errorf("service: 设备码登录落库结果缺失")
 	}
