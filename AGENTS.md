@@ -113,9 +113,12 @@ cd web && pnpm gen:api && git diff --exit-code
 bash scripts/build.sh
 # 或手动： cd web && pnpm build && cp -r dist cmd/server/ && CGO_ENABLED=0 go build -o bin/server ./cmd/server
 
-# E2E（手动跑，CI 不含；计费/分区/优雅退出改动后必跑）
-TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres" \
-  go test -tags e2e -run TestBillingE2E ./tools/e2e -v -timeout 600s
+# E2E（独立 CI job "e2e"，需 docker compose；本地先起 base PG/Redis）
+docker compose -p deploy -f deploy/test-compose.yml up -d --wait
+TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres?sslmode=disable" \
+  C3API_REDIS_ADDR="127.0.0.1:16379" \
+  go test -tags e2e -count=1 -timeout 20m ./tools/e2e
+# 细节（资源隔离/专用栈/registry 回收/基线更新规则/单机边界）见 tools/e2e/AGENTS.md
 
 # 压测三件套
 go run ./tools/fakeupstream -addr :9100 -chunks 100 -latency 20ms
@@ -125,7 +128,7 @@ go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -co
 
 ## NOTES（踩坑即事实）
 
-- **端口分裂**：单测 PG=:5432(CI)/15432(本地 compose)，e2e 默认 :15432 的 postgres 库自建 c3api_e2e
+- **端口分裂**：单测 PG=:5432(CI)/15432(本地 compose)；e2e 由 harness 每 run 新建唯一 PG 库（c3api_e2e_*）+ Redis 逻辑库 1..15 + 动态端口，不再有固定 c3api_e2e 库
 - **worker 注册序=反序排空语义**：billFlusher 在 listener/authSync 之前注册（main.go:485-491：首位注册→停机最后扫游标），动顺序前读注释
 - **typed-nil 陷阱**：invBalances 声明为接口类型非具体指针（main.go:233，2026-08-10 真实 panic 事故）
 - **禁止新增事后回填（owner 2026-09-14 纪律）**：构造环必须结构性消除——把能力抽成独立组件按序构造，或走既有直连路径（dispatcher 直连 svc.ReloadSettings/ReloadPricingCtx；settings 本地生效走 invalidate KindSettings）。`svc.SetLocalDispatcher` 已按此拆除；存量 Set* 回填在清理队列
@@ -134,7 +137,7 @@ go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -co
 - **http.Server 无 WriteTimeout**（SSE 保护）；上游传输 Proxy:nil 显式直连（HTTP_PROXY 防劫持）
 - **env 覆盖只替换第一个下划线**：C3API_DB_DSN→db.dsn；前缀必须大写
 - **billing 默认开启**：空价格表=所有模型 402，需先 POST /api/admin/pricing/sync
-- CI 无 `-race`、无 GOMAXPROCS、e2e 不进 CI——这三条是已知取舍不是遗漏
+- CI 无 `-race`、无 GOMAXPROCS——这两条是已知取舍不是遗漏；e2e 已进独立 `e2e` CI job（docker compose 前置，dependabot 由 dependabot-ci.yml 接手）
 - **`internal/proxy` 已知 flaky（2026-11-16 实测；均非某次改动引入，别为单次红灯改断言）**：
   - `TestRoundG16bNoSecondRowPerRound/unbillable_abort_is_err_only_once`——**已确定性化**（`round-billing-abort-determinism`）：测试改为先读 relay 的关闭帧（1011）再 `<-env.out`，不再用 `CloseNow` 抢先制造 clientErr/upErr 竞态。生产侧的首因竞态（`setErr` 首写生效、分类优先 clientErr）仍在，别在别处再制造同一竞态。
   - `TestFoldProducer_concurrentRequestsConserveSameMinute`——守恒 8→6/7：只在 `-race` 全量下见过（分支 2/26，main 0/32，Fisher p≈0.2 无差异证据）。`-run` 单跑 60 次不复现，吃的是包级负载。

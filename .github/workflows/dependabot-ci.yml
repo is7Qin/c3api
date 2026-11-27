@@ -41,6 +41,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          # assertion/boundary gate 依赖 BASE commit 源码（strict 模式不允许 skip）。
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

@@ -25,6 +25,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          # assertion/boundary gate 依赖 BASE commit 的源码（strict 模式不允许 skip）。
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -74,6 +77,67 @@ jobs:
         run: scripts/test.sh -count=1
         timeout-minutes: 30
 
+  # e2e 独立 job（spec §3.5/§5 P1）：真实 docker compose 起 base PG/Redis，跑
+  # tools/e2e 的 6 个端到端场景（build tag e2e）。assertion/boundary gate 是不带 tag
+  # 的普通测试，也在本 job 的同一测试二进制里跑（strict 模式需要 fetch-depth: 0；
+  # 本 job 与 test job 的 checkout 均已加深）。专用基础设施（routing_multi 的
+  # PG/Redis outage）由 harness 自建自包含 compose 栈，不依赖也不 mutate base 容器。
+  # 真 Actions 首跑需要 docker pull 镜像，因此 test 预算 20m / job 35m。
+  e2e:
+    name: e2e
+    # 同 test/contract-gen：dependabot 分支拿不到 secrets（GitHub 按 fork PR 对待），
+    # 由 dependabot-ci.yml 的 pull_request_target job 接手（其 checkout 同样 fetch-depth: 0）。
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      E2E_LOG_DIR: ${{ runner.temp }}/e2e-logs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: authorise private modules
+        env:
+          CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_SDK_TOKEN:-}" ]; then
+            echo "::error::private module token is unavailable to this run (event=${GITHUB_EVENT_NAME}, actor=${GITHUB_ACTOR}). go.mod requires private modules under github.com/is7Qin; e2e builds the server binary from source and cannot resolve them without a credential."
+            exit 1
+          fi
+          go env -w GOPRIVATE=github.com/is7Qin
+          git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
+      - name: start base postgres + redis
+        run: docker compose -p deploy -f deploy/test-compose.yml up -d --wait
+        timeout-minutes: 5
+      - name: e2e
+        env:
+          TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:15432/postgres?sslmode=disable"
+          C3API_REDIS_ADDR: "127.0.0.1:16379"
+        # 6 个场景串行（t.Parallel 禁令）；-timeout 20m < job 35m。
+        run: go test -tags e2e -count=1 -timeout 20m ./tools/e2e
+        timeout-minutes: 25
+      - name: dump base compose logs (failure diagnostics)
+        if: failure()
+        run: |
+          mkdir -p "$E2E_LOG_DIR"
+          docker compose -p deploy -f deploy/test-compose.yml logs --no-color --tail 1000 \
+            >"$E2E_LOG_DIR/compose-base.log" 2>&1 || true
+      - name: upload e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: ${{ runner.temp }}/e2e-logs
+          if-no-files-found: warn
+          retention-days: 7
+      - name: compose down
+        if: always()
+        run: docker compose -p deploy -f deploy/test-compose.yml down -v || true
+
   contract-gen:
     name: contract-gen
     # 同上：dependabot 分支没有 secrets，交给 dependabot-ci.yml。
@@ -81,6 +145,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # assertion/boundary gate 依赖 BASE commit 的源码（strict 模式不允许 skip）。
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -122,6 +189,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # assertion/boundary gate 依赖 BASE commit 的源码（strict 模式不允许 skip）。
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
           version: 11.20.0
@@ -153,6 +223,9 @@ jobs:
         --set-string secrets.jwtSecret=ci-placeholder
     steps:
       - uses: actions/checkout@v7
+        with:
+          # assertion/boundary gate 依赖 BASE commit 的源码（strict 模式不允许 skip）。
+          fetch-depth: 0
       - uses: azure/setup-helm@v5
         with:
           version: v3.16.3
