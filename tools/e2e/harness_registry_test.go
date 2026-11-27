@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -314,4 +315,70 @@ func TestRunTempDirValidation(t *testing.T) {
 	require.False(t, runTempDirValid(os.TempDir()), "OS temp 根本身不得被删除")
 	require.False(t, runTempDirValid(""), "空路径不得通过")
 	require.False(t, runTempDirValid(t.TempDir()), "非 e2e-run- 前缀目录不得通过")
+}
+
+// TestStaleClaimTakeoverReclaims 陈旧 .claim（sweeper 崩溃残留）接管后必须真正回收
+// 记录与 claim（P0 review momus V1 / spec §13：takeover 重建 claim 后内核二次 Mkdir
+// 同路径 ErrExist => 永久 Kept、记录/claim/资源永久泄漏）。
+func TestStaleClaimTakeoverReclaims(t *testing.T) {
+	useTempRegistry(t)
+	rec := newTestRecord(t, stateReady, deadPIDForTest(t), time.Now().Add(-10*time.Minute))
+	writeRecordForTest(t, rec)
+	base := runRecordPath(rec.UUID)
+	claimPath := base + e2eClaimSuffix
+	require.NoError(t, os.Mkdir(claimPath, 0o755))
+	staleTime := time.Now().Add(-10 * time.Minute)
+	require.NoError(t, os.Chtimes(claimPath, staleTime, staleTime), "陈旧 claim 的 mtime 必须可回拨")
+
+	var mu sync.Mutex
+	var logs []string
+	stats := sweepStaleRuns(func(format string, args ...any) {
+		mu.Lock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	})
+	require.Equal(t, 1, stats.Reclaimed,
+		"陈旧 claim 接管后必须回收恰好 1 条记录（stats=%+v logs=%s）", stats, strings.Join(logs, "\n"))
+	require.False(t, harnessFileExists(base), "记录文件必须被回收")
+	require.False(t, harnessFileExists(claimPath), "接管重建的 claim 必须释放")
+	entries, err := os.ReadDir(e2eRegistryDir())
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.NotContains(t, entry.Name(), e2eReapingInfix, "回收成功后不得残留 .reaping 记录")
+	}
+}
+
+// TestReclaimKeepsRecordOnRedisLockOwnerMismatch Redis 锁 owner uuid 与记录不匹配时，
+// 回收必须保留记录（把 .reaping 恢复为正式记录）与锁，不允许删除记录让孤儿索引失去
+// 追踪（P0 review momus Minor-3 / spec §13）。
+func TestReclaimKeepsRecordOnRedisLockOwnerMismatch(t *testing.T) {
+	useTempRegistry(t)
+	const db = 9
+	rec := newTestRecord(t, stateReady, deadPIDForTest(t), time.Now().Add(-time.Hour))
+	rec.RedisDB = db
+	rec.AllocatedRedisDB = db
+	rec.LockUUID = rec.UUID
+	require.NoError(t, writeRedisLockExclusive(db, redisLock{UUID: "other-owner", PID: 1, Start: time.Now()}))
+	writeRecordForTest(t, rec)
+
+	var mu sync.Mutex
+	var logs []string
+	stats := sweepStaleRuns(func(format string, args ...any) {
+		mu.Lock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	})
+	require.Equal(t, 0, stats.Reclaimed, "owner 不匹配的 Redis 锁不得视为已回收")
+	require.GreaterOrEqual(t, stats.Kept, 1, "回收失败必须计入 kept")
+	require.True(t, harnessFileExists(runRecordPath(rec.UUID)), "记录必须保留（不得删除 .reaping 失去追踪）")
+	entries, err := os.ReadDir(e2eRegistryDir())
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.NotContains(t, entry.Name(), e2eReapingInfix, "记录必须恢复为正式记录名，不得残留 .reaping")
+	}
+	lock, err := readRedisLock(db)
+	require.NoError(t, err)
+	require.NotNil(t, lock, "别人 owner 的锁不得删除")
+	require.Equal(t, "other-owner", lock.UUID)
+	require.Contains(t, strings.Join(logs, "\n"), "owner", "warn 必须说明 Redis 锁 owner 不匹配")
 }

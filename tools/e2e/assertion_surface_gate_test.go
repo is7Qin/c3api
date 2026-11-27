@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,13 +72,22 @@ func TestAssertionSurfaceGate(t *testing.T) {
 	require.Equal(t, assertionBaselineSourceCommit, baseline.SourceCommit,
 		"baseline.source_commit 必须等于 gate 常量（baseline 变更需单独 commit + review）")
 
-	// 2) allowed_removals 白名单校验（作用域/证据/指纹存在性）。
+	// 2) allowed_removals 白名单校验（作用域/证据相关性/指纹存在性）。
 	require.NoError(t, checkAllowedRemovals(t, baseline, baseFiles, base), "allowed_removals 非法")
+
+	// 2b) 白名单唯一事实源 = gate 源码 assertionAllowedRemovals：baseline JSON 必须
+	// 逐项完全一致（同 commit 只往 JSON 追加白名单 + 删断言 => 红；oracle I1）。
+	require.NoError(t, checkAllowedRemovalsSource(baseline, assertionAllowedRemovals),
+		"baseline.allowed_removals 与 gate 源码 assertionAllowedRemovals 不一致")
 
 	// 3) 当前代码覆盖 BASE 断言面（删/改白名单外断言 => 红）。
 	currentFiles := readLocalTestFiles(t, filepath.Join(repoRoot, "tools", "e2e"))
 	current := collectAssertionFiles(t, currentFiles)
 	require.NoError(t, checkAssertionCoverage(baseline, base, current), "当前代码断言面低于 BASE 下界")
+
+	// 3c) 每条白名单都必须对应「BASE 存在、当前已真正移除/改写」的断言（空转豁免 => 红）。
+	require.NoError(t, checkRemovalsActuallyRemoved(baseline, base, current),
+		"allowed_removals 与当前代码不一致（声称移除的断言仍在执行）")
 
 	// 3b) Test 名集合必须是 BASE 超集（checkAssertionCoverage 已含此判定，单独再列
 	// 一次便于失败信息可读）。
@@ -93,6 +103,41 @@ func TestAssertionSurfaceGate(t *testing.T) {
 	// 4) 反空断言兜底（明显恒真项）。
 	violations := scanTautologicalAssertions(t, currentFiles)
 	require.Empty(t, violations, "反空断言门禁：明显恒真断言")
+
+	// 4b) 不可达补偿兜底（spec §13 / P0 review momus Minor-2）：require/t.Fatalf 位于
+	// if false / for false / 同一 block 内无条件 return/panic 之后 => 红（表面计数不能
+	// 证明断言会执行）。
+	unreachable := scanUnreachableAssertions(t, currentFiles)
+	require.Empty(t, unreachable, "不可达上下文断言门禁：require/t.Fatalf 永不执行\n%s",
+		strings.Join(unreachable, "\n"))
+}
+
+// TestAssertionUnreachableScanner 不可达补偿检测自测（spec §13 / P0 review momus
+// Minor-2）：if false / for false / 无条件 return/panic 之后的断言必红；可达分支、
+// 条件 return、非 Test 函数体不得误报（可见性口径与断言面采集一致）。
+func TestAssertionUnreachableScanner(t *testing.T) {
+	header := "package e2e\n\nimport \"testing\"\n\n"
+	mk := func(body string) map[string][]byte {
+		return map[string][]byte{"scenario_test.go": []byte(header + body)}
+	}
+	red := []struct{ name, body string }{
+		{"if_false", "func TestUnreachableIf(t *testing.T) {\n\tvar err error\n\tif false {\n\t\trequire.NoError(t, err)\n\t}\n}\n"},
+		{"for_false", "func TestUnreachableFor(t *testing.T) {\n\tvar err error\n\tfor false {\n\t\trequire.NoError(t, err)\n\t}\n}\n"},
+		{"after_return", "func TestUnreachableReturn(t *testing.T) {\n\tvar err error\n\t_ = err\n\treturn\n\trequire.NoError(t, err)\n}\n"},
+		{"after_panic", "func TestUnreachablePanic(t *testing.T) {\n\tvar err error\n\tpanic(\"boom\")\n\tt.Fatalf(\"never\")\n}\n"},
+	}
+	for _, tc := range red {
+		require.NotEmpty(t, scanUnreachableAssertions(t, mk(tc.body)), "不可达补偿 %s 必须红", tc.name)
+	}
+	green := []struct{ name, body string }{
+		{"conditional_return", "func TestReachableReturn(t *testing.T) {\n\tvar err error\n\tif err != nil {\n\t\treturn\n\t}\n\trequire.NoError(t, err)\n}\n"},
+		{"if_true", "func TestReachableIf(t *testing.T) {\n\tvar err error\n\tif true {\n\t\trequire.NoError(t, err)\n\t}\n}\n"},
+		// 非 Test 函数体不计入断言面（可见性口径一致），不可达断言与计数无关。
+		{"helper_func", "func helper() {\n\tvar err error\n\tpanic(\"boom\")\n\trequire.NoError(t, err)\n}\n"},
+	}
+	for _, tc := range green {
+		require.Empty(t, scanUnreachableAssertions(t, mk(tc.body)), "可达对照 %s 不得误报", tc.name)
+	}
 }
 
 // TestAssertionBaselineGenerate baseline 机械生成器（只在显式环境变量下运行；baseline

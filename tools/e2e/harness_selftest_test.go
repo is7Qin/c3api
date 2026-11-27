@@ -240,7 +240,7 @@ func testHarnessDedicatedServices(t *testing.T) {
 		t.Skipf("专用栈需要容器编排 CLI（compose v2+）：%v", err)
 	}
 	run := newE2ERun(t, e2eRunOptions{DedicatedServices: true})
-	require.Contains(t, run.services.PGAdminDSN(), "127.0.0.1:", "专用栈 PG 端口由 compose 随机发现")
+	require.Regexp(t, `127\.0\.0\.1:\d+`, run.services.PGAdminDSN(), "专用栈 PG 宿主端口由 compose 随机发现（回环 host:随机端口）")
 	require.NotEmpty(t, run.services.RedisAddr())
 
 	// 进程内上游（专用栈子测试不走真实 fakeupstream 也能覆盖业务面；:0 httptest）。

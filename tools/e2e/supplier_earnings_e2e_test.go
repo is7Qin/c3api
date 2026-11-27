@@ -5,11 +5,14 @@
 //go:build e2e
 
 // Package e2e 供应商收益全链路端到端测试（spec 2026-10-09 T10）：真实网关 +
-// fakeupstream + 真实 PostgreSQL（c3api_e2e 库，测试自建）。**不进 CI**。
+// fakeupstream + 真实 PostgreSQL。每 run 唯一 PG 库 / Redis 逻辑库 / 动态端口由共享
+// harness 分配（不再是固定 c3api_e2e 库）；P1 起进独立 e2e CI job（需 docker compose），
+// P0 手动运行。
 //
-// 运行（前置：本机 PostgreSQL 容器 + Redis；同 billing_e2e_test.go）：
+// 运行（前置：base PostgreSQL + Redis，deploy/test-compose.yml 缺省 15432/16379）：
 //
 //	TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres" \
+//	  C3API_REDIS_ADDR="127.0.0.1:16379" \
 //	  go test -tags e2e -run 'TestSupplierEarningsE2E' ./tools/e2e -v -timeout 600s
 //
 // 覆盖（黑盒可达部分）：A4（I2 恒等式单快照）/A9（条件扣）/A10（期间链）/A19（作用域）/

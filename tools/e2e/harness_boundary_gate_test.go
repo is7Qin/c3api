@@ -10,6 +10,8 @@
 //   - "-migrate"（迁移唯一入口是 harness 的 run 级 lazy migrate）；
 //   - docker 调用 / 固定容器名（deploy-redis-1 / deploy-db-1）；
 //   - 固定回环端口字面量（只允许 127.0.0.1:0 与 httptest）与固定 e2e 库名；
+//   - 计算型固定端口（"127.0.0.1:" + "18094" / fmt.Sprintf("127.0.0.1:%d", p)）与
+//     场景自建监听（net.Listen*、*.ListenAndServe*；in-process 上游只能用 httptest）；
 //   - 子进程 env 设置（cmd.Env = ... / os.Setenv；env deny-list 是 harness 独占能力）；
 //   - t.Parallel（e2e 必须串行）。
 //
@@ -69,6 +71,10 @@ var (
 	boundaryLoopbackRe  = regexp.MustCompile(`(?i)\b(127\.0\.0\.1|localhost):(\d+)\b`)
 	boundaryDockerRe    = regexp.MustCompile(`(?i)\bdocker\b`)
 	boundaryContainerRe = regexp.MustCompile(`(?i)\bdeploy-(redis|db)-1\b`)
+	// boundaryLoopbackConstructRe 计算型固定端口启发式（P0 review momus Minor-1 /
+	// spec §13）：字面量固定端口已被 boundaryLoopbackRe 拦下；这里抓「回环主机 + 冒号」
+	// 之后没有明确 :0 端口的构造（拼接 "127.0.0.1:" + "18094"、fmt.Sprintf(...%d...)）。
+	boundaryLoopbackConstructRe = regexp.MustCompile(`(?i)(127\.0\.0\.1|localhost):`)
 )
 
 // boundaryFixedDBNames 固定库名（每 run 唯一库名由 harness 生成；场景不得出现字面量）。
@@ -106,6 +112,17 @@ func scanBoundaryLiteral(value string) string {
 	if m := boundaryLoopbackRe.FindStringSubmatch(value); m != nil {
 		if m[2] != "0" {
 			return "禁止固定端口字面量（动态端口由 harness 分配；只允许 127.0.0.1:0）"
+		}
+	}
+	// 计算型固定端口启发式：回环主机字面量后紧跟非数字（拼接/格式化占位）或非 :0 端口。
+	if loc := boundaryLoopbackConstructRe.FindStringIndex(value); loc != nil {
+		rest := value[loc[1]:]
+		portLen := 0
+		for portLen < len(rest) && rest[portLen] >= '0' && rest[portLen] <= '9' {
+			portLen++
+		}
+		if rest[:portLen] != "0" {
+			return "禁止计算型固定端口（回环主机字面量后拼接/格式化端口；动态端口由 harness 分配，只允许 127.0.0.1:0）"
 		}
 	}
 	// 场景不得直读 C3API_*/E2E_* env（base 资源与测试旋钮由 harness 独占）。
@@ -151,6 +168,17 @@ func scanBoundaryViolations(files map[string][]byte) []boundaryViolation {
 						}
 						if qual.Name == "os" && sel.Sel.Name == "Setenv" {
 							add(n.Pos(), "禁止场景设置进程 env（env deny-list 是 harness 独占能力）")
+						}
+						// 场景禁止自建监听（P0 review momus Minor-1 / spec §13）：监听端口/
+						// 进程生命周期归 harness；进程内上游只能用 httptest（其自身 :0 监听
+						// 属于允许项，故不拦 httptest.NewServer 等调用）。
+						switch {
+						case qual.Name == "net" && strings.HasPrefix(sel.Sel.Name, "Listen"):
+							add(n.Pos(), "禁止场景自建监听（net.Listen* 归 harness；进程内上游用 httptest）")
+						case sel.Sel.Name == "ListenAndServe" || sel.Sel.Name == "ListenAndServeTLS":
+							add(n.Pos(), "禁止场景自建监听（*.ListenAndServe* 归 harness/httptest）")
+						case sel.Sel.Name == "Listen" || sel.Sel.Name == "ListenPacket":
+							add(n.Pos(), "禁止场景自建监听（*.Listen/ListenPacket 归 harness/httptest）")
 						}
 					}
 					if sel.Sel.Name == "Command" || sel.Sel.Name == "CommandContext" {
@@ -202,6 +230,43 @@ func formatBoundaryViolations(violations []boundaryViolation) string {
 		lines = append(lines, v.String())
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestHarnessBoundaryGateComputedPort 计算型固定端口 / 自建监听启发式自测（spec §13 /
+// P0 review momus Minor-1）：拼接常量、Sprintf 格式化端口、net.Listen、*.ListenAndServe
+// 必须红；httptest、127.0.0.1:0、net.Dial、显式白名单文件必须绿。
+func TestHarnessBoundaryGateComputedPort(t *testing.T) {
+	header := "package e2e\n\nimport \"testing\"\n\n"
+	mk := func(body string) map[string][]byte {
+		return map[string][]byte{"scenario_test.go": []byte(header + body)}
+	}
+	red := []struct{ name, body, want string }{
+		{"concat_const", "const hostPart = \"127.0.0.1:\"\nconst fixedAddr = hostPart + \"18094\"\n\nfunc TestEvilConcat(t *testing.T) {\n\t_ = fixedAddr\n}\n", "计算型固定端口"},
+		{"concat_inline", "func TestEvilConcatInline(t *testing.T) {\n\t_ = \"127.0.0.1:\" + \"18094\"\n}\n", "计算型固定端口"},
+		{"sprintf", "func TestEvilSprintf(t *testing.T) {\n\t_ = fmt.Sprintf(\"127.0.0.1:%d\", 18094)\n}\n", "计算型固定端口"},
+		{"localhost_concat", "func TestEvilLocalhost(t *testing.T) {\n\t_ = \"localhost:\" + \"18094\"\n}\n", "计算型固定端口"},
+		{"net_listen", "func TestEvilListen(t *testing.T) {\n\t_, _ = net.Listen(\"tcp\", \"127.0.0.1:0\")\n}\n", "禁止场景自建监听"},
+		{"http_listen_and_serve", "func TestEvilHTTPListen(t *testing.T) {\n\t_ = http.ListenAndServe(\"127.0.0.1:0\", nil)\n}\n", "禁止场景自建监听"},
+	}
+	for _, tc := range red {
+		violations := scanBoundaryViolations(mk(tc.body))
+		require.NotEmpty(t, violations, "计算型/自建监听变异 %s 必须红", tc.name)
+		require.Contains(t, formatBoundaryViolations(violations), tc.want,
+			"变异 %s 的违规原因：%s", tc.name, formatBoundaryViolations(violations))
+	}
+	green := []struct{ name, body string }{
+		{"httptest", "func TestOKHTTPTest(t *testing.T) {\n\tsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))\n\tdefer srv.Close()\n}\n"},
+		{"loopback_zero", "func TestOKLoopbackZero(t *testing.T) {\n\t_ = \"127.0.0.1:0\"\n}\n"},
+		{"net_dial", "func TestOKDial(t *testing.T) {\n\t_, _ = net.DialTimeout(\"tcp\", \"127.0.0.1:0\", 0)\n}\n"},
+	}
+	for _, tc := range green {
+		violations := scanBoundaryViolations(mk(tc.body))
+		require.Empty(t, violations, "对照 %s 不得误报：%s", tc.name, formatBoundaryViolations(violations))
+	}
+	// 显式白名单文件（harness 实现）豁免监听/拼接字面量。
+	exempt := map[string][]byte{"harness_test.go": []byte(header +
+		"func TestHarnessExempt(t *testing.T) {\n\t_, _ = net.Listen(\"tcp\", \"127.0.0.1:\"+\"18094\")\n}\n")}
+	require.Empty(t, scanBoundaryViolations(exempt), "显式白名单文件豁免")
 }
 
 // TestHarnessBoundaryGate 资源/进程边界 gate 主入口。

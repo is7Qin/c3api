@@ -599,7 +599,11 @@ func sweepClaimDir(path, hostname, sweeperID string, stats *sweepStats, logf fun
 		return
 	}
 	stats.Scanned++
-	sweepRecordBase(base, hostname, sweeperID, stats, logf)
+	// 接管者在 takeoverStaleClaim 里已独占重建 claim：把「已持有」直接传给 sweep
+	// 内核（sweepRecordBaseOwned），**不得**再走 sweepRecordBase 的第二次 Mkdir ——
+	// 否则同路径必然 ErrExist，落入「活 sweeper 正在处理」分支 => 陈旧 claim 永久
+	// Kept、记录与资源永不回收（P0 review momus V1 / spec §13）。
+	sweepRecordBaseOwned(base, hostname, sweeperID, stats, logf)
 }
 
 // takeoverStaleClaim 独占接管陈旧 claim：先 O_EXCL 建 takeover 标记（只有一个赢家），
@@ -655,12 +659,17 @@ func sweepRecordBase(base, hostname, sweeperID string, stats *sweepStats, logf f
 		logf("e2e sweep: 抢占 claim %s 失败：%v", filepath.Base(claimPath), err)
 		return
 	}
-	owned := true
-	defer func() {
-		if owned {
-			_ = os.Remove(claimPath)
-		}
-	}()
+	sweepRecordBaseOwned(base, hostname, sweeperID, stats, logf)
+}
+
+// sweepRecordBaseOwned 在「本 sweeper 已独占 claim」的前提下处理记录：调用方要么刚
+// Mkdir 成功（sweepRecordBase），要么是陈旧 claim 的接管者（sweepClaimDir 经
+// takeoverStaleClaim 已重建 claim）。**这里禁止再次 Mkdir 同路径**——接管路径会因此
+// ErrExist 自抢自败（P0 review V1：记录/claim/PG 库/Redis 锁永久泄漏）。claim 由本
+// sweeper 独占，处理结束（含提前 return）必须释放。
+func sweepRecordBaseOwned(base, hostname, sweeperID string, stats *sweepStats, logf func(string, ...any)) {
+	claimPath := base + e2eClaimSuffix
+	defer func() { _ = os.Remove(claimPath) }()
 
 	actual, isReaping := findRecordFile(base)
 	if actual == "" {
@@ -786,7 +795,11 @@ func reclaimRunRecord(rec *runRecord, logf func(string, ...any)) error {
 		} else if lock == nil {
 			// 已不存在 = 目标态
 		} else if lock.UUID != rec.LockUUID {
-			logf("e2e sweep: Redis 锁 db=%d owner=%s != 记录 %s，只 warn 不删", rec.AllocatedRedisDB, lock.UUID, rec.LockUUID)
+			// owner 不匹配 = 该索引可能已被别的 run 接管：**保留记录与锁**并返回可重试
+			// 错误，调用方把 .reaping 恢复为正式记录（保留追踪）——绝不删除记录让孤儿
+			// 索引失去追踪（P0 review momus Minor-3 / spec §13）。下次 sweep 重试。
+			return fmt.Errorf("Redis 锁 db=%d owner=%s 与记录 %s 不匹配：保留记录与锁（下次重试）",
+				rec.AllocatedRedisDB, lock.UUID, rec.LockUUID)
 		} else if err := os.Remove(redisLockPath(rec.AllocatedRedisDB)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("删除 Redis 锁 db=%d: %w", rec.AllocatedRedisDB, err)
 		}

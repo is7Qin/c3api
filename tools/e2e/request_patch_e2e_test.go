@@ -31,9 +31,10 @@
 //
 // 资源与进程生命周期全部由共享 harness 独占（每 run 唯一 PG 库/Redis 逻辑库/动态端口、
 // run 级 lazy migrate、子进程 env deny-list、registry）；本文件只写配置/请求/断言。
-// 与 billing/routing 文件同包：P0 过渡期复用既有管理面 helper（e2eEnv/admin/aiURL/
-// createUser/userKey/jsonGet/pollUntil），P1 迁移 billing 时搬入 harness。
-// 本文件新增符号一律 rp 前缀，禁与其他 e2e 文件重名。
+// 共享场景 helper（e2eEnv / admin / aiURL / createUser / userKey / jsonGet / pollUntil）
+// 定义在 P0 拥有的 scenario_env_test.go（oracle P0 review I2 后上移）；本文件不依赖
+// 尚未迁移的 billing/routing legacy 文件。P1 起纳入独立 e2e CI job（需 docker compose），
+// P0 手动运行；本文件新增符号一律 rp 前缀，禁与其他 e2e 文件重名。
 package e2e
 
 import (
