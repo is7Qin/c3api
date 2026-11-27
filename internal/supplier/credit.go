@@ -13,6 +13,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
+
+	"github.com/is7qin/c3api/internal/pgretry"
 )
 
 // CreditStore credit 链持久面（repository 实现绑定真实 PG；测试注入 fake）。
@@ -234,7 +236,7 @@ func (w *CreditWorker) applyWithRetry(ctx context.Context, batch []BatchRow, fre
 		if err = w.store.ApplyCreditTx(ctx, batch, freeze); err == nil {
 			return nil
 		}
-		if !IsRetryableTxErr(err) || ctx.Err() != nil {
+		if !pgretry.IsRetryableTxErr(err) || ctx.Err() != nil {
 			return err
 		}
 		// 有界退避（可预期冲突；非 sleep 掩盖竞态——重试是显式的收敛策略）。

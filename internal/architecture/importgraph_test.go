@@ -281,6 +281,9 @@ var allowRules = []allowRule{
 	// 显式空切片而不是裸规则：语义是"叶包不依赖任何内部包"，将来有人往里加
 	// import 时得到的是本规则明确的拒绝，而不是 leafRule 顺手放行。
 	{from: "internal/pricingresult", to: []string{}},
+	// P4-1：pgretry 只依赖 pgconn（PostgreSQL 驱动的 SQLSTATE 分类），零内部依赖。
+	// 它是**基础设施事实**不是领域规则——领域包不得 import pgx，故与 domain 分开。
+	{from: "internal/pgretry", to: []string{}},
 
 	// P6-2：internal/codexproto 装 codex 协议的**纯数据与纯解析**（account id 的
 	// JWT claims 解析 + 用量查询失败的分类类型），零内部依赖、只 import stdlib。
@@ -526,7 +529,7 @@ var allowRules = []allowRule{
 	// 结构上自动满足），只引用 internal/storeerr 的 ErrConflict 哨兵。
 	{from: "internal/rule", to: []string{"internal/domain", "internal/storeerr", "internal/worker", "pkg/logx"}},
 	{from: "internal/settingssnap", to: []string{"internal/domain", "pkg/logx"}},
-	{from: "internal/supplier", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
+	{from: "internal/supplier", to: []string{"internal/domain", "internal/pgretry", "internal/worker", "pkg/logx"}},
 	{from: "internal/usage", to: []string{"internal/domain", "internal/worker", "pkg/logx"}},
 	{from: "internal/verification", to: []string{"internal/domain"}},
 	{from: "internal/worker", to: []string{"pkg/logx"}},
@@ -784,7 +787,7 @@ const (
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "d9e155da7d4220aa0373efc7f8350f1d19b70e2b276b507c68aa27c95f7e2c2b"
+	allowMatrixFingerprint = "127ef19b337350bed0efaab79d56d39a0c933f8f9bab4818680f47bc52742f06"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy

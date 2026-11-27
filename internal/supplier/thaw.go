@@ -13,6 +13,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
+
+	"github.com/is7qin/c3api/internal/pgretry"
 )
 
 // retryMaxAttempts 是 40P01/55P03 重试的上界（§5.7）。两个 worker（thaw 与
@@ -186,7 +188,7 @@ func (w *ThawWorker) thawWithRetry(ctx context.Context) (int, error) {
 		if n, err = w.store.ThawDueChunks(ctx, w.batchLimit()); err == nil {
 			return n, nil
 		}
-		if !IsRetryableTxErr(err) || ctx.Err() != nil {
+		if !pgretry.IsRetryableTxErr(err) || ctx.Err() != nil {
 			return 0, err
 		}
 		backoff := time.Duration(attempt+1) * 20 * time.Millisecond

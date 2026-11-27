@@ -107,15 +107,6 @@ func TestAddCheckedOverflowAndUnderflow(t *testing.T) {
 	require.Equal(t, int64(math.MaxInt64), got)
 }
 
-// TestIsRetryableTxErr 死锁/锁不可用可重试。
-func TestIsRetryableTxErr(t *testing.T) {
-	require.True(t, IsRetryableTxErr(&pgconn.PgError{Code: "40P01"}))
-	require.True(t, IsRetryableTxErr(&pgconn.PgError{Code: "55P03"}))
-	require.False(t, IsRetryableTxErr(&pgconn.PgError{Code: "23505"}))
-	require.False(t, IsRetryableTxErr(errors.New("boom")))
-	require.False(t, IsRetryableTxErr(nil))
-}
-
 // ---- worker cycle（fake store） ----
 
 type fakeStore struct {

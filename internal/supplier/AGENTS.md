@@ -9,7 +9,7 @@
 | `aggregate.go` | `AggregateBatch` / `AddChecked` / `BatchRow` / `DayRecon` / `UIDCredit`（聚合法定与守恒） |
 | `credit.go` | `CreditWorker` / `CreditStore` / `CreditConfig` / `CreditLocker` / `NewCredit` |
 | `freeze.go` / `thaw.go` | `EffectiveFreezeHours` / `BucketAvailableAt`（冻结参数与桶时刻） |
-| `payout.go` / `retry.go` / `risk.go` | 结算、重试分类、风控 |
+| `payout.go` / `risk.go` | 结算、重试分类、风控 |
 | `snapshot.go` / `view.go` | 供应商视图快照 |
 
 ## 不变量
