@@ -7,44 +7,35 @@
 // Package e2e 单实例智能路由端到端测试（charter）：真实网关 +
 // fakeupstream + 真实 PostgreSQL + 真实 Redis。
 //
-// 运行（前置：PG localhost:15432，Redis localhost:16379；测试以 postgres
-// 维护库自建 c3api_routing_e2e 库，跑完不删库如下轮 DROP 重建）：
+// 资源/进程生命周期由共享 harness 独占（每 run 唯一 PG 库 / Redis 逻辑库 / 动态端口 /
+// run 级 build + lazy migrate / 子进程回收）；本文件只声明配置、请求、上游注入与断言。
+// 两个 Test 各自一次 run（串行），互不共享库/端口/Redis 逻辑库。
 //
-//	$env:TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres"
-//	$env:C3API_REDIS_ADDR="127.0.0.1:16379"
-//	go test -tags e2e -run 'TestRoutingSmoke|TestIntelligentRoutingE2E' ./tools/e2e -v -timeout 600s
+// 运行（前置：base PostgreSQL + Redis，deploy/test-compose.yml 缺省 15432/16379；
+// P1 起进独立 e2e CI job）：
 //
-// 与 billing_e2e_test.go 同包：复用 e2eEnv/adminJWT/jwtSecret/pollUntil/
-// waitSnapshot/createUser/userKey/putPrice/jsonGet/stopGracefully/waitExit。
-// 本文件所有新增符号一律 rt 前缀，禁与 billing 文件重名。
+//	TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres" \
+//	  C3API_REDIS_ADDR="127.0.0.1:16379" \
+//	  go test -tags e2e -run 'TestRoutingSmoke|TestIntelligentRoutingE2E' ./tools/e2e -v -timeout 600s
+//
+// 与 billing/routing_multi 同包：复用 e2eEnv/jwtSecret/pollUntil/waitSnapshot/
+// createUser/userKey/putPrice/jsonGet 等场景 helper（scenario_env_test.go）。
+// 本文件所有符号一律 rt 前缀。
 package e2e
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-
-	"github.com/is7qin/c3api/pkg/redisx"
 )
 
 const (
-	rtServerAddr = "127.0.0.1:18093" // billing 用 18090-18092，本文件独立端口
-	rtUpAddr     = "127.0.0.1:19111"
-	rtDBName     = "c3api_routing_e2e" // 独立库：与 TestBillingE2E 的 c3api_e2e 隔离
-	rtModel      = "rt-model"
+	rtModel = "rt-model"
 
 	// 注入键：fakeupstream 按上游 key 注入确定性失败（健康键不受影响）。
 	rtKeyA    = "rt-key-a"    // 健康账号 A（主组，dx 域，成本 ×1.0）
@@ -57,140 +48,45 @@ const (
 	rtKeyF500 = "rt-key-f500" // 恒 500（failover 组坏账号 H）
 )
 
-// rtPortFree 端口占用预检：被占直接 FailNow（僵尸进程曾污染单测，禁静默复用）。
-func rtPortFree(t *testing.T, addr string) {
-	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
-	if err == nil {
-		_ = c.Close()
-		t.Fatalf("端口 %s 已被占用（疑似僵尸 server/fakeupstream），先清理再跑", addr)
-	}
+// rtHarness 场景句柄：资源/进程生命周期由共享 harness 独占（每 run 唯一 PG 库 /
+// Redis 逻辑库 / 动态端口 / run 级 build + lazy migrate / registry / cleanup）；
+// 本文件只保留断言需要的管理面视图与真实 fakeupstream 地址。
+type rtHarness struct {
+	run *e2eRun
+	env *e2eEnv
+	up  *fakeUpstream
 }
 
-// rtBoot 启动 fakeupstream + 网关，返回 env（pg 指向全新的 rtDBName）。
-// 调用方不得再起第二个 server 实例（多实例是另一 task，scope 外）。
-func rtBoot(t *testing.T) (*e2eEnv, *exec.Cmd, *exec.Cmd, string) {
-	t.Helper()
-	rtPortFree(t, rtServerAddr)
-	rtPortFree(t, rtUpAddr)
-
-	ctx := context.Background()
-	redisAddr := os.Getenv("C3API_REDIS_ADDR")
-	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required (e.g. 127.0.0.1:16379)")
-
-	// Redis 隔离（与 PG DROP+CREATE 对等）：FlushDB 清掉上轮残留的易失协
-	// 调态。实证根因（h2）：stage-5 限流写入的 OPEN(C,*,rev1)/120s 在共享
-	// Redis 存活；新鲜库账号 ID/revision 确定性重放（C恒rev1），下轮
-	// health Sync 原样导入旧记录 → stage-5 全程误拒 C（上游零命中）。生产
-	// 多实例本就共享这些记录（收敛语义），清的是测试隔离债。
-	rc, err := redisx.Open(redisx.Options{Addr: redisAddr})
-	require.NoError(t, err, "redis open for harness isolation flush")
-	require.NoError(t, rc.FlushDB(ctx).Err(), "harness redis isolation flush")
-	_ = rc.Close()
-
-	// --- DB：postgres 维护库 DROP/CREATE 独立 e2e 库 ---
-	adminDSN := os.Getenv("TEST_DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
-	}
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	require.NoError(t, err)
-	t.Cleanup(adminPool.Close)
-	_, err = adminPool.Exec(ctx, `DROP DATABASE IF EXISTS `+rtDBName+` WITH (FORCE)`)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `CREATE DATABASE `+rtDBName)
-	require.NoError(t, err)
-	dsn := adminDSN
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		dsn = dsn[:i+1] + rtDBName
-		if !strings.Contains(dsn, "?") {
-			dsn += "?sslmode=disable"
-		}
-	}
-	pg, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(pg.Close)
-
-	env := &e2eEnv{t: t, pg: pg, addr: rtServerAddr}
-	env.tmp = t.TempDir()
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	build := func(pkg, name string) string {
-		out := filepath.Join(env.tmp, name)
-		cmd := exec.Command("go", "build", "-o", out, pkg)
-		cmd.Dir = repoRoot
-		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run(), "build %s", pkg)
-		return out
-	}
-	upBin := build("./tools/fakeupstream", "rt-fakeupstream.exe")
-	srvBin := build("./cmd/server", "rt-server.exe")
-
-	up := exec.Command(upBin, "-addr", rtUpAddr, "-chunks", "5", "-latency", "2ms",
-		"-fail429", rtKey429+","+rtKeyF429, "-fail500", rtKey500+","+rtKeyF500)
-	up.Stdout, up.Stderr = os.Stdout, os.Stderr
-	require.NoError(t, up.Start())
-	t.Cleanup(func() {
-		if up.Process != nil {
-			_ = up.Process.Kill()
-		}
-	})
-
-	// sync_interval=3s：plan 编译含事件驱动 + 周期 tick，短周期加速收敛不断言时序；
-	// 其余键与 billing harness 同构（未知键 fail-fast，禁私自加键）。
-	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+// rtConfigTOML 单实例路由配置（与迁移前逐键一致；addr/DSN/Redis 逻辑库全部来自
+// harness 的 gatewayInputs）。sync_interval=3s：plan 编译含事件驱动 + 周期 tick，短
+// 周期加速收敛不断言时序；其余键与 billing 同构（未知键 fail-fast，禁私自加键）。
+func rtConfigTOML(in gatewayInputs) string {
+	return fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
-redis = { addr = "%s" }
+redis = { addr = "%s", db = %d }
 proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 3, usage_capture = true }
 upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
 scheduler = { default_max_concurrency = 8, sync_interval = "3s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, rtServerAddr, jwtSecret, dsn, redisAddr)
-	cfgPath := filepath.Join(env.tmp, "config.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
-
-	srv := exec.Command(srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(env.tmp, "server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		if srv.ProcessState != nil && srv.ProcessState.Exited() {
-			_ = srvLog.Close()
-			return
-		}
-		if srv.Process != nil {
-			_ = srv.Process.Kill()
-			_ = srv.Wait()
-		}
-		_ = srvLog.Close()
-	})
-	// 失败诊断：server.log 转储（Cleanup LIFO，先于 Kill 执行）。
-	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
-			t.Logf("--- rt server.log (test failed) ---\n%s", data)
-		}
-	})
-
-	rtWaitReady(t, env, env.tmp)
-	return env, srv, up, dsn
+`, in.Addr, jwtSecret, in.DSN, in.RedisAddr, in.RedisDB)
 }
 
-// rtWaitReady 无凭据引导就绪（spec 2026-10-09 §4.9）：/healthz → bootstrap
-// platform_admin JWT → /api/admin/settings 确认；写入 env.adminJWT（= 就绪）。
-func rtWaitReady(t *testing.T, env *e2eEnv, tmp string) {
+// rtBoot 一次 run 的基建：每 run 唯一 PG 库/Redis 逻辑库/动态端口 + 真实
+// fakeupstream + 真实网关二进制；建表只归 harness 的 run 级 lazy migrate（场景不
+// 可能漏 migrate，也不再有内联 -migrate）。调用方不得再起第二个 server 实例（多实例
+// 场景见 routing_multi_e2e_test.go）。
+func rtBoot(t *testing.T) *rtHarness {
 	t.Helper()
-	env.adminJWT = env.bootstrapAdminJWT()
+	run := newE2ERun(t, e2eRunOptions{})
+	up := run.fakeUpstream(t, upstreamSpec{
+		Name:  "routing-fakeupstream",
+		Flags: []string{"-chunks", "5", "-latency", "2ms", "-fail429", rtKey429 + "," + rtKeyF429, "-fail500", rtKey500 + "," + rtKeyF500},
+	})
+	gw := run.gateway(t, gatewaySpec{Name: "routing-main", Config: rtConfigTOML})
+	return &rtHarness{run: run, env: run.env(gw), up: up}
 }
 
 // rtPageMax 路由读面契约的 limit 上限（openapi `maximum: 200`）。三面缺省 limit
@@ -329,10 +225,11 @@ type rtAuditEntry struct {
 	Path   string `json:"path"`
 }
 
-// rtAudit 拉取 fakeupstream 审计账目（哪个上游 key 真实处理了请求）。
-func rtAudit(t *testing.T) []rtAuditEntry {
+// rtAudit 拉取 fakeupstream 审计账目（哪个上游 key 真实处理了请求；upAddr 由 harness
+// 动态分配，场景不持有固定端口）。
+func rtAudit(t *testing.T, upAddr string) []rtAuditEntry {
 	t.Helper()
-	resp, err := http.Get("http://" + rtUpAddr + "/_audit")
+	resp, err := http.Get("http://" + upAddr + "/_audit")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	var out []rtAuditEntry
@@ -341,14 +238,14 @@ func rtAudit(t *testing.T) []rtAuditEntry {
 }
 
 // rtAuditCountByKey 按上游 key 统计终态 200 的处理次数。
-func rtAuditCountByKey(t *testing.T, keys ...string) map[string]int {
+func rtAuditCountByKey(t *testing.T, upAddr string, keys ...string) map[string]int {
 	t.Helper()
 	want := map[string]bool{}
 	for _, k := range keys {
 		want[k] = true
 	}
 	got := map[string]int{}
-	for _, e := range rtAudit(t) {
+	for _, e := range rtAudit(t, upAddr) {
 		if want[e.Key] && e.Status == http.StatusOK {
 			got[e.Key]++
 		}
@@ -376,7 +273,8 @@ func rtRevision(t *testing.T, env *e2eEnv, id int64) int64 {
 // TestRoutingSmoke 路由冒烟：boot → seed → 首个 plan 发布 → 一次成功代理 →
 // Explore 断言。完整场景见 TestIntelligentRoutingE2E（同 harness 之上构建）。
 func TestRoutingSmoke(t *testing.T) {
-	env, _, _, _ := rtBoot(t)
+	h := rtBoot(t)
+	env := h.env
 
 	// --- 冷启动门：seed 前 AI 流量必须被拒绝（plan 未发布：代码 404，文档称
 	// 503——此处不断言具体码，只断言拒绝 + 记录实测码，见 evidence 缺陷/差异注）。
@@ -390,7 +288,7 @@ func TestRoutingSmoke(t *testing.T) {
 		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
 	tpl := env.create("/templates", map[string]any{
-		"name": "rt-tpl", "base_url": "http://" + rtUpAddr,
+		"name": "rt-tpl", "base_url": "http://" + h.up.Addr,
 		"supported_formats": []string{"openai-chat", "openai-responses", "anthropic"},
 		"models":            []string{rtModel},
 	})
@@ -434,7 +332,7 @@ func TestRoutingSmoke(t *testing.T) {
 		"冷启动 explore 必须含双账号（100%% Explore）：got=%v want=[%d %d]", got, accA, accB)
 
 	// 上游归因：audit 证明请求真实到达 fakeupstream（任一健康 key）。
-	hits := rtAuditCountByKey(t, rtKeyA, rtKeyB)
+	hits := rtAuditCountByKey(t, h.up.Addr, rtKeyA, rtKeyB)
 	require.Equal(t, 1, hits[rtKeyA]+hits[rtKeyB], "audit 必须恰好记录 1 次成功处理：%v", hits)
 	t.Logf("SMOKE upstream hits=%v", hits)
 }
@@ -566,10 +464,10 @@ func rtWaitGenBump(t *testing.T, env *e2eEnv, before int64, what string) int64 {
 }
 
 // rtAuditHits 按 (key,status) 统计；seqAfter>0 时只计其后（增量归因）。
-func rtAuditHits(t *testing.T, seqAfter int64, key string, status int) int {
+func rtAuditHits(t *testing.T, upAddr string, seqAfter int64, key string, status int) int {
 	t.Helper()
 	n := 0
-	for _, e := range rtAudit(t) {
+	for _, e := range rtAudit(t, upAddr) {
 		if e.Seq > seqAfter && e.Key == key && e.Status == status {
 			n++
 		}
@@ -578,10 +476,10 @@ func rtAuditHits(t *testing.T, seqAfter int64, key string, status int) int {
 }
 
 // rtAuditMaxSeq 当前审计水位（增量窗口起点）。
-func rtAuditMaxSeq(t *testing.T) int64 {
+func rtAuditMaxSeq(t *testing.T, upAddr string) int64 {
 	t.Helper()
 	var m int64
-	for _, e := range rtAudit(t) {
+	for _, e := range rtAudit(t, upAddr) {
 		if e.Seq > m {
 			m = e.Seq
 		}
@@ -652,7 +550,8 @@ func rtFrontier(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string
 // 冷启动 Explore → 亲和命中/溢出 → 质量收敛切 Primary → 429 窗口未中/命中限流 →
 // failover 聚合验证 → fail_account/恢复 → 硬连续 → Sankey 守恒 → 多协议+计费。
 func TestIntelligentRoutingE2E(t *testing.T) {
-	env, _, _, _ := rtBoot(t)
+	h := rtBoot(t)
+	env := h.env
 	t0 := time.Now().UTC().Truncate(time.Second)
 	fromParam := t0.Format(time.RFC3339)
 
@@ -665,7 +564,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	require.Equal(t, 200, c, "put image price: %s", rb)
 
 	tpl := env.create("/templates", map[string]any{
-		"name": "rt-tpl", "base_url": "http://" + rtUpAddr,
+		"name": "rt-tpl", "base_url": "http://" + h.up.Addr,
 		"supported_formats": []string{"openai-chat", "openai-responses", "anthropic", "openai-images"},
 		"models":            []string{rtModel, "rt-img-model"},
 	})
@@ -804,15 +703,15 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	chatKey := func(key, pck string) (int, string) {
 		return rtChat(t, env, k1, rtModel, map[string]any{"prompt_cache_key": pck})
 	}
-	mark := rtAuditMaxSeq(t)
+	mark := rtAuditMaxSeq(t, h.up.Addr)
 	for i := 0; i < 6; i++ {
 		c, rb := chatKey(k1, "aff-hit-1")
 		require.Equal(t, 200, c, "aff hit req %d: %s", i, rb)
 	}
 	perAcc := map[string]int{
-		rtKeyA: rtAuditHits(t, mark, rtKeyA, 200),
-		rtKeyB: rtAuditHits(t, mark, rtKeyB, 200),
-		rtKeyE: rtAuditHits(t, mark, rtKeyE, 200),
+		rtKeyA: rtAuditHits(t, h.up.Addr, mark, rtKeyA, 200),
+		rtKeyB: rtAuditHits(t, h.up.Addr, mark, rtKeyB, 200),
+		rtKeyE: rtAuditHits(t, h.up.Addr, mark, rtKeyE, 200),
 	}
 	stuck := 0
 	for acc, n := range perAcc {
@@ -823,7 +722,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	}
 	require.Equal(t, 1, stuck, "同 prompt_cache_key 必须全粘同一账号：%v", perAcc)
 
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	// FNV 前缀聚集：同前缀 key 落同域（离线测得 alpha/bravo/foxtrot/india→dx，
 	// charlie→dy；见 evidence fnvprobe）。dx key 必须全落 {A,B} 且零 E；
 	// dy key 落 E——逐 key 域路由的确定性证明（零概率成分）。
@@ -831,27 +730,27 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 		c, rb := chatKey(k1, pck)
 		require.Equal(t, 200, c, "dx req %s: %s", pck, rb)
 	}
-	require.Zero(t, rtAuditHits(t, mark, rtKeyE, 200), "dx 域 key 不得由 E 处理")
-	dxAB := rtAuditHits(t, mark, rtKeyA, 200) + rtAuditHits(t, mark, rtKeyB, 200)
+	require.Zero(t, rtAuditHits(t, h.up.Addr, mark, rtKeyE, 200), "dx 域 key 不得由 E 处理")
+	dxAB := rtAuditHits(t, h.up.Addr, mark, rtKeyA, 200) + rtAuditHits(t, h.up.Addr, mark, rtKeyB, 200)
 	require.Equal(t, 4, dxAB, "dx 域 4 key 必须全由 A/B 处理")
 	for _, pck := range []string{"charlie-00", "charlie-01"} {
 		c, rb := chatKey(k1, pck)
 		require.Equal(t, 200, c, "dy req %s: %s", pck, rb)
 	}
-	require.Equal(t, 2, rtAuditHits(t, mark, rtKeyE, 200), "dy 域 key 必须由 E 处理")
+	require.Equal(t, 2, rtAuditHits(t, h.up.Addr, mark, rtKeyE, 200), "dy 域 key 必须由 E 处理")
 	t.Log("亲和分域：dx→{A,B}×4，dy→E×2")
 
 	// ============ 3. 亲和溢出：dy 域失能 → 同 key 溢到全局 ============
 	t.Log("阶段 3：亲和溢出（域无容量 → 全局 fallback）")
 	dyKey := ""
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	for i := 0; i < 12 && dyKey == ""; i++ {
 		pck := fmt.Sprintf("aff-dy-%d", i)
 		c, rb := chatKey(k1, pck)
 		require.Equal(t, 200, c, "dy probe %d: %s", i, rb)
-		if rtAuditHits(t, mark, rtKeyE, 200) > 0 {
+		if rtAuditHits(t, h.up.Addr, mark, rtKeyE, 200) > 0 {
 			dyKey = pck
-			mark = rtAuditMaxSeq(t)
+			mark = rtAuditMaxSeq(t, h.up.Addr)
 		}
 	}
 	require.NotEmpty(t, dyKey, "12 个候选 key 无一命中 dy 域（E 从未被亲和选中）")
@@ -860,11 +759,11 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	rtSetEnabled(t, env, accE, false) // dy 域唯一账号失能 = 域无容量
 	gen = rtWaitGenBump(t, env, gen, "E 失能后重编译")
 	_ = gen
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	c, rb = chatKey(k1, dyKey)
 	require.Equal(t, 200, c, "spill req: %s", rb)
-	require.Zero(t, rtAuditHits(t, mark, rtKeyE, 200), "失能后 E 必须零处理")
-	spilled := rtAuditHits(t, mark, rtKeyA, 200) + rtAuditHits(t, mark, rtKeyB, 200)
+	require.Zero(t, rtAuditHits(t, h.up.Addr, mark, rtKeyE, 200), "失能后 E 必须零处理")
+	spilled := rtAuditHits(t, h.up.Addr, mark, rtKeyA, 200) + rtAuditHits(t, h.up.Addr, mark, rtKeyB, 200)
 	require.Equal(t, 1, spilled, "dy key 必须溢到 dx 域处理")
 	t.Logf("亲和溢出：%s → dx 域", dyKey)
 	rtSetEnabled(t, env, accE, true)
@@ -1303,7 +1202,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 
 	// ============ 5. 窗口 429：未中放行 / 命中限流 ============
 	t.Log("阶段 5：窗口 429 miss 放行 → hit 限流（C 单候选隔离组）")
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	// miss 语义以上游审计为准（网关按约定归一化上游 429 文本为 rate
 	// limited，不透传 injected 原文——零透传契约）。发送循环带显式上界：
 	// 偶发 reserve 竞态（静态/决策视图交替瞬间，单候选门拒收）只产生网关
@@ -1311,13 +1210,13 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 6 发内须集满 2 次上游 429（窗口阈值 3：恰好不提前触发限流）。持续拒
 	// 收则转储诊断后失败（见下）。
 	sent := 0
-	for rtAuditHits(t, mark, rtKey429, 429) < 2 && sent < 6 {
+	for rtAuditHits(t, h.up.Addr, mark, rtKey429, 429) < 2 && sent < 6 {
 		c, rb := rtChat(t, env, k2, rtModel, nil)
 		t.Logf("429 miss req %d status=%d body=%.160s", sent, c, rb)
 		require.Equal(t, 429, c, "单候选 429 应向客户端透 429：%s", rb)
 		sent++
 	}
-	if got := rtAuditHits(t, mark, rtKey429, 429); got != 2 {
+	if got := rtAuditHits(t, h.up.Addr, mark, rtKey429, 429); got != 2 {
 		_, plan := rtPlan(t, env)
 		if raw, err := json.Marshal(rtFindRoute(plan, g2, "openai-chat", rtModel)); err == nil {
 			t.Logf("DIAG g2-route=%.3000s", raw)
@@ -1337,23 +1236,23 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	t.Logf("429 hit req status=%d body=%.160s", c, rb)
 	engaged := false
 	rtPollLong(t, "限流生效（上游零新尝试）", 90*time.Second, func() (bool, string) {
-		before := rtAuditMaxSeq(t)
+		before := rtAuditMaxSeq(t, h.up.Addr)
 		c, rb := rtChat(t, env, k2, rtModel, nil)
 		if c != 429 {
 			return false, fmt.Sprintf("限流期异常 status=%d body=%.120s", c, rb)
 		}
-		after := rtAuditMaxSeq(t)
+		after := rtAuditMaxSeq(t, h.up.Addr)
 		engaged = after == before
 		return engaged, fmt.Sprintf("audit %d→%d", before, after)
 	})
 	require.True(t, engaged, "限流必须生效（上游零新尝试）")
 	// 冻结验证：连续 3 次限流请求零上游痕迹。
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	for i := 0; i < 3; i++ {
 		c, _ := rtChat(t, env, k2, rtModel, nil)
 		require.Equal(t, 429, c, "冻结期仍 429")
 	}
-	require.Equal(t, mark, rtAuditMaxSeq(t), "限流冻结期上游必须零尝试")
+	require.Equal(t, mark, rtAuditMaxSeq(t, h.up.Addr), "限流冻结期上游必须零尝试")
 
 	// ============ 6. failover 聚合验证：429 尝试必被救援（全 200） ============
 	// 5xx 按 replay 规则 terminal（见 evidence），故 g4 只含 G：F 命中
@@ -1370,33 +1269,33 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	}
 	require.True(t, candIDs[accF] && candIDs[accG],
 		"g4 候选须含 F/G：%v", candIDs)
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	for i := 0; i < 15; i++ {
 		c, rb := rtChat(t, env, k4, rtModel, nil)
 		require.Equal(t, 200, c, "failover req %d 必须 200：%s", i, rb)
 	}
-	require.Equal(t, 15, rtAuditHits(t, mark, rtKeyG, 200), "G 必须成功 15 次")
-	bad := rtAuditHits(t, mark, rtKeyF429, 429)
+	require.Equal(t, 15, rtAuditHits(t, h.up.Addr, mark, rtKeyG, 200), "G 必须成功 15 次")
+	bad := rtAuditHits(t, h.up.Addr, mark, rtKeyF429, 429)
 	require.GreaterOrEqual(t, bad, 1, "15 次内至少 1 次命中 F（否则 failover 未被演练）")
 	t.Logf("failover 尝试=%d，客户端 200×15（全部被救援）", bad)
 
 	// ============ 7. fail_account → 恢复 → PROBING ============
 	t.Log("阶段 7：fail_account（D）→ recover → PROBING 重 admission")
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	c, rb = rtChat(t, env, k3, rtModel, nil)
 	t.Logf("D 首错 status=%d body=%.160s", c, rb)
 	require.NotEqual(t, 200, c, "D 恒 500 不得成功：%s", rb)
-	require.Equal(t, 1, rtAuditHits(t, mark, rtKey500, 500), "首错必须到达上游 D")
+	require.Equal(t, 1, rtAuditHits(t, h.up.Addr, mark, rtKey500, 500), "首错必须到达上游 D")
 	rtPollLong(t, "D 被规则 fail（FailedAt 落盘）", 60*time.Second, func() (bool, string) {
 		m := rtAccountRead(t, env, accD)
 		fa := m["FailedAt"]
 		return fa != nil, fmt.Sprintf("FailedAt=%v", fa)
 	})
 	t.Log("D 已 fail")
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	c, rb = rtChat(t, env, k3, rtModel, nil)
 	require.NotEqual(t, 200, c, "fail 后 D 不得再被选中：%s", rb)
-	require.Equal(t, mark, rtAuditMaxSeq(t), "fail 后上游 D 必须零尝试")
+	require.Equal(t, mark, rtAuditMaxSeq(t, h.up.Addr), "fail 后上游 D 必须零尝试")
 	revBefore := rtRevision(t, env, accD)
 	rtRecover(t, env, accD)
 	m := rtAccountRead(t, env, accD)
@@ -1421,11 +1320,11 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// PROBING 按 probe 节拍放行（非按需）：轮询发请求，首个到达上游 D 的即
 	// probe admission（D 上游仍 500，状态码不断言，只看上游归因 +1）。
 	rtPollLong(t, "PROBING probe admission（D 重被选中）", 90*time.Second, func() (bool, string) {
-		before := rtAuditMaxSeq(t)
+		before := rtAuditMaxSeq(t, h.up.Addr)
 		c, rb := rtChat(t, env, k3, rtModel, nil)
-		after := rtAuditMaxSeq(t)
+		after := rtAuditMaxSeq(t, h.up.Addr)
 		dHits := 0
-		for _, e := range rtAudit(t) {
+		for _, e := range rtAudit(t, h.up.Addr) {
 			if e.Seq > before && e.Key == rtKey500 {
 				dHits++
 			}
@@ -1453,7 +1352,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	keyOfLastResp := func(after int64) string {
 		var last string
 		var ms int64 = -1
-		for _, e := range rtAudit(t) {
+		for _, e := range rtAudit(t, h.up.Addr) {
 			if e.Seq > after && e.Path == "/v1/responses" && e.Status == 200 && e.Seq > ms {
 				ms = e.Seq
 				last = e.Key
@@ -1461,11 +1360,11 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 		}
 		return last
 	}
-	mark = rtAuditMaxSeq(t)
+	mark = rtAuditMaxSeq(t, h.up.Addr)
 	k0 := keyOfLastResp(mark - 1000000) // 首呼即最近 responses 200（mark 前无其它）
 	require.NotEmpty(t, k0, "首呼须有上游归因")
 	for i := 0; i < 2; i++ {
-		after := rtAuditMaxSeq(t)
+		after := rtAuditMaxSeq(t, h.up.Addr)
 		c, rb = respBody(map[string]any{"input": "follow", "previous_response_id": rid})
 		require.Equal(t, 200, c, "连续跟随 %d：%s", i, rb)
 		rid2, _ := jsonGet(t, rb, "id").(string)

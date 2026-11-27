@@ -6,103 +6,72 @@
 
 // Package e2e 计费全链路端到端测试：真实网关 + fakeupstream + 真实 PostgreSQL。
 //
-// 运行（前置：本机 PostgreSQL 容器，见 TEST_DATABASE_URL 或默认
-// postgres://postgres:c3api@localhost:15432/postgres；测试自行 DROP/CREATE
-// c3api_e2e 库）：
+// 资源/进程生命周期由共享 harness 独占（每 run 唯一 PG 库 / Redis 逻辑库 / 动态端口 /
+// run 级 build 一次 / run 级 lazy migrate / 子进程登记与回收）：本文件只写配置、请求
+// 与断言。主网关 + 两个辅助网关（billing off / usage_capture=false）共用同一 DSN 与
+// run 级 Redis 逻辑库、配置不同；aux 由 harness gateway() 多次启动，lazy migrate 在
+// run 内只发生一次。
 //
-//	go test -tags e2e -run TestBillingE2E ./tools/e2e -v -timeout 600s
+// 运行（前置：base PostgreSQL + Redis，deploy/test-compose.yml 缺省 15432/16379；
+// P1 起进独立 e2e CI job）：
+//
+//	TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres" \
+//	  C3API_REDIS_ADDR="127.0.0.1:16379" \
+//	  go test -tags e2e -run TestBillingE2E ./tools/e2e -v -timeout 600s
 //
 // 覆盖：manual 设价（含 priority/fast/above 矩阵）→ usagelog cost 断言 +
 // 余额毫分扣减 + FEFO 临时额度优先扣；余额不足/未设价 402；tier strip/reject
 // 策略；组价格倍率 + 用户-组专属倍率（按组挂载，含 0 = 免费不扣费）；sync 后
 // litellm 行矩阵填充且 manual 不被覆盖；usagelog 按日分区写入；SIGTERM 优雅
-// 停机（流式中断 → 日志 cost 不丢，扣费完整 flush）。
+// 停机（流式中断 → 日志 cost 不丢，扣费完整 flush）；辅助实例 billing off /
+// usage_capture=false 的 quota 独立语义。
 package e2e
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
 
-// 共享场景 helper（e2eEnv / adminURL / aiURL / pricesFixture / req / admin /
-// pollUntil / createUser / userKey / jsonGet 等）已上移到 P0 拥有的
-// scenario_env_test.go（oracle P0 review I2：harness 与已迁移场景不再反向依赖本
-// legacy 文件）；本文件迁移到 harness 时只需删除自身 boot/断言 helper 与
-// bootstrapAdminJWT 等 legacy 专有方法。
-const (
-	serverAddr  = "127.0.0.1:18090" // 避开本机 VPN/代理已占用端口段（18080-18089 曾被占）
-	serverAddr2 = "127.0.0.1:18091" // 辅助实例：billing off 短路验证（独立配置/独立端口）
-	serverAddr3 = "127.0.0.1:18092" // 辅助实例：billing on + usage_capture=false 独立回写
-	upAddr      = "127.0.0.1:19110"
-	dbName      = "c3api_e2e"
-)
+// billingCfgTOML 主网关配置（与迁移前逐键一致；动态 addr / 每 run 唯一 DSN / Redis
+// 逻辑库全部来自 harness 的 gatewayInputs——场景不拼资源字面量、不设子进程 env）。
+func billingCfgTOML(in gatewayInputs) string {
+	return fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+log = { level = "warn", output = "stdout" }
+auth = { jwt_secret = "%s" }
+db = { dsn = "%s", max_conns = 10 }
+redis = { addr = "%s", db = %d }
+proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = true }
+upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
+scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
+usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
+billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
+`, in.Addr, jwtSecret, in.DSN, in.RedisAddr, in.RedisDB)
+}
 
-// bootstrapAdminJWT 无凭据引导（spec 2026-10-09 §4.9）：等待 /healthz 就绪 → 注册
-// 首个用户（fresh DB 首个注册即 platform_admin → JWT）；409/无 token → 登录后校验
-// /api/admin/settings 确认为 platform_admin；均失败 → Fatalf。返回 JWT（= 就绪）。
-func (e *e2eEnv) bootstrapAdminJWT() string {
-	e.t.Helper()
-	base := "http://" + e.addr
-	healthDeadline := time.Now().Add(60 * time.Second)
-	for {
-		resp, err := http.Get(base + "/healthz")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-		}
-		if time.Now().After(healthDeadline) {
-			e.t.Fatalf("server %s /healthz 未在 60s 内就绪", e.addr)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	const email = "e2e-bootstrap@loadtest.test"
-	post := func(path string) (string, int) {
-		b, _ := json.Marshal(map[string]any{"email": email, "password": "loadtest-pass-1"})
-		resp, err := http.Post(base+path, "application/json", bytes.NewReader(b))
-		e.t.Helper()
-		require.NoError(e.t, err)
-		defer resp.Body.Close()
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(resp.Body)
-		var out struct {
-			Token string `json:"token"`
-		}
-		_ = json.Unmarshal(buf.Bytes(), &out)
-		return out.Token, resp.StatusCode
-	}
-	token, code := post("/api/user/auth/register")
-	if token == "" || code == http.StatusConflict {
-		// 409 email exists ≠ 已 bootstrap（该邮箱可能只是普通用户）：登录后校验。
-		token, _ = post("/api/user/auth/login")
-	}
-	require.NotEmpty(e.t, token, "bootstrap 未取得 JWT（register/login 失败）")
-	req, err := http.NewRequest(http.MethodGet, e.adminURL("/settings"), nil)
-	require.NoError(e.t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(e.t, err)
-	resp.Body.Close()
-	require.Equal(e.t, http.StatusOK, resp.StatusCode, "bootstrap user is not platform_admin")
-	return token
+// billingAuxCfgTOML 辅助实例配置：同 DSN 同 Redis 逻辑库同 secret，仅翻转
+// billing.enabled / proxy.usage_capture，并把 quota_flush_interval 调到 1s 加速收敛
+// （与迁移前 startAuxGateway 逐键一致）。
+func billingAuxCfgTOML(in gatewayInputs, billingOn, usageCaptureOn bool) string {
+	return fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+log = { level = "warn", output = "stdout" }
+auth = { jwt_secret = "%s" }
+db = { dsn = "%s", max_conns = 10 }
+redis = { addr = "%s", db = %d }
+proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = %v }
+upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
+scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
+usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "1s" }
+billing = { enabled = %v, flush_interval = "300ms", balance_refresh_interval = "500ms" }
+`, in.Addr, jwtSecret, in.DSN, in.RedisAddr, in.RedisDB, usageCaptureOn, billingOn)
 }
 
 // pollBalance 轮询用户余额至期望毫分值。余额收敛蕴含对应 usage_logs 行已落库
@@ -153,134 +122,26 @@ func (e *e2eEnv) lastLogFor(model string) billLogRow {
 }
 
 func TestBillingE2E(t *testing.T) {
-	env := &e2eEnv{t: t, addr: serverAddr}
-	ctx := context.Background()
-	redisAddr := os.Getenv("C3API_REDIS_ADDR")
-	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required")
+	run := newE2ERun(t, e2eRunOptions{})
+	up := run.fakeUpstream(t, upstreamSpec{
+		Name:  "billing-fakeupstream",
+		Flags: []string{"-chunks", "10", "-latency", "5ms", "-fail400", "fail400-key"},
+	})
+	upAddr := up.Addr
 
-	// --- 0. 数据库准备：DROP + CREATE c3api_e2e ---
-	adminDSN := os.Getenv("TEST_DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
-	}
-	// TEST_DATABASE_URL 指向 c3api_test 库：取其 host/port/api/user/password，目标库换 c3api_e2e。
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	require.NoError(t, err)
-	t.Cleanup(adminPool.Close)
-	_, err = adminPool.Exec(ctx, `DROP DATABASE IF EXISTS `+dbName+` WITH (FORCE)`)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `CREATE DATABASE `+dbName)
-	require.NoError(t, err)
-	dsn := adminDSN
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		dsn = dsn[:i+1] + dbName
-		if !strings.Contains(dsn, "?") {
-			dsn += "?sslmode=disable"
-		}
-	}
-	env.pg, err = pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(env.pg.Close)
-
-	// --- 1. 构建并启动 fakeupstream + 网关 ---
-	env.tmp = t.TempDir()
-	// go test 的 cwd = 包目录；构建路径相对仓库根（本文件位于 tools/e2e/）。
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	build := func(pkg, name string) string {
-		out := filepath.Join(env.tmp, name)
-		cmd := exec.Command("go", "build", "-o", out, pkg)
-		cmd.Dir = repoRoot
-		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run(), "build %s", pkg)
-		return out
-	}
-	upBin := build("./tools/fakeupstream", "fakeupstream.exe")
-	srvBin := build("./cmd/server", "server.exe")
-
-	up := exec.Command(upBin, "-addr", upAddr, "-chunks", "10", "-latency", "5ms", "-fail400", "fail400-key")
-	up.Stdout, up.Stderr = os.Stdout, os.Stderr
-	require.NoError(t, up.Start())
-	t.Cleanup(func() { _ = up.Process.Kill() })
-
-	// 本地价格表（sync 场景）
+	// 本地价格表（sync 场景；进程内 httptest，不是外部进程）。
 	pricesSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(pricesFixture))
 	}))
 	t.Cleanup(pricesSrv.Close)
 
-	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
-log = { level = "warn", output = "stdout" }
-auth = { jwt_secret = "%s" }
-db = { dsn = "%s", max_conns = 10 }
-redis = { addr = "%s" }
-proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = true }
-upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
-scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
-usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
-billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, serverAddr, jwtSecret, dsn, redisAddr)
-	cfgPath := filepath.Join(env.tmp, "config.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
+	// 主网关：每 run 唯一 PG 库/Redis 逻辑库 + 动态端口 + run 级 lazy migrate（建表只归
+	// harness，场景不可能漏 migrate）；失败诊断由 harness 统一 dump。
+	gw := run.gateway(t, gatewaySpec{Name: "billing-main", Config: billingCfgTOML})
 
-	srv := exec.Command(srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(env.tmp, "server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	// 优雅停机信号：非 Windows 直接 SIGTERM；Windows 上 Go 的 Process.Signal
-	// 仅支持 Kill（os/exec_windows.go），需 CREATE_NEW_PROCESS_GROUP +
-	// GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) 投递控制台事件（main
-	// 对 os.Interrupt 与 SIGTERM 走同一 NotifyContext 优雅路径）。
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		if srv.ProcessState != nil && srv.ProcessState.Exited() {
-			_ = srvLog.Close()
-			return
-		}
-		if srv.Process != nil {
-			_ = srv.Process.Kill()
-			_ = srv.Wait()
-		}
-		_ = srvLog.Close()
-	})
-
-	// 就绪 + 引导（spec 2026-10-09 §4.9）：/healthz 就绪 → 注册首个用户
-	// （fresh DB 即 platform_admin）→ 取 JWT；再探 /api/admin/settings 确认。
-	env.adminJWT = env.bootstrapAdminJWT()
-
-	// 失败诊断（收尾）：任何场景失败 → 转储内置网关 server.log 与最新
-	// usage_logs 行（flusher 落库时序/DB 状态疑点直接可见——此前失败无日志
-	// 难定位）。Cleanup LIFO：先于 srv.Kill / pool.Close 执行，数据完整。
-	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
-			t.Logf("--- server.log (test failed) ---\n%s", data)
-		}
-		rows, err := env.pg.Query(ctx, `SELECT id, user_id, model, cost, COALESCE(error_type,''), created_at FROM usage_logs ORDER BY id DESC LIMIT 20`)
-		if err != nil {
-			t.Logf("usage_logs 状态转储失败: %v", err)
-			return
-		}
-		defer rows.Close()
-		var sb strings.Builder
-		for rows.Next() {
-			var id, uid, cost int64
-			var model, etype string
-			var created time.Time
-			if err := rows.Scan(&id, &uid, &model, &cost, &etype, &created); err != nil {
-				t.Logf("usage_logs 扫描失败: %v", err)
-				break
-			}
-			fmt.Fprintf(&sb, "id=%d user=%d model=%s cost=%d err=%s created=%s\n",
-				id, uid, model, cost, etype, created.Format(time.RFC3339Nano))
-		}
-		t.Logf("--- usage_logs latest 20 (test failed) ---\n%s", sb.String())
-	})
+	// env 管理面 helper 兼容视图：pg 本 run 唯一库 / addr 主网关动态地址 /
+	// adminJWT bootstrap 后的 platform_admin（多 gateway 幂等登录由 harness 负责）。
+	env := run.env(gw)
 
 	// --- 2. 基建：模板/账号/组 ---
 	tplID := env.create("/templates", map[string]any{
@@ -454,12 +315,16 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		}
 		return true, "error_type=" + dbEType
 	})
-	code3, resp3 := env.admin(http.MethodGet, "/err_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
+	// err_logs/usage_logs 的 raw 分区只保留保留期内数据（e2e 配 log_retention_days=2，
+	// 服务端 raw horizon 默认 7d）；窗口起点必须落在保留期内，不能写 2000 年。
+	winFrom := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	winTo := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	code3, resp3 := env.admin(http.MethodGet, "/err_logs?model=e2e-noprice-model&from="+winFrom+"&to="+winTo, nil)
 	require.Equal(t, 200, code3, "err logs: %s", resp3)
 	require.Contains(t, resp3, `"billing"`, "402 拒绝行 err_logs error_type=billing")
 	// HTTP 面 ↔ DB 面交叉验证（同一条拒绝行经 errlog worker 落库 → HTTP 查询可见）
 	require.Equal(t, "billing", dbEType, "err_logs DB 面与 HTTP 面一致")
-	code3u, resp3u := env.admin(http.MethodGet, "/usage_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
+	code3u, resp3u := env.admin(http.MethodGet, "/usage_logs?model=e2e-noprice-model&from="+winFrom+"&to="+winTo, nil)
 	require.Equal(t, 200, code3u, "usage logs: %s", resp3u)
 	// 新分页契约：游标分页无 total，空结果为 rows 空数组（旧 total:0 已移除）
 	require.Contains(t, resp3u, `"rows":[]`, "402 失败行不入 usage_logs（放行路径语义）")
@@ -818,8 +683,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	}()
 	time.Sleep(800 * time.Millisecond) // 等 message_start 已消费、流仍在途
 
-	require.NoError(t, stopGracefully(srv), "优雅停机信号")
-	waitExit(t, srv, 20*time.Second)
+	gw.Stop(t)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -857,8 +721,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	// 主实例已停机；辅助实例同库同 Redis，仅 billing.enabled=false。quota=1 毫分
 	// 的 key 两笔请求均 200（gate 不建条目、不检查、不扣减、无回写）。
 	t.Log("场景 11：billing off——quota 不拒绝、不回写（独立进程验证）")
-	env2 := &e2eEnv{t: t, pg: env.pg, addr: serverAddr2, tmp: t.TempDir()}
-	srv2 := startAuxGateway(t, env2, srvBin, dsn, redisAddr, false, true)
+	gw2 := run.gateway(t, gatewaySpec{
+		Name:   "billing-aux-billing-off",
+		Config: func(in gatewayInputs) string { return billingAuxCfgTOML(in, false, true) },
+	})
+	env2 := run.env(gw2)
 	uOff := createUser(t, env2, "quota-off@example.com", 0.0) // 余额 0：billing off 连余额预检一并短路
 	_, offKey := userKeyQuota(t, env2, uOff, g1, 1)           // quota=1 毫分：门禁若生效第二笔必 429
 	waitSnapshot()
@@ -877,15 +744,17 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	time.Sleep(2 * time.Second)
 	require.Equal(t, int64(0), env2.quotaUsed(offKey), "billing off 不产生 quota 回写")
 	require.Equal(t, int64(0), env2.balance(uOff), "billing off 不扣余额")
-	require.NoError(t, stopGracefully(srv2))
-	waitExit(t, srv2, 20*time.Second)
+	gw2.Stop(t)
 
 	// ============ 场景 12：billing on + UsageCapture=false——quota 独立回写 ============
 	// 普通 usage 明细跳过（单写点 routeLog 不执行），Key quota 仍经 finish 的
 	// DeductQuota→AddQuota 独立批量回写（两线解耦的端到端形态）。
 	t.Log("场景 12：billing on + UsageCapture=false——quota 独立回写、明细跳过")
-	env3 := &e2eEnv{t: t, pg: env.pg, addr: serverAddr3, tmp: t.TempDir()}
-	srv3 := startAuxGateway(t, env3, srvBin, dsn, redisAddr, true, false)
+	gw3 := run.gateway(t, gatewaySpec{
+		Name:   "billing-aux-usage-capture-off",
+		Config: func(in gatewayInputs) string { return billingAuxCfgTOML(in, true, false) },
+	})
+	env3 := run.env(gw3)
 	uCap := createUser(t, env3, "quota-cap@example.com", 10.0)
 	_, capKey := userKeyQuota(t, env3, uCap, g1, 100000)
 	waitSnapshot()
@@ -895,45 +764,10 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	nCap, err := env3.dbInt(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, uCap)
 	require.NoError(t, err)
 	require.Zero(t, nCap, "UsageCapture=false 普通 usage 明细不落库")
-	require.NoError(t, stopGracefully(srv3))
-	waitExit(t, srv3, 20*time.Second)
+	gw3.Stop(t)
 }
 
 // ---- helpers ----
-
-func isWindows() bool { return os.PathSeparator == '\\' }
-
-// createNewProcessGroup CREATE_NEW_PROCESS_GROUP（Windows 控制台事件投递用）。
-const createNewProcessGroup = 0x00000200
-
-// stopGracefully 优雅停机信号：非 Windows 用 SIGTERM；Windows 用
-// GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 子进程组)（Go Process.Signal
-// 仅支持 Kill）。main 对 os.Interrupt/SIGTERM 同一 NotifyContext 优雅路径。
-func stopGracefully(cmd *exec.Cmd) error {
-	if isWindows() {
-		// 子进程以 CREATE_NEW_PROCESS_GROUP 启动 → 组 id = 子进程 pid
-		return windowsCtrlBreak(cmd.Process.Pid)
-	}
-	return cmd.Process.Signal(syscall.SIGTERM)
-}
-
-// windowsCtrlBreak 通过 x/sys/windows 投递 CTRL_BREAK_EVENT 到指定进程组。
-func windowsCtrlBreak(pid int) error {
-	return windowsGenerateCtrlBreak(uint32(pid))
-}
-
-func waitExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
-	t.Helper()
-	ch := make(chan error, 1)
-	go func() { ch <- cmd.Wait() }()
-	select {
-	case err := <-ch:
-		require.NoError(t, err, "server 优雅退出（退出码 0）")
-	case <-time.After(timeout):
-		t.Fatalf("server 未在 %s 内退出", timeout)
-	}
-}
-
 // putVariants manual 变体矩阵（断言 200）：service_tier 替换档 / ctx_min 分段 /
 // multiplier 倍数小数（0..10，0=免费，存储换算万分），整体替换语义。
 func putVariants(t *testing.T, env *e2eEnv, model string, variants []map[string]any) {
@@ -1000,43 +834,4 @@ func pollQuotaUsed(t *testing.T, env *e2eEnv, keyRaw string, want int64) {
 		}
 		return got == want, fmt.Sprintf("quota_used got=%d want=%d", got, want)
 	})
-}
-
-// startAuxGateway 以独立配置/独立端口启动辅助网关实例（同库同 Redis，仅翻转
-// billing.enabled 与 proxy.usage_capture；quota_flush_interval=1s 加速收敛）。
-// 返回进程句柄，调用方负责优雅停机；t.Cleanup 兜底 Kill。
-func startAuxGateway(t *testing.T, env *e2eEnv, srvBin, dsn, redisAddr string, billingOn, usageCaptureOn bool) *exec.Cmd {
-	t.Helper()
-	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
-log = { level = "warn", output = "stdout" }
-auth = { jwt_secret = "%s" }
-db = { dsn = "%s", max_conns = 10 }
-redis = { addr = "%s" }
-proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = %v }
-upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
-scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
-usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "1s" }
-billing = { enabled = %v, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, env.addr, jwtSecret, dsn, redisAddr, usageCaptureOn, billingOn)
-	cfgPath := filepath.Join(env.tmp, "config.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
-	srv := exec.Command(srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(env.tmp, "server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		if srv.Process != nil && (srv.ProcessState == nil || !srv.ProcessState.Exited()) {
-			_ = srv.Process.Kill()
-			_ = srv.Wait()
-		}
-		_ = srvLog.Close()
-	})
-	// 就绪 + 引导（migrate/分区对已建库为幂等快路径）：共享库首个用户已存
-	// → bootstrap 走登录；env.adminJWT 刷新为本实例可用 JWT（spec §4.9）。
-	env.adminJWT = env.bootstrapAdminJWT()
-	return srv
 }

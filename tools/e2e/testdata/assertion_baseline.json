@@ -555,6 +555,167 @@
       "kind": "require",
       "old_fingerprint": "ac7444aab71d52a2",
       "evidence": "jsonGet(t, rb, \"Status\")"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "a9b4469c3ecea2c7",
+      "evidence": "C3API_REDIS_ADDR is required"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d975fe627e7ac060",
+      "evidence": "require.NoError(t, err)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d975fe627e7ac060",
+      "evidence": "require.NoError(t, err)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d975fe627e7ac060",
+      "evidence": "require.NoError(t, err)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d975fe627e7ac060",
+      "evidence": "require.NoError(t, err)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d975fe627e7ac060",
+      "evidence": "require.NoError(t, err)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "dee4ab9f5c50bfd7",
+      "evidence": "require.NoError(t, cmd.Run(), \"build %s\", pkg)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "f67aed743f07cef6",
+      "evidence": "up.Start()"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d5d5b073b7d10286",
+      "evidence": "os.WriteFile(cfgPath"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "d65280e555efc633",
+      "evidence": "srv.Start()"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "7b0efd1403358a97",
+      "evidence": "优雅停机信号"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "10ac36fab2fb9181",
+      "evidence": "stopGracefully(srv2)"
+    },
+    {
+      "file": "billing_e2e_test.go",
+      "test": "TestBillingE2E",
+      "kind": "require",
+      "old_fingerprint": "dd6acf4c014fc2b5",
+      "evidence": "stopGracefully(srv3)"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "211d18241e50dfe3",
+      "evidence": "fail 后上游 D 必须零尝试"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "3ef0e4caed6ec65d",
+      "evidence": "G 必须成功 15 次"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "59d0d604d1b88f2f",
+      "evidence": "dx 域 key 不得由 E 处理"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "894d4580a14ffd74",
+      "evidence": "限流冻结期上游必须零尝试"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "d12012acf2173617",
+      "evidence": "首错必须到达上游 D"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "de92f5c32ff26326",
+      "evidence": "dy 域 key 必须由 E 处理"
+    },
+    {
+      "file": "routing_e2e_test.go",
+      "test": "TestIntelligentRoutingE2E",
+      "kind": "require",
+      "old_fingerprint": "f79b0947adb9ff01",
+      "evidence": "失能后 E 必须零处理"
+    },
+    {
+      "file": "routing_multi_e2e_test.go",
+      "test": "TestIntelligentRoutingMultiInstanceE2E",
+      "kind": "require",
+      "old_fingerprint": "21c3374e5fe361a6",
+      "evidence": "fail 后 A 侧上游须零尝试"
+    },
+    {
+      "file": "routing_multi_e2e_test.go",
+      "test": "TestIntelligentRoutingMultiInstanceE2E",
+      "kind": "require",
+      "old_fingerprint": "3602692f88ea8ea5",
+      "evidence": "B 跟随须钉住 A 首呼账号"
+    },
+    {
+      "file": "routing_multi_e2e_test.go",
+      "test": "TestIntelligentRoutingMultiInstanceE2E",
+      "kind": "require",
+      "old_fingerprint": "6ee80138b7a4199b",
+      "evidence": "首错须到达上游"
     }
   ]
 }

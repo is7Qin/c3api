@@ -277,14 +277,21 @@ func checkBaselineMatchesBase(t *testing.T, baseline *assertionBaseline, base as
 	return nil
 }
 
-// checkAllowedRemovals 白名单校验：作用域仅 supplier/billing；evidence 必须能在 BASE
-// 文件原文找到；old_fingerprint 必须确实存在于 BASE 该 Test 的指纹里。
+// assertionRemovalScope 白名单作用域：只允许**场景**测试文件（*_test.go 且不在
+// boundary 豁免文件集内）。harness/自测/gate 文件不得进白名单——白名单作用于 gate
+// 文件等于让 gate 自我豁免（spec §4.3/§14：作用域收回到场景文件 + evidence 强校验）。
+func assertionRemovalScope(file string) bool {
+	return strings.HasSuffix(file, "_test.go") && !boundaryExemptFiles[file]
+}
+
+// checkAllowedRemovals 白名单校验：作用域=场景 *_test.go；evidence 必须能在 BASE
+// 文件原文找到且与被移除断言相关；old_fingerprint 必须确实存在于 BASE 该 Test 的指纹里。
 func checkAllowedRemovals(t *testing.T, baseline *assertionBaseline, baseFiles map[string][]byte, base assertionCollector) error {
 	removalsByTest := map[string]map[string]int{} // test -> fingerprint -> count
 	fatalfByTest := map[string]int{}
 	for i, removal := range baseline.AllowedRemovals {
-		if removal.File != "supplier_earnings_e2e_test.go" && removal.File != "billing_e2e_test.go" {
-			return fmt.Errorf("allowed_removals[%d] 文件 %q 越界（仅允许 supplier/billing，spec §4.3）", i, removal.File)
+		if !assertionRemovalScope(removal.File) {
+			return fmt.Errorf("allowed_removals[%d] 文件 %q 越界（白名单只允许场景 *_test.go，不允许 harness/自测/gate 文件）", i, removal.File)
 		}
 		baseSurface, ok := base.Surfaces[removal.Test]
 		if !ok {

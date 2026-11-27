@@ -9,7 +9,8 @@
 //     并与 committed baseline 逐项比对 —— 同 commit 改 baseline 也会红；
 //  2. 当前代码必须覆盖「BASE 断言面 - allowed_removals」（Test 名集合是 BASE 超集；
 //     per-Test require 计数 / 指纹 multiset / t.Fatalf 计数不得低于下界）；
-//  3. allowed_removals 仅 supplier/billing，且 evidence 必须能在 BASE 文件里找到；
+//  3. allowed_removals 只允许作用于场景 *_test.go（不许 harness/自测/gate 文件），
+//     且 evidence 必须能在 BASE 文件里找到并与被移除断言相关；
 //  4. 反空断言兜底（require.True(t,true) 等明显恒真项）；
 //  5. CI 严格模式（GITHUB_ACTIONS=true）无法 git show => 红；本地无 git 历史才 skip+warn。
 package e2e
@@ -32,8 +33,10 @@ const assertionBaselineSourceCommit = "786b0072f8def5861e1e7d32b666caca7491023a"
 // assertionBaselineRelPath baseline 文件（相对仓库根）。
 const assertionBaselineRelPath = "tools/e2e/testdata/assertion_baseline.json"
 
-// assertionAllowedRemovals P0 唯一允许的断言改写/删除白名单（仅 supplier/billing；
-// 每条 evidence 是该断言在 BASE 源码里的可检索 token —— gate 会回查 BASE 原文）。
+// assertionAllowedRemovals 唯一允许的断言改写/删除白名单（只作用于场景 *_test.go；
+// 每条 evidence 是该断言在 BASE 源码里的可检索 token —— gate 会回查 BASE 原文与该
+// 断言调用源码的相关性）。P0 段=supplier/billing 迁移；P1 过渡段=billing/routing/
+// routing_multi（baseline-v2 重生成时清空，见 spec §12）。
 var assertionAllowedRemovals = []assertionRemoval{
 	// P0 supplier 迁移：inline boot（DROP/CREATE 库、build、起 fakeupstream/网关、内联
 	// -migrate）整体移交 harness => 该 Test 体内对应 NoError 断言消失（由 harness 的
@@ -58,6 +61,40 @@ var assertionAllowedRemovals = []assertionRemoval{
 	// 期望键名（"Id" -> "id"），期望语义不变。
 	{File: "supplier_earnings_e2e_test.go", Test: "TestSupplierEarningsE2E", Kind: "require", OldFingerprint: "f8b0fb2a115de4f5", Evidence: "jsonGet(t, rb, \"Id\")"},
 	{File: "supplier_earnings_e2e_test.go", Test: "TestSupplierEarningsE2E", Kind: "require", OldFingerprint: "ac7444aab71d52a2", Evidence: "jsonGet(t, rb, \"Status\")"},
+	// ---- P1 迁移过渡白名单（spec §12 两段提交）：billing/routing/routing_multi 的
+	// inline boot 与「固定全局上游地址」被共享 harness 接管后消失/改写。断言没有弱化：
+	// 资源/进程生命周期断言从场景搬到唯一生命周期所有者（harness），审计源地址从固定
+	// 全局变量改为 harness 动态分配的上游地址参数（期望值/语义不变）。baseline-v2
+	// 重生成时本段整体清空（commit 单独 + review）。
+	// billing：DROP/CREATE 固定库 + build + 起 fakeupstream/网关 + 内联写配置 +
+	// SIGTERM/waitExit 全部移交 harness（run 级唯一库/构建/迁移/进程回收）。
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "a9b4469c3ecea2c7", Evidence: "C3API_REDIS_ADDR is required"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d975fe627e7ac060", Evidence: "require.NoError(t, err)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d975fe627e7ac060", Evidence: "require.NoError(t, err)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d975fe627e7ac060", Evidence: "require.NoError(t, err)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d975fe627e7ac060", Evidence: "require.NoError(t, err)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d975fe627e7ac060", Evidence: "require.NoError(t, err)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "dee4ab9f5c50bfd7", Evidence: "require.NoError(t, cmd.Run(), \"build %s\", pkg)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "f67aed743f07cef6", Evidence: "up.Start()"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d5d5b073b7d10286", Evidence: "os.WriteFile(cfgPath"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "d65280e555efc633", Evidence: "srv.Start()"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "7b0efd1403358a97", Evidence: "优雅停机信号"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "10ac36fab2fb9181", Evidence: "stopGracefully(srv2)"},
+	{File: "billing_e2e_test.go", Test: "TestBillingE2E", Kind: "require", OldFingerprint: "dd6acf4c014fc2b5", Evidence: "stopGracefully(srv3)"},
+	// routing：审计 helper 的上游地址从固定全局变量改为 harness 动态分配参数
+	// （rtAudit/rtAuditHits/rtAuditMaxSeq 多一个 upAddr 实参；期望值/消息/语义不变）。
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "211d18241e50dfe3", Evidence: "fail 后上游 D 必须零尝试"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "3ef0e4caed6ec65d", Evidence: "G 必须成功 15 次"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "59d0d604d1b88f2f", Evidence: "dx 域 key 不得由 E 处理"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "894d4580a14ffd74", Evidence: "限流冻结期上游必须零尝试"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "d12012acf2173617", Evidence: "首错必须到达上游 D"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "de92f5c32ff26326", Evidence: "dy 域 key 必须由 E 处理"},
+	{File: "routing_e2e_test.go", Test: "TestIntelligentRoutingE2E", Kind: "require", OldFingerprint: "f79b0947adb9ff01", Evidence: "失能后 E 必须零处理"},
+	// routing_multi：同上（审计源地址参数化）；outage 断言升级为专用栈 Stop/Start
+	// services 调用（新增 4 条 require.NoError 断言，覆盖门反而抬升）。
+	{File: "routing_multi_e2e_test.go", Test: "TestIntelligentRoutingMultiInstanceE2E", Kind: "require", OldFingerprint: "21c3374e5fe361a6", Evidence: "fail 后 A 侧上游须零尝试"},
+	{File: "routing_multi_e2e_test.go", Test: "TestIntelligentRoutingMultiInstanceE2E", Kind: "require", OldFingerprint: "3602692f88ea8ea5", Evidence: "B 跟随须钉住 A 首呼账号"},
+	{File: "routing_multi_e2e_test.go", Test: "TestIntelligentRoutingMultiInstanceE2E", Kind: "require", OldFingerprint: "6ee80138b7a4199b", Evidence: "首错须到达上游"},
 }
 
 // TestAssertionSurfaceGate 断言基线 gate 主入口。
@@ -137,6 +174,24 @@ func TestAssertionUnreachableScanner(t *testing.T) {
 	}
 	for _, tc := range green {
 		require.Empty(t, scanUnreachableAssertions(t, mk(tc.body)), "可达对照 %s 不得误报", tc.name)
+	}
+}
+
+// TestAssertionRemovalScope 白名单作用域自测（spec §4.3/§14）：场景 *_test.go 可进
+// 白名单；harness/自测/gate 文件与非测试文件一律越界（gate 不能自我豁免）。
+func TestAssertionRemovalScope(t *testing.T) {
+	for _, file := range []string{
+		"billing_e2e_test.go", "routing_e2e_test.go", "routing_multi_e2e_test.go",
+		"supplier_earnings_e2e_test.go", "request_patch_e2e_test.go", "harness_selftest_test.go",
+	} {
+		require.True(t, assertionRemovalScope(file), "场景文件 %s 必须在白名单作用域内", file)
+	}
+	for _, file := range []string{
+		"harness_test.go", "harness_gate_test.go", "harness_boundary_gate_test.go",
+		"harness_registry_test.go", "harness_process_test.go", "harness_services_test.go",
+		"assertion_surface_gate_test.go", "harness_env.go", "",
+	} {
+		require.False(t, assertionRemovalScope(file), "%s 不得进白名单作用域（gate 不能自我豁免）", file)
 	}
 }
 

@@ -5,21 +5,21 @@
 //go:build e2e
 
 // Package e2e 多实例智能路由端到端测试（charter）：两网关进程共享
-// PG + Redis（distinct 端口，same JWT secret + admin token）+ 双 fakeupstream
-// （双 failure domain）+ 真实 outage 演练（docker stop/start）。
+// PG + Redis（distinct 动态端口，same JWT secret + admin token）+ 双 fakeupstream
+// （双 failure domain）+ 真实 outage 演练（专用栈 PG/Redis 停服再恢复）。
 //
-// 运行（前置：PG 127.0.0.1:15432，Redis 127.0.0.1:16379，docker CLI 可用；
-// 测试以 postgres 维护库自建 c3api_routing_multi_e2e 库）：
+// 基础设施所有权：本 Test 需要 stop/start 服务 => 用 harness 的 DedicatedServices
+// 自包含专用 compose 栈（唯一 project e2e-<uuid8>、随机 host 端口、healthcheck）；
+// 共享 base 栈永不被 mutate，也不再出现固定容器名（deploy-*）。
 //
-//	$env:TEST_DATABASE_URL="postgres://postgres:c3api@127.0.0.1:15432/postgres?sslmode=disable"
-//	$env:C3API_REDIS_ADDR="127.0.0.1:16379"
+// 运行（前置：docker compose v2+ 可用的 docker daemon；专用栈不要求 base env）：
+//
 //	go test -tags e2e -count=1 -run TestIntelligentRoutingMultiInstanceE2E ./tools/e2e -v -timeout 1200s
 //
-// 与 billing/routing 单实例同包：复用 e2eEnv/adminJWT/jwtSecret/pollUntil/
-// waitSnapshot/createUser/userKey/putPrice/jsonGet/stopGracefully/waitExit +
-// rt 前缀路由 helpers（rtPlan/rtFindRoute/rtWaitRoute/rtWaitGenBump/rtPollLong/
-// rtSetRuleEnabled/rtCreateRule/rtRevision/rtAccountRead/rtAuditEntry）。
-// 本文件新增符号一律 rm 前缀，禁与 billing/rt 文件重名。
+// 与 billing/routing 单实例同包：复用 e2eEnv/jwtSecret/pollUntil/waitSnapshot/
+// createUser/userKey/putPrice/jsonGet + rt 前缀路由 helpers（rtPlan/rtFindRoute/
+// rtWaitRoute/rtWaitGenBump/rtPollLong/rtSetRuleEnabled/rtCreateRule/rtRevision/
+// rtAccountRead/rtAuditEntry）。本文件符号一律 rm 前缀。
 // 生产代码零修改：断言失败只报现象 + 证据，不弱化不断言、不修生产代码。
 package e2e
 
@@ -30,12 +30,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
+	"net/url"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -48,11 +44,6 @@ import (
 )
 
 const (
-	rmAddrA = "127.0.0.1:18094" // 双实例端口：与 billing(18090-18092)/单实例(18093) 均错开
-	rmAddrB = "127.0.0.1:18095"
-	rmUp1   = "127.0.0.1:19112" // failure domain 1（tpl1 账号群）
-	rmUp2   = "127.0.0.1:19113" // failure domain 2（incident 坏域；与单实例 19111 错开）
-	rmDB    = "c3api_routing_multi_e2e"
 	rmModel = "rm-model"
 
 	rmKeyA     = "rm-key-a"     // 健康账号 A（gMain，dx 域，成本 ×1.0）
@@ -63,221 +54,90 @@ const (
 	rmKeyIB1   = "rm-key-ib1"   // incident 坏域账号 1（gI，上游 up2，恒 500）
 	rmKeyIB2   = "rm-key-ib2"   // incident 坏域账号 2（gI，上游 up2，恒 500）
 
-	rmRedisContainer = "deploy-redis-1"
-	rmPGContainer    = "deploy-db-1"
-	rmMembersKey     = "c3api:cluster:members"
+	rmMembersKey = "c3api:cluster:members"
 )
 
-// rmPortFree 端口占用预检（僵尸进程禁静默复用，与 rtPortFree 同纪律）。
-func rmPortFree(t *testing.T, addr string) {
-	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
-	if err == nil {
-		_ = c.Close()
-		t.Fatalf("端口 %s 已被占用（疑似僵尸进程），先清理再跑", addr)
-	}
-}
-
-// rmCluster 双实例簇句柄：共享 DB/Redis，上游与 server 进程统一收殓。
+// rmCluster 双实例簇句柄：harness 独占每 run 唯一 PG 库 / Redis 逻辑库 / 动态端口 /
+// 子进程生命周期（DedicatedServices：自包含专用 compose 栈，唯一 project + 随机 host
+// 端口 => 共享 base 永不被 mutate，stop/start 只作用于本 run 的专用栈）。本结构只保留
+// 断言需要的视图：PG 池 / Redis 客户端 / 专用栈地址 / 双上游 / 双实例。
 type rmCluster struct {
+	run       *e2eRun
 	pg        *pgxpool.Pool
 	rc        *redis.Client
 	adminDSN  string
 	redisAddr string
-	dsn       string
-	tmpBase   string
-	upBin     string
-	srvBin    string
-	up1       *exec.Cmd
-	up2       *exec.Cmd
-	srvA      *exec.Cmd
-	srvB      *exec.Cmd
+	pgAddr    string
+	up1       *fakeUpstream
+	up2       *fakeUpstream
 	envA      *e2eEnv
 	envB      *e2eEnv
-	tmpA      string
-	tmpB      string
-	procs     []*exec.Cmd
+	gwA       *gateway
+	gwB       *gateway
 }
 
-// rmKillAll 存活进程全杀（t.Cleanup 兜底，无僵尸无残留端口）。
-func (c *rmCluster) rmKillAll() {
-	for _, p := range c.procs {
-		if p == nil || p.Process == nil {
-			continue
-		}
-		if p.ProcessState != nil && p.ProcessState.Exited() {
-			continue
-		}
-		_ = p.Process.Kill()
-		_ = p.Wait()
-	}
-}
-
-// rmForget 从收殓表摘除（优雅退出后已 Wait，无需再 Kill）。
-func (c *rmCluster) rmForget(target *exec.Cmd) {
-	kept := c.procs[:0]
-	for _, p := range c.procs {
-		if p != target {
-			kept = append(kept, p)
-		}
-	}
-	c.procs = kept
-}
-
-// rmKillHard 硬杀（模拟 crash：不走 Close/ZREM，discovery 走 memberTTL 剪除）。
-func (c *rmCluster) rmKillHard(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil {
-		return
-	}
-	_ = cmd.Process.Kill()
-	_ = cmd.Wait()
-}
-
-// rmBoot 新鲜库 + 空 Redis + 双 fakeupstream + 实例 A；B 由场景按需后起
-// （暖启动场景要求 B 在质量数据存在后才 boot）。
-func rmBoot(t *testing.T) *rmCluster {
-	t.Helper()
-	for _, a := range []string{rmAddrA, rmAddrB, rmUp1, rmUp2} {
-		rmPortFree(t, a)
-	}
-	ctx := context.Background()
-	redisAddr := os.Getenv("C3API_REDIS_ADDR")
-	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required (e.g. 127.0.0.1:16379)")
-
-	c := &rmCluster{redisAddr: redisAddr}
-
-	rc, err := redisx.Open(redisx.Options{Addr: redisAddr})
-	require.NoError(t, err, "redis open")
-	c.rc = rc
-	t.Cleanup(func() { _ = rc.Close() })
-	require.NoError(t, rc.FlushDB(ctx).Err(), "harness redis isolation flush")
-
-	adminDSN := os.Getenv("TEST_DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
-	}
-	c.adminDSN = adminDSN
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	require.NoError(t, err)
-	t.Cleanup(adminPool.Close)
-	_, err = adminPool.Exec(ctx, `DROP DATABASE IF EXISTS `+rmDB+` WITH (FORCE)`)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `CREATE DATABASE `+rmDB)
-	require.NoError(t, err)
-	dsn := adminDSN
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		dsn = dsn[:i+1] + rmDB
-		if !strings.Contains(dsn, "?") {
-			dsn += "?sslmode=disable"
-		}
-	}
-	c.dsn = dsn
-	pg, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(pg.Close)
-	c.pg = pg
-
-	c.tmpBase, err = os.MkdirTemp("", "rm-e2e-*")
-	require.NoError(t, err, "mktemp")
-	// 收殓序（LIFO 逆序执行）：先 RemoveAll 注册、后 Kill 注册 →  teardown
-	// 时先杀进程再删目录（Windows 文件锁要求；t.TempDir 会反序故不用它）。
-	t.Cleanup(func() { _ = os.RemoveAll(c.tmpBase) })
-	t.Cleanup(c.rmKillAll)
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	build := func(pkg, name string) string {
-		out := filepath.Join(c.tmpBase, name)
-		cmd := exec.Command("go", "build", "-o", out, pkg)
-		cmd.Dir = repoRoot
-		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run(), "build %s", pkg)
-		return out
-	}
-	upBin := build("./tools/fakeupstream", "rm-fakeupstream.exe")
-	srvBin := build("./cmd/server", "rm-server.exe")
-	c.upBin, c.srvBin = upBin, srvBin
-
-	// up1：storm-429 + fail-500；up2：incident 坏域恒 500（静态 flag，
-	// 坏域从 boot 起即坏——gI 在 incident 阶段前不打流量，current 窗口干净）。
-	startUp := func(addr, name, fail429, fail500 string) *exec.Cmd {
-		up := exec.Command(upBin, "-addr", addr, "-chunks", "5", "-latency", "2ms",
-			"-fail429", fail429, "-fail500", fail500)
-		up.Stdout, up.Stderr = os.Stdout, os.Stderr
-		require.NoError(t, up.Start(), "start %s", name)
-		c.procs = append(c.procs, up)
-		return up
-	}
-	c.up1 = startUp(rmUp1, "up1", rmKeyStorm, rmKeyFail)
-	c.up2 = startUp(rmUp2, "up2", "", rmKeyIB1+","+rmKeyIB2)
-
-	c.envA, c.srvA, c.tmpA = rmStartInstance(t, c, rmAddrA, "rm-a")
-	return c
-}
-
-// rmStartInstance 以独立 tmp/config/log 起一个网关实例（同库同 Redis 同 secret）。
-func rmStartInstance(t *testing.T, c *rmCluster, addr, tag string) (*e2eEnv, *exec.Cmd, string) {
-	t.Helper()
-	tmp := filepath.Join(c.tmpBase, tag)
-	require.NoError(t, os.MkdirAll(tmp, 0o755))
-	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+// rmConfigTOML 双实例共用配置（与迁移前逐键一致；addr/DSN/Redis 逻辑库来自 harness
+// 的 gatewayInputs）。sync_interval=3s 加速 plan 收敛；未知键 fail-fast，禁私自加键。
+func rmConfigTOML(in gatewayInputs) string {
+	return fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
-redis = { addr = "%s" }
+redis = { addr = "%s", db = %d }
 proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 3, usage_capture = true }
 upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
 scheduler = { default_max_concurrency = 8, sync_interval = "3s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, addr, jwtSecret, c.dsn, c.redisAddr)
-	cfgPath := filepath.Join(tmp, "config.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
-	srv := exec.Command(c.srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(tmp, "server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start(), "start instance %s", tag)
-	c.procs = append(c.procs, srv)
-	env := &e2eEnv{t: t, pg: c.pg, addr: addr}
-	env.tmp = tmp
-	rmWaitReady(t, env, tmp, tag)
-	// 失败诊断：server.log 转储。
-	t.Cleanup(func() {
-		if !t.Failed() {
-			_ = srvLog.Close()
-			return
-		}
-		_ = srvLog.Sync()
-		if data, err := os.ReadFile(filepath.Join(tmp, "server.log")); err == nil {
-			tail := data
-			if len(tail) > 20000 {
-				tail = tail[len(tail)-20000:]
-			}
-			t.Logf("--- %s server.log tail (test failed) ---\n%s", tag, tail)
-		}
-		_ = srvLog.Close()
+`, in.Addr, jwtSecret, in.DSN, in.RedisAddr, in.RedisDB)
+}
+
+// rmHostPort 从 DSN 取 host:port（PG outage 的外部可观测信号：TCP 不可达）。
+func rmHostPort(t *testing.T, dsn string) string {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	require.NoError(t, err, "解析 DSN %q", dsn)
+	require.NotEmpty(t, u.Host, "DSN 缺 host:port：%q", dsn)
+	return u.Host
+}
+
+// rmBoot 一次 run 的基建（DedicatedServices）：专用 PG/Redis 自包含栈 + 双
+// fakeupstream（双 failure domain）+ 实例 A；B 由场景按需后起（暖启动场景要求 B 在
+// 质量数据存在后才 boot）。建表/隔离 flush 全部归 harness（run 级 lazy migrate +
+// 本 run 独占 Redis 逻辑库）。
+func rmBoot(t *testing.T) *rmCluster {
+	t.Helper()
+	run := newE2ERun(t, e2eRunOptions{DedicatedServices: true})
+	// up1：storm-429 + fail-500；up2：incident 坏域恒 500（静态 flag，坏域从 boot 起
+	// 即坏——gI 在 incident 阶段前不打流量，current 窗口干净）。
+	up1 := run.fakeUpstream(t, upstreamSpec{
+		Name:  "rm-fakeupstream-1",
+		Flags: []string{"-chunks", "5", "-latency", "2ms", "-fail429", rmKeyStorm, "-fail500", rmKeyFail},
 	})
-	return env, srv, tmp
+	up2 := run.fakeUpstream(t, upstreamSpec{
+		Name:  "rm-fakeupstream-2",
+		Flags: []string{"-chunks", "5", "-latency", "2ms", "-fail500", rmKeyIB1 + "," + rmKeyIB2},
+	})
+	c := &rmCluster{
+		run:       run,
+		pg:        run.pg(t),
+		rc:        run.redisClient(t),
+		adminDSN:  run.services.PGAdminDSN(),
+		redisAddr: run.services.RedisAddr(),
+		up1:       up1,
+		up2:       up2,
+	}
+	c.pgAddr = rmHostPort(t, c.adminDSN)
+	c.envA, c.gwA = rmStartGateway(t, c, "rm-a")
+	return c
 }
 
-// rmWaitReady 无凭据引导就绪（spec 2026-10-09 §4.9）：/healthz → bootstrap
-// platform_admin JWT（共享库：实例 1 注册，后续实例登录）→ /api/admin/settings
-// 确认；写入 env.adminJWT（= 就绪）。
-func rmWaitReady(t *testing.T, env *e2eEnv, tmp, tag string) {
+// rmStartGateway 起一个网关实例（同 DSN 同 Redis 逻辑库同 secret；动态端口由 harness
+// 分配；bootstrap 幂等登录）。滚动重启/双停双起复用本 helper。
+func rmStartGateway(t *testing.T, c *rmCluster, name string) (*e2eEnv, *gateway) {
 	t.Helper()
-	env.adminJWT = env.bootstrapAdminJWT()
-}
-
-// rmStopGraceful 优雅停机（CTRL_BREAK/SIGTERM + Wait 零退出码），成功后摘收殓。
-func rmStopGraceful(t *testing.T, c *rmCluster, cmd **exec.Cmd, what string) {
-	t.Helper()
-	require.NoError(t, stopGracefully(*cmd), "graceful %s", what)
-	waitExit(t, *cmd, 30*time.Second)
-	c.rmForget(*cmd)
-	*cmd = nil
+	gw := c.run.gateway(t, gatewaySpec{Name: name, Config: rmConfigTOML})
+	return c.run.env(gw), gw
 }
 
 // rmChat 流式 chat（stream=true：TTFT 样本 + 确定性计费），状态码不断言由调用方定。
@@ -410,15 +270,6 @@ func rmWaitMembers(t *testing.T, c *rmCluster, want int, what string, timeout ti
 	})
 }
 
-// rmDocker docker stop/start（outage 演练；调用方保证 start 回补 + 健康轮询）。
-func rmDocker(t *testing.T, op, container string) {
-	t.Helper()
-	cmd := exec.Command("docker", op, container)
-	var buf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &buf, &buf
-	require.NoError(t, cmd.Run(), "docker %s %s: %s", op, container, buf.String())
-}
-
 // rmWaitRedisUp 轮询直到 Redis 可 Ping（Open 自带 Ping）。
 func rmWaitRedisUp(t *testing.T, addr, what string, timeout time.Duration) {
 	t.Helper()
@@ -528,12 +379,12 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
 	tpl1 := envA.create("/templates", map[string]any{
-		"name": "rm-tpl1", "base_url": "http://" + rmUp1,
+		"name": "rm-tpl1", "base_url": "http://" + c.up1.Addr,
 		"supported_formats": []string{"openai-chat", "openai-responses"},
 		"models":            []string{rmModel},
 	})
 	tpl2 := envA.create("/templates", map[string]any{
-		"name": "rm-tpl2", "base_url": "http://" + rmUp2,
+		"name": "rm-tpl2", "base_url": "http://" + c.up2.Addr,
 		"supported_formats": []string{"openai-chat"},
 		"models":            []string{rmModel},
 	})
@@ -651,7 +502,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Logf("A 收敛：primary=%v fact_rows=%d（%d 轮）", primA, factN, iters)
 	// Redis 质量非真相：清掉全部易失态后再起 B（discovery 心跳 1s 自愈）。
 	require.NoError(t, c.rc.FlushDB(ctx).Err(), "warm-start 前 FlushDB")
-	c.envB, c.srvB, c.tmpB = rmStartInstance(t, c, rmAddrB, "rm-b")
+	c.envB, c.gwB = rmStartGateway(t, c, "rm-b")
 	envB := c.envB
 	// B 从 PG 恢复：路由可见 + primary 非空（与 A 同 PG 真相收敛到同 plan 态）。
 	var primB []int64
@@ -707,25 +558,25 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	// 自校准：A 上找命中 A/B 键的 pck，再到 B 上复现——同 plan 同 ring 须同账号。
 	t.Log("阶段 3：soft affinity 跨实例确定性")
 	calib := map[string]string{} // wantKey -> pck
-	mark := rmAuditMaxSeq(t, rmUp1)
+	mark := rmAuditMaxSeq(t, c.up1.Addr)
 	for i := 0; i < 40 && len(calib) < 2; i++ {
 		pck := fmt.Sprintf("rm-aff-%d", i)
 		code, rb := rmChat(t, envA, kMain, rmModel, map[string]any{"prompt_cache_key": pck})
 		require.Equal(t, 200, code, "calib req: %s", rb)
 		for _, k := range []string{rmKeyA, rmKeyB} {
-			if _, done := calib[k]; !done && rmAuditHits(t, rmUp1, mark, k, 200) > 0 {
+			if _, done := calib[k]; !done && rmAuditHits(t, c.up1.Addr, mark, k, 200) > 0 {
 				calib[k] = pck
-				mark = rmAuditMaxSeq(t, rmUp1)
+				mark = rmAuditMaxSeq(t, c.up1.Addr)
 			}
 		}
 	}
 	require.Len(t, calib, 2, "40 个候选 pck 须覆盖 A/B 双键（各至少命中一次）")
 	for wantKey, pck := range calib {
-		after := rmAuditMaxSeq(t, rmUp1)
+		after := rmAuditMaxSeq(t, c.up1.Addr)
 		code, rb := rmChat(t, envB, kMain, rmModel, map[string]any{"prompt_cache_key": pck})
 		require.Equal(t, 200, code, "B 复现 pck=%s: %s", pck, rb)
 		got := ""
-		for _, e := range rmAudit(t, rmUp1) {
+		for _, e := range rmAudit(t, c.up1.Addr) {
 			if e.Seq > after && e.Status == 200 {
 				got = e.Key
 			}
@@ -757,12 +608,12 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		}
 		return last
 	}
-	k0 := keyOfLastResp(rmUp1, 0)
+	k0 := keyOfLastResp(c.up1.Addr, 0)
 	require.NotEmpty(t, k0, "首呼须有上游归因")
-	after := rmAuditMaxSeq(t, rmUp1)
+	after := rmAuditMaxSeq(t, c.up1.Addr)
 	code, rb = respCall(envB, map[string]any{"input": "follow", "previous_response_id": rid})
 	require.Equal(t, 200, code, "B 跨实例跟随须 200：%s", rb)
-	require.Equal(t, k0, keyOfLastResp(rmUp1, after), "B 跟随须钉住 A 首呼账号 %s", k0)
+	require.Equal(t, k0, keyOfLastResp(c.up1.Addr, after), "B 跟随须钉住 A 首呼账号 %s", k0)
 	t.Logf("跨实例连续 OK：B 钉住 %s", k0)
 	code, rb = respCall(envB, map[string]any{"input": "x", "previous_response_id": "rsp_nope_123"})
 	require.Equal(t, 410, code, "未知 binding 跨实例须 410：%s", rb)
@@ -785,7 +636,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	_, hasDrop := st0["admission_dropped"]
 	require.True(t, hasDrop, "drop 计数器须可见：%v", st0)
 	const stormN, stormConc = 8000, 64
-	stormMark := rmAuditMaxSeq(t, rmUp1) // 风暴前水位：上游承压归因用
+	stormMark := rmAuditMaxSeq(t, c.up1.Addr) // 风暴前水位：上游承压归因用
 	type stormRes struct {
 		code int
 		body string
@@ -854,7 +705,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	// （与单候选直透同为“请求健康”，非拖垮）——不断言全 429，只断言风暴
 	// 确实到达上游（audit）+ 风暴后健康组仍 200。
 	require.GreaterOrEqual(t, got429, 100, "风暴须有 ≥100 直透 429（上游真实承压）：%v", codes)
-	upHits := rmAuditHits(t, rmUp1, stormMark, rmKeyStorm, 429)
+	upHits := rmAuditHits(t, c.up1.Addr, stormMark, rmKeyStorm, 429)
 	require.Greater(t, upHits, 0, "上游须见到风暴 429 尝试：%v", codes)
 	st1 := rmOpsWorkers(t, envA)["rule-engine"]
 	dropped, _ := st1["admission_dropped"].(float64)
@@ -873,24 +724,24 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	require.NotNil(t, rB0, "B 初始须见 gFail 路由")
 	ids0, _ := rmPlanCandidates(rB0)
 	require.True(t, ids0[accFail], "B 初始候选须含 fail 账号")
-	markFail := rmAuditMaxSeq(t, rmUp1)
+	markFail := rmAuditMaxSeq(t, c.up1.Addr)
 	code, rb = rmChat(t, envA, kFail, rmModel, nil)
 	require.NotEqual(t, 200, code, "恒 500 首错不得成功：%s", rb)
-	require.Equal(t, 1, rmAuditHits(t, rmUp1, markFail, rmKeyFail, 500), "首错须到达上游")
+	require.Equal(t, 1, rmAuditHits(t, c.up1.Addr, markFail, rmKeyFail, 500), "首错须到达上游")
 	rtPollLong(t, "fail 落盘（FailedAt）", 60*time.Second, func() (bool, string) {
 		m := rtAccountRead(t, envA, accFail)
 		return m["FailedAt"] != nil, fmt.Sprintf("FailedAt=%v", m["FailedAt"])
 	})
 	// A 侧 selection 即时排除（快照 disabled）：后继零上游尝试。
-	markFail = rmAuditMaxSeq(t, rmUp1)
+	markFail = rmAuditMaxSeq(t, c.up1.Addr)
 	code, rb = rmChat(t, envA, kFail, rmModel, nil)
 	require.NotEqual(t, 200, code, "fail 后 A 不得再选中：%s", rb)
-	require.Equal(t, markFail, rmAuditMaxSeq(t, rmUp1), "fail 后 A 侧上游须零尝试")
+	require.Equal(t, markFail, rmAuditMaxSeq(t, c.up1.Addr), "fail 后 A 侧上游须零尝试")
 	// B 侧收敛（NOTIFY 唯一通道）：轮询直到 B 亦零上游尝试且非 200。
 	rtPollLong(t, "B selection 经 NOTIFY 摘除（B 零本地事件）", 90*time.Second, func() (bool, string) {
-		before := rmAuditMaxSeq(t, rmUp1)
+		before := rmAuditMaxSeq(t, c.up1.Addr)
 		cc, rb := rmChat(t, envB, kFail, rmModel, nil)
-		after := rmAuditMaxSeq(t, rmUp1)
+		after := rmAuditMaxSeq(t, c.up1.Addr)
 		if cc == 200 {
 			return false, fmt.Sprintf("B 仍选中 fail 账号且成功 body=%.120s", rb)
 		}
@@ -916,11 +767,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	require.NotEmpty(t, ridOut)
 	genPreA, _ := rtPlan(t, envA)
 	genPreB, _ := rtPlan(t, envB)
-	rmDocker(t, "stop", rmRedisContainer)
-	t.Cleanup(func() {
-		// outage 纪律：PG/Redis 重启必回补（Cleanup 兜底，幂等 start）。
-		_ = exec.Command("docker", "start", rmRedisContainer).Run()
-	})
+	require.NoError(t, c.run.services.StopService(t, serviceRedis), "停专用栈 redis（保端口）")
 	rmTCPDown(t, c.redisAddr, "redis TCP 关闭", 60*time.Second)
 	// 旧 plan 保留 + 请求继续被服务（Redis 只是易失协调；双实例世代各自独立，
 	// 只断言不回退——outage 期无新编译是正常冻结，不是倒退）。
@@ -938,7 +785,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	code, rb = respCall(envB, map[string]any{"input": "follow", "previous_response_id": ridOut})
 	require.Equal(t, 503, code, "outage 期跟随须 fail-closed 503：%s", rb)
 	t.Log("Redis outage OK：双边保 plan + 200，连续 503 fail-closed")
-	rmDocker(t, "start", rmRedisContainer)
+	require.NoError(t, c.run.services.StartService(t, serviceRedis), "起专用栈 redis（端口不变）")
 	rmWaitRedisUp(t, c.redisAddr, "redis 恢复", 90*time.Second)
 	rmWaitInstances(t, envA, 2, "redis 恢复后 A 视角=2", 60*time.Second)
 	rmWaitInstances(t, envB, 2, "redis 恢复后 B 视角=2", 60*time.Second)
@@ -953,11 +800,8 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Log("阶段 8：PG outage")
 	var ulogBefore int64
 	require.NoError(t, c.pg.QueryRow(ctx, `SELECT count(*) FROM usage_logs`).Scan(&ulogBefore))
-	rmDocker(t, "stop", rmPGContainer)
-	t.Cleanup(func() {
-		_ = exec.Command("docker", "start", rmPGContainer).Run()
-	})
-	rmTCPDown(t, "127.0.0.1:15432", "pg TCP 关闭", 60*time.Second)
+	require.NoError(t, c.run.services.StopService(t, serviceDB), "停专用栈 pg（保端口）")
+	rmTCPDown(t, c.pgAddr, "pg TCP 关闭", 60*time.Second)
 	// 编译后 plan + 内存态：实时选号继续（不断言 admin/DB 面，只断言 AI 面）。
 	outageEnd := time.Now().Add(45 * time.Second)
 	for time.Now().Before(outageEnd) {
@@ -968,9 +812,9 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 			}
 		}
 		// 进程存活检查：若 outage 打崩 server，这是生产缺陷（ evidence 在 log）。
-		for _, p := range []*exec.Cmd{c.srvA, c.srvB} {
-			if p != nil && p.ProcessState != nil && p.ProcessState.Exited() {
-				t.Fatalf("PG outage 打崩 server 进程（生产缺陷嫌疑）：%v", p.ProcessState)
+		for _, gw := range []*gateway{c.gwA, c.gwB} {
+			if gw.Exited() {
+				t.Fatalf("PG outage 打崩 server 进程（生产缺陷嫌疑）：%s 已退出", gw.name)
 			}
 		}
 	}
@@ -986,7 +830,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, okWin, 10, "PG outage 期双边 20 请求须至少半数 200（实时继续）：%d", okWin)
 	t.Logf("PG outage 期实时继续 OK：20 请求中 200×%d", okWin)
-	rmDocker(t, "start", rmPGContainer)
+	require.NoError(t, c.run.services.StartService(t, serviceDB), "起专用栈 pg（端口不变）")
 	rmWaitPGUp(t, c.adminDSN, "pg 恢复", 120*time.Second)
 	// 恢复：管理面 + 新流量 + usage 落库 resume。
 	rtPollLong(t, "pg 恢复后 admin 可读", 90*time.Second, func() (bool, string) {
@@ -1006,8 +850,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 
 	// ============ 9. 实例死亡 TTL + 滚动/全重启 ============
 	t.Log("阶段 9：实例死亡 TTL（硬杀 B，无 ZREM）")
-	c.rmKillHard(c.srvB)
-	c.srvB = nil
+	c.gwB.Kill(t)
 	// 15s memberTTL + 心跳节拍：30s 预算剪除（graceful Close 只需 ~2s，crash 走 TTL）。
 	rmWaitMembers(t, c, 1, "ZSET 剪除 B（TTL 路径）", 40*time.Second)
 	rmWaitInstances(t, envA, 1, "A 视角收敛到 1", 40*time.Second)
@@ -1018,7 +861,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	}
 	t.Log("死亡 TTL OK：剪除 + 幸存者 200")
 	// B 重启 = 滚动重启恢复：PG 重载 plan republishes。
-	c.envB, c.srvB, c.tmpB = rmStartInstance(t, c, rmAddrB, "rm-b2")
+	c.envB, c.gwB = rmStartGateway(t, c, "rm-b2")
 	envB = c.envB
 	rmWaitMembers(t, c, 2, "B 重启后 ZSET=2", 30*time.Second)
 	rmWaitInstances(t, envA, 2, "A 视角回到 2", 30*time.Second)
@@ -1032,22 +875,22 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	})
 	t.Log("滚动重启 OK：B republish + members=2")
 	// A 优雅滚动重启（B 在线服务不断）：停 A 期 B 全 200。
-	rmStopGraceful(t, c, &c.srvA, "A 滚动重启")
+	c.gwA.Stop(t)
 	for i := 0; i < 5; i++ {
 		cc, rrb := rmChat(t, envB, kMain, rmModel, nil)
 		require.Equal(t, 200, cc, "A 重启期 B 须仍 200：%s", rrb)
 	}
-	c.envA, c.srvA, c.tmpA = rmStartInstance(t, c, rmAddrA, "rm-a2")
+	c.envA, c.gwA = rmStartGateway(t, c, "rm-a2")
 	envA = c.envA
 	rmWaitInstances(t, envA, 2, "A 重启后视角=2", 30*time.Second)
 	rtWaitRoute(t, envA, gMain, "openai-chat", rmModel)
 	t.Log("A 滚动重启 OK")
 	// 全重启（双停双起）：记录黑窗，只允许 plan-not-ready 503 语义内的恢复。
-	rmStopGraceful(t, c, &c.srvA, "全重启停 A")
-	rmStopGraceful(t, c, &c.srvB, "全重启停 B")
-	c.envA, c.srvA, c.tmpA = rmStartInstance(t, c, rmAddrA, "rm-a3")
+	c.gwA.Stop(t)
+	c.gwB.Stop(t)
+	c.envA, c.gwA = rmStartGateway(t, c, "rm-a3")
 	envA = c.envA
-	c.envB, c.srvB, c.tmpB = rmStartInstance(t, c, rmAddrB, "rm-b3")
+	c.envB, c.gwB = rmStartGateway(t, c, "rm-b3")
 	envB = c.envB
 	seenCodes := map[int]bool{}
 	rtPollLong(t, "全重启后双边 200（黑窗仅容 503）", 180*time.Second, func() (bool, string) {
