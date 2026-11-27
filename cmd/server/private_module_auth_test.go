@@ -31,7 +31,10 @@ const privateOwner = "github.com/is7Qin"
 // `GOPRIVATE=` 赋值点的个数。少一处 = 一条构建路径失去凭证（某个 job 的
 // authorise 步骤被删、被并进别的步），这种事不该静默发生在 CI 里。
 var privateAuthSites = map[string]int{
-	".github/workflows/ci.yml":      2, // test 与 contract-gen 两个 job 各一处
+	// 3 处 = test / e2e / contract-gen 三个 job 各一处。e2e 是独立的 e2e job
+	// （spec §5 P1）：它在源码上构建服务端二进制，不继承 test job 的 `go env -w`，
+	// 必须有自己的 authorise 步骤——少这一处，e2e job 拉私有 SDK 当场 404。
+	".github/workflows/ci.yml":      3, // test / e2e / contract-gen 三个 job 各一处
 	".github/workflows/release.yml": 1, // binaries 矩阵 job（镜像那条走 Dockerfile）
 	"Dockerfile":                    1, // go mod download 之前
 }

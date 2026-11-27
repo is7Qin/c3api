@@ -51,6 +51,7 @@ var e2eDSNAllowlist = map[string]string{
 	"tools/e2e/routing_multi_e2e_test.go":     "manual e2e behind //go:build e2e",
 	"tools/e2e/supplier_earnings_e2e_test.go": "manual e2e behind //go:build e2e",
 	"tools/e2e/request_patch_e2e_test.go":     "manual e2e behind //go:build e2e: request_patch config-plane round-trip needs an admin DSN to create/drop its own database",
+	"tools/e2e/harness_services_test.go":      "manual e2e behind //go:build e2e: the harness owns the shared base stack lifecycle (spec §4.1) and must read the base admin DSN to pick/validate the deployment it drives; this is not the unit-test require-PG switch, so pgtest.DSN(t)/CloneEmpty(t) do not apply",
 }
 
 // requirePGAllowlist is the only place outside internal/testsupport/pgtest that

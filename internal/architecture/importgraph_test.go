@@ -1062,10 +1062,9 @@ var scanRoots = []string{"internal", "cmd", "pkg", "tools", "demo"}
 // unscannedDirs 是「含 .go 文件但默认 go list 不列出」的目录，必须写明理由：
 // 新增这类目录而不登记，TestImportGraphScanCoverage 会红。
 var unscannedDirs = map[string]string{
-	"tools/e2e": "全文件 //go:build e2e，默认构建不列出；由 e2e 流水线单独构建",
-	"tmp":       "临时/调试目录，可能含互相冲突的 main 包；不参与分层，也不进 go list",
-	"vendor":    "依赖副本（当前无），第三方代码不受本仓库分层约束",
-	"testdata":  "测试夹具目录（Go 工具链本就忽略），里面不是可 import 的包",
+	"tmp":      "临时/调试目录，可能含互相冲突的 main 包；不参与分层，也不进 go list",
+	"vendor":   "依赖副本（当前无），第三方代码不受本仓库分层约束",
+	"testdata": "测试夹具目录（Go 工具链本就忽略），里面不是可 import 的包",
 }
 
 type importGraph struct {
