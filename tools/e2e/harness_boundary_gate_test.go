@@ -58,14 +58,10 @@ var boundaryExemptFiles = map[string]bool{
 }
 
 // boundaryLegacyAllowlist P0 legacy：尚未迁移的文件（P1 迁移后删除 allowlist，全目录生效）。
-// 本 commit（harness 自测 + gates）时 request_patch/supplier 尚未迁移 => 临时列入；
-// 紧随其后的迁移 commit 会把这两项从 allowlist 删除（最终只留 billing/routing/routing_multi）。
 var boundaryLegacyAllowlist = map[string]bool{
-	"billing_e2e_test.go":           true,
-	"routing_e2e_test.go":           true,
-	"routing_multi_e2e_test.go":     true,
-	"request_patch_e2e_test.go":     true,
-	"supplier_earnings_e2e_test.go": true,
+	"billing_e2e_test.go":       true,
+	"routing_e2e_test.go":       true,
+	"routing_multi_e2e_test.go": true,
 }
 
 var (

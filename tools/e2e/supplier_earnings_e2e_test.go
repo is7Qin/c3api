@@ -23,13 +23,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -37,20 +32,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// supplierE2EAddr 供应商 e2e 主实例端口（避开 billing e2e 已占用端口段）。
-const supplierE2EAddr = "127.0.0.1:18095"
-const supplierE2EDisabledAddr = "127.0.0.1:18096"
-
-const supplierE2EDB = "c3api_supplier_e2e"
-
 // supplierCfgTOML 供应商 e2e 网关配置（freeze_hours=0 ⇒ 收益直接入 available，
-// 免等冻结期；share_bp_default=1000 = 10%）。
-func supplierCfgTOML(addr, jwtSecret, dsn, redisAddr string, supplierEnabled bool) string {
-	return `server = { addr = "` + addr + `", read_header_timeout = "10s", max_header_bytes = 1048576 }
+// 免等冻结期；share_bp_default=1000 = 10%）。动态 addr / 每 run 唯一 DSN / Redis
+// 逻辑库全部来自 harness 的 gatewayInputs（场景不拼资源字面量）。
+func supplierCfgTOML(in gatewayInputs, supplierEnabled bool) string {
+	return `server = { addr = "` + in.Addr + `", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
 auth = { jwt_secret = "` + jwtSecret + `" }
-db = { dsn = "` + dsn + `", max_conns = 10 }
-redis = { addr = "` + redisAddr + `" }
+db = { dsn = "` + in.DSN + `", max_conns = 10 }
+redis = { addr = "` + in.RedisAddr + `", db = ` + strconv.Itoa(in.RedisDB) + ` }
 proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = true }
 upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
 scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
@@ -103,82 +93,27 @@ func createRoleUser(t *testing.T, env *e2eEnv, email, role string, balanceUSD fl
 }
 
 func TestSupplierEarningsE2E(t *testing.T) {
-	env := &e2eEnv{t: t, addr: supplierE2EAddr}
 	ctx := context.Background()
-	redisAddr := os.Getenv("C3API_REDIS_ADDR")
-	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required")
-
-	// --- 0. 数据库准备：DROP + CREATE c3api_supplier_e2e ---
-	adminDSN := os.Getenv("TEST_DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
-	}
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	require.NoError(t, err)
-	t.Cleanup(adminPool.Close)
-	_, err = adminPool.Exec(ctx, `DROP DATABASE IF EXISTS `+supplierE2EDB+` WITH (FORCE)`)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `CREATE DATABASE `+supplierE2EDB)
-	require.NoError(t, err)
-	dsn := adminDSN
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		dsn = dsn[:i+1] + supplierE2EDB
-		if !strings.Contains(dsn, "?") {
-			dsn += "?sslmode=disable"
-		}
-	}
-	env.pg, err = pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(env.pg.Close)
-
-	// --- 1. 构建 + 启动 fakeupstream + 网关 ---
-	env.tmp = t.TempDir()
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	build := func(pkg, name string) string {
-		out := filepath.Join(env.tmp, name)
-		cmd := exec.Command("go", "build", "-o", out, pkg)
-		cmd.Dir = repoRoot
-		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run(), "build %s", pkg)
-		return out
-	}
-	upBin := build("./tools/fakeupstream", "fakeupstream.exe")
-	srvBin := build("./cmd/server", "server.exe")
-
-	up := exec.Command(upBin, "-addr", upAddr, "-chunks", "10", "-latency", "5ms")
-	up.Stdout, up.Stderr = os.Stdout, os.Stderr
-	require.NoError(t, up.Start())
-	t.Cleanup(func() { _ = up.Process.Kill() })
+	run := newE2ERun(t, e2eRunOptions{})
+	up := run.fakeUpstream(t, upstreamSpec{
+		Name:  "sup-fakeupstream",
+		Flags: []string{"-chunks", "10", "-latency", "5ms"},
+	})
 
 	pricesSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(pricesFixture))
 	}))
 	t.Cleanup(pricesSrv.Close)
 
-	cfgPath := filepath.Join(env.tmp, "supplier-config.toml")
-	require.NoError(t, os.WriteFile(cfgPath,
-		[]byte(supplierCfgTOML(supplierE2EAddr, jwtSecret, dsn, redisAddr, true)), 0o644))
-
-	srv := exec.Command(srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(env.tmp, "supplier-server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		if srv.Process != nil && (srv.ProcessState == nil || !srv.ProcessState.Exited()) {
-			_ = srv.Process.Kill()
-			_ = srv.Wait()
-		}
-		_ = srvLog.Close()
+	// 主网关：每 run 唯一 PG 库/Redis 逻辑库/动态端口 + run 级 lazy migrate（建表只归
+	// harness，场景不再内联 -migrate）；/readyz 就绪后才返回句柄。
+	gw := run.gateway(t, gatewaySpec{
+		Name:   "supplier-main",
+		Config: func(in gatewayInputs) string { return supplierCfgTOML(in, true) },
 	})
-
-	// 就绪 + 引导（spec 2026-10-09 §4.9）：/healthz → 注册首个用户（fresh 库即
-	// platform_admin）→ 取 JWT；再探 /api/admin/settings 确认（写入 env.adminJWT）。
-	env.adminJWT = env.bootstrapAdminJWT()
+	// env 是管理面 helper 的兼容视图（P0 过渡）：
+	// - pg = 本 run 唯一库；addr = 主网关动态地址；adminJWT = bootstrap 后的 platform_admin。
+	env := run.env(gw)
 
 	// --- 2. 供应商 / 管理员 / 消费者用户 ---
 	s1 := createRoleUser(t, env, "sup1@example.com", "supplier", 0)
@@ -190,7 +125,7 @@ func TestSupplierEarningsE2E(t *testing.T) {
 
 	// --- 3. 模板 / 组 / 价格 ---
 	tplID := env.create("/templates", map[string]any{
-		"name": "sup-tpl", "base_url": "http://" + upAddr,
+		"name": "sup-tpl", "base_url": "http://" + up.Addr,
 		"supported_formats": []string{"openai-chat"},
 		"models":            []string{"sup-model"},
 	})
@@ -252,13 +187,13 @@ func TestSupplierEarningsE2E(t *testing.T) {
 	applyBody := map[string]any{"amount_millis": drain, "request_key": "e2e-key-1"}
 	c, rb = supplierReq(t, env, s1JWT, http.MethodPost, "/api/user/supplier/settlements", applyBody)
 	require.Equal(t, 200, c, "apply settlement: %s", rb)
-	sid := int64(jsonGet(t, rb, "Id").(float64))
-	rev := int64(jsonGet(t, rb, "Revision").(float64))
+	sid := int64(jsonGet(t, rb, "id").(float64))
+	rev := int64(jsonGet(t, rb, "revision").(float64))
 
 	// 同 key 同参数重试 ⇒ 返回原单（不重复扣）。
 	c, rb = supplierReq(t, env, s1JWT, http.MethodPost, "/api/user/supplier/settlements", applyBody)
 	require.Equal(t, 200, c, "apply retry: %s", rb)
-	require.Equal(t, sid, int64(jsonGet(t, rb, "Id").(float64)), "同 key 返回原单")
+	require.Equal(t, sid, int64(jsonGet(t, rb, "id").(float64)), "同 key 返回原单")
 
 	// 同 key 不同金额 ⇒ 409。
 	c, _ = supplierReq(t, env, s1JWT, http.MethodPost, "/api/user/supplier/settlements",
@@ -287,21 +222,28 @@ func TestSupplierEarningsE2E(t *testing.T) {
 	c, rb = adminReq(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/approve",
 		map[string]any{"expected_revision": rev})
 	require.Equal(t, 200, c, "approve: %s", rb)
-	rev = int64(jsonGet(t, rb, "Revision").(float64))
+	rev = int64(jsonGet(t, rb, "revision").(float64))
+
+	// claim 的 payee_snapshot / risk_evidence 已是结构化对象（旧 string 形态在 openapi
+	// 收紧为 $ref；测试必须按 schema 发结构化 body + amount_millis == 单据金额）。
+	payeeOK := map[string]any{"payee_name": "payee-1", "account": "acct-1", "unit": "CNY"}
+	riskOK := map[string]any{"approved_revision": rev, "reference": "bank-ref-e2e-1", "summary": "e2e risk ok"}
 
 	// A22：非法 risk_review —— 空 risk_evidence ⇒ 400（失败闭合，不置 paying）。
 	c, _ = adminReq(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/claim",
-		map[string]any{"expected_revision": rev, "payee_snapshot": "payee-1", "risk_evidence": ""})
+		map[string]any{"amount_millis": drain, "expected_revision": rev, "payee_snapshot": payeeOK,
+			"risk_evidence": map[string]any{"approved_revision": rev, "reference": "", "summary": ""}})
 	require.Equal(t, 400, c, "空 risk evidence ⇒ 400")
 	c, _ = adminReq(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/claim",
-		map[string]any{"expected_revision": rev, "payee_snapshot": "", "risk_evidence": "ev"})
+		map[string]any{"amount_millis": drain, "expected_revision": rev,
+			"payee_snapshot": map[string]any{"payee_name": "", "account": "", "unit": ""}, "risk_evidence": riskOK})
 	require.Equal(t, 400, c, "空 payee ⇒ 400")
 
 	// 合法 claim。
 	c, rb = adminReq(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/claim",
-		map[string]any{"expected_revision": rev, "payee_snapshot": "payee-1", "risk_evidence": "bank-ref-e2e-1"})
+		map[string]any{"amount_millis": drain, "expected_revision": rev, "payee_snapshot": payeeOK, "risk_evidence": riskOK})
 	require.Equal(t, 200, c, "claim: %s", rb)
-	rev = int64(jsonGet(t, rb, "Revision").(float64))
+	rev = int64(jsonGet(t, rb, "revision").(float64))
 	// risk_review 严格反序列化 + 校验（持久化记录良构）。
 	rr := dbStr(t, env, `SELECT risk_review FROM supplier_settlements WHERE id=$1`, sid)
 	require.True(t, strings.Contains(rr, "platform_credit_risk"), "risk_review scope")
@@ -310,11 +252,11 @@ func TestSupplierEarningsE2E(t *testing.T) {
 	c, rb = adminReq(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/paid",
 		map[string]any{"expected_revision": rev, "external_ref": "ext-e2e-1"})
 	require.Equal(t, 200, c, "paid: %s", rb)
-	require.Equal(t, "paid", jsonGet(t, rb, "Status").(string))
+	require.Equal(t, "paid", jsonGet(t, rb, "status").(string))
 	require.NoError(t, verifySupplierI2(ctx, env.pg, s1))
 
 	// --- 9. A10：期间链（第二单起始 == 第一单 end）---
-	firstEnd := dbStr(t, env, `SELECT period_end FROM supplier_settlements WHERE id=$1`, sid)
+	firstEnd := dbStr(t, env, `SELECT period_end::text FROM supplier_settlements WHERE id=$1`, sid)
 	c, rb = supplierReq(t, env, s1JWT, http.MethodPost, "/api/user/supplier/settlements",
 		map[string]any{"amount_millis": 1, "request_key": "e2e-key-2"})
 	// 余额可能已不足 1；无论成败，不强行断言（期间链已在 PG 套件断言）。
@@ -325,21 +267,15 @@ func TestSupplierEarningsE2E(t *testing.T) {
 	// --- 10. A23：停用 + liability ⇒ 拒绝启动 ---
 	liab := dbIntRaw(t, env, `SELECT COALESCE(SUM(available),0) + COALESCE((SELECT SUM(amount) FROM supplier_frozen_chunks),0) FROM supplier_balances`)
 	require.Greater(t, liab, int64(0), "liability 非零（用于 A23 前置）")
-	disabledCfg := filepath.Join(env.tmp, "supplier-disabled.toml")
-	require.NoError(t, os.WriteFile(disabledCfg,
-		[]byte(supplierCfgTOML(supplierE2EDisabledAddr, jwtSecret, dsn, redisAddr, false)), 0o644))
-	cmd := exec.Command(srvBin, "-config", disabledCfg)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	require.NoError(t, cmd.Start())
-	exitErr := make(chan error, 1)
-	go func() { exitErr <- cmd.Wait() }()
-	select {
-	case e := <-exitErr:
-		require.Error(t, e, "停用态 + 残留 liability ⇒ 拒绝启动（非零退出）")
-	case <-time.After(60 * time.Second):
-		_ = cmd.Process.Kill()
-		t.Fatalf("停用态网关未在 60s 内退出（应因残留 liability 拒绝启动）")
-	}
+	run.gateway(t, gatewaySpec{
+		Name:   "supplier-disabled",
+		Config: func(in gatewayInputs) string { return supplierCfgTOML(in, false) },
+		ExpectExit: &exitExpectation{
+			Code:     1,
+			Contains: "outstanding liability",
+			Timeout:  60 * time.Second,
+		},
+	})
 }
 
 // verifySupplierI2 I2 单快照恒等式（单条 SELECT，READ COMMITTED；参数 = uid）。

@@ -24,13 +24,15 @@
 //	   request_patch 为运行期必然 sjson 残余失败的合法 JSON → 探测结论不变 + 固定
 //	   文案限频 WARN 恰好 1 条（含 template_id/format，不含 path/value/body/key）。
 //
-// 运行（前置：PG :15432；Redis 缺省 127.0.0.1:16379，可经 C3API_REDIS_ADDR 覆盖）：
+// 运行（前置：base PG/Redis 已起，deploy/test-compose.yml 缺省 15432/16379）：
 //
 //	$env:TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres"
 //	go test -tags e2e -run 'TestRequestPatchE2E' ./tools/e2e -v -timeout 600s
 //
-// 与 billing/routing 文件同包：复用 e2eEnv/bootstrapAdminJWT/admin/aiURL/pollUntil/
-// createUser/userKey/jsonGet/isWindows/createNewProcessGroup 与 rtPortFree。
+// 资源与进程生命周期全部由共享 harness 独占（每 run 唯一 PG 库/Redis 逻辑库/动态端口、
+// run 级 lazy migrate、子进程 env deny-list、registry）；本文件只写配置/请求/断言。
+// 与 billing/routing 文件同包：P0 过渡期复用既有管理面 helper（e2eEnv/admin/aiURL/
+// createUser/userKey/jsonGet/pollUntil），P1 迁移 billing 时搬入 harness。
 // 本文件新增符号一律 rp 前缀，禁与其他 e2e 文件重名。
 package e2e
 
@@ -48,28 +50,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
-
-	"github.com/is7qin/c3api/pkg/redisx"
 )
 
 const (
-	rpServerAddr = "127.0.0.1:18094" // billing 18090-18092 / routing 18093，本文件独立端口
-	rpUpAddr     = "127.0.0.1:19112" // 真实 fakeupstream（routing 用 19111）
-	rpDBName     = "c3api_request_patch_e2e"
-	rpPageMax    = 200
+	rpPageMax = 200
 
 	// 客户端请求模型（路由/定价按客户端模型；patch 在选号之后才作用于出站报文）。
 	rpModelChat    = "rp-chat-model"
@@ -350,6 +342,9 @@ func rpUpAuditLast(t *testing.T, addr, path string) rpUpAuditEntry {
 
 // ---- 环境启动 ----
 
+// rpHarness 场景句柄：资源/进程生命周期由共享 harness 独占（e2eRun 负责每 run 唯一
+// PG 库/Redis 逻辑库/动态端口/构建/迁移/registry/cleanup）；本文件只保留断言需要的
+// 句柄：管理面 helper 兼容视图 / 进程内捕获上游 / 真实 fakeupstream 地址 / 网关日志。
 type rpHarness struct {
 	env     *e2eEnv
 	capture *rpCapture
@@ -357,132 +352,40 @@ type rpHarness struct {
 	logPath string
 }
 
-// rpBoot 起独立 PG 库 + 真实 fakeupstream + 进程内捕获上游 + 真实网关二进制。
-// 配置要点：
+// rpConfigTOML 主网关配置（与迁移前逐键一致；动态 addr / 每 run DSN / Redis 逻辑库来自
+// harness 的 gatewayInputs）。配置要点：
 //   - scheduler.sync_interval=1s 加速快照收敛（断言一律经 /routing/plan 就绪门，
 //     不靠 sleep）；
 //   - billing.enabled=false：本文件验的是出站报文面，计费面已有 billing e2e；
 //     关掉以免价格/余额快照把请求拦在 402，失败诊断只剩 patch 面；
 //   - log.level=warn：成功路径应零 patch 日志（WARN 是异常信号）。
-func rpBoot(t *testing.T) *rpHarness {
-	t.Helper()
-	rtPortFree(t, rpServerAddr) // 端口占用预检：僵尸进程直接 FailNow
-	rtPortFree(t, rpUpAddr)
-
-	ctx := context.Background()
-	redisAddr := os.Getenv("C3API_REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "127.0.0.1:16379" // deploy/test-compose 默认（brief 的命令只设 TEST_DATABASE_URL）
-	}
-	// Redis 隔离（与 PG DROP+CREATE 对等，routing e2e 同款）：清掉上轮残留的
-	// 健康冷却/续接绑定等易失态，避免确定性重放的账号 ID 读到旧记录。
-	rc, err := redisx.Open(redisx.Options{Addr: redisAddr})
-	require.NoError(t, err, "redis open for e2e isolation flush")
-	require.NoError(t, rc.FlushDB(ctx).Err(), "e2e redis isolation flush")
-	_ = rc.Close()
-
-	adminDSN := os.Getenv("TEST_DATABASE_URL")
-	if adminDSN == "" {
-		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
-	}
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	require.NoError(t, err)
-	t.Cleanup(adminPool.Close)
-	_, err = adminPool.Exec(ctx, `DROP DATABASE IF EXISTS `+rpDBName+` WITH (FORCE)`)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `CREATE DATABASE `+rpDBName)
-	require.NoError(t, err)
-	dsn := adminDSN
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		dsn = dsn[:i+1] + rpDBName
-		if !strings.Contains(dsn, "?") {
-			dsn += "?sslmode=disable"
-		}
-	}
-	pg, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(pg.Close)
-
-	env := &e2eEnv{t: t, pg: pg, addr: rpServerAddr}
-	env.tmp = t.TempDir()
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	build := func(pkg, name string) string {
-		out := filepath.Join(env.tmp, name)
-		cmd := exec.Command("go", "build", "-o", out, pkg)
-		cmd.Dir = repoRoot
-		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run(), "build %s", pkg)
-		return out
-	}
-	upBin := build("./tools/fakeupstream", "rp-fakeupstream.exe")
-	srvBin := build("./cmd/server", "rp-server.exe")
-
-	up := exec.Command(upBin, "-addr", rpUpAddr, "-chunks", "3", "-latency", "1ms")
-	up.Stdout, up.Stderr = os.Stdout, os.Stderr
-	require.NoError(t, up.Start())
-	t.Cleanup(func() {
-		if up.Process != nil {
-			_ = up.Process.Kill()
-		}
-	})
-
-	capture := rpStartCapture(t)
-
-	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+func rpConfigTOML(in gatewayInputs) string {
+	return fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
-redis = { addr = "%s" }
+redis = { addr = "%s", db = %d }
 proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = true }
 upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
 scheduler = { default_max_concurrency = 8, sync_interval = "1s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "1s" }
 billing = { enabled = false, flush_interval = "300ms", balance_refresh_interval = "1s" }
-`, rpServerAddr, jwtSecret, dsn, redisAddr)
-	cfgPath := filepath.Join(env.tmp, "config.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
+`, in.Addr, jwtSecret, in.DSN, in.RedisAddr, in.RedisDB)
+}
 
-	// 迁移：app 进程永不建表（migrate CLI spec §2.10/§2.14），schema 只归显式
-	// `-migrate up`。既有 e2e harness（billing/routing）没跑这一步——迁移 refactor
-	// 后新鲜库会被 schema gate 摘成只读（本文件用真实库时实测）。在 boot 内显式
-	// up，避免测试依赖"库恰好已被迁过"这种环境态。
-	migCmd := exec.Command(srvBin, "-config", cfgPath, "-migrate", "up")
-	migOut, migErr := migCmd.CombinedOutput()
-	require.NoError(t, migErr, "schema migrate up: %s", migOut)
-
-	srv := exec.Command(srvBin, "-config", cfgPath)
-	srvLog, err := os.Create(filepath.Join(env.tmp, "server.log"))
-	require.NoError(t, err)
-	srv.Stdout, srv.Stderr = srvLog, srvLog
-	if isWindows() {
-		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
-	}
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		if srv.ProcessState != nil && srv.ProcessState.Exited() {
-			_ = srvLog.Close()
-			return
-		}
-		if srv.Process != nil {
-			_ = srv.Process.Kill()
-			_ = srv.Wait()
-		}
-		_ = srvLog.Close()
+// rpBoot 一次 run 的完整基建：每 run 唯一 PG 库/Redis 逻辑库/动态端口 + 真实
+// fakeupstream + 进程内捕获上游 + 真实网关二进制。建表只归 harness 的 run 级
+// lazy migrate（场景不可能漏 migrate，也不再有内联 -migrate）。
+func rpBoot(t *testing.T) *rpHarness {
+	t.Helper()
+	run := newE2ERun(t, e2eRunOptions{})
+	up := run.fakeUpstream(t, upstreamSpec{
+		Name:  "rp-fakeupstream",
+		Flags: []string{"-chunks", "3", "-latency", "1ms"},
 	})
-	// 失败诊断：server.log 转储（Cleanup LIFO，先于 Kill 执行）。
-	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
-			t.Logf("--- rp server.log (test failed) ---\n%s", data)
-		}
-	})
-
-	env.adminJWT = env.bootstrapAdminJWT() // /healthz 就绪 → bootstrap platform_admin = 就绪
-	return &rpHarness{env: env, capture: capture, upAddr: rpUpAddr, logPath: filepath.Join(env.tmp, "server.log")}
+	capture := rpStartCapture(t)
+	gw := run.gateway(t, gatewaySpec{Name: "rp-main", Config: rpConfigTOML})
+	return &rpHarness{env: run.env(gw), capture: capture, upAddr: up.Addr, logPath: gw.LogPath}
 }
 
 // ---- 通用助手 ----
