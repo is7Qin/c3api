@@ -284,6 +284,9 @@ var allowRules = []allowRule{
 	// P4-1：pgretry 只依赖 pgconn（PostgreSQL 驱动的 SQLSTATE 分类），零内部依赖。
 	// 它是**基础设施事实**不是领域规则——领域包不得 import pgx，故与 domain 分开。
 	{from: "internal/pgretry", to: []string{}},
+	// P3：实体状态枚举的唯一权威。零内部依赖（只有两个字符串）——
+	// 正因如此 ent schema（codegen 输入）才能直接依赖它。
+	{from: "internal/statusenum", to: []string{}},
 
 	// P6-2：internal/codexproto 装 codex 协议的**纯数据与纯解析**（account id 的
 	// JWT claims 解析 + 用量查询失败的分类类型），零内部依赖、只 import stdlib。
@@ -333,18 +336,23 @@ var allowRules = []allowRule{
 	// 识 net/http 传输装配），修法只能是判据搬家，不是放宽白名单。
 	{from: "internal/domain", to: []string{
 		"internal/credential", "pkg/egressapi", "internal/modelmap", "internal/identityenv",
-		"pkg/headervalid",
+		"pkg/headervalid", "internal/statusenum",
 	}},
 
-	// 生成代码：只允许自引用。ent 模型 / schema 复用 domain 枚举属于 Codegen 边界
-	// 尚未抽离的债务，登记在 legacy(P3)；绝不把整棵生成代码树做成永久豁免。
+	// 生成代码：只允许自引用。P3 已把 4 组 status 枚举的权威下沉到 internal/statusenum，
+	// schema 不再依赖 domain（ent 子树多一条到 statusenum 的允许边，见上方 ent 规则）。
+	// 仍然绝不把整棵生成代码树做成永久豁免。
 	//
 	// R2-a 起多两条 internal/modelmap / internal/identityenv：两个 JSON 字段的值类型
 	// （Template.ModelMapping、AccountExt.CodexIdentity）下沉到中立叶子包，生成代码
 	// 改为引用它们，`internal/ent → internal/domain` 那条 P3 债随之消失。
 	// 注意本条**无尾斜杠**前缀会命中整棵 internal/ent 子树，所以 internal/ent/schema
 	// 自动获得这两个目标，无需单独为它写规则。
-	{from: "internal/ent", to: []string{"internal/ent/", "internal/modelmap", "internal/identityenv"}},
+	// P3：ent/schema 的 4 组 status 枚举改从 internal/statusenum 取值。
+	// 为什么不能直接用 domain：schema 是 codegen 的**输入**，而 domain 的传递依赖有 200+
+	// 个包（实测含 crypto / net/http / sjson）——一个只声明几个字符串常量的包不该背这些。
+	// 值放在中立叶子 statusenum，domain 做类型别名 ⇒ 单一事实源不变，依赖方向变干净。
+	{from: "internal/ent", to: []string{"internal/ent/", "internal/modelmap", "internal/identityenv", "internal/statusenum"}},
 
 	// 存储层：允许 ent 与 domain/credential。
 	//
@@ -787,7 +795,7 @@ const (
 	// 再前值：bf4c78672ba265ed449f7385aac67c3918d004ffc67a5ba63744d41e5bb3931d（P5-3-A 之后，债 s1-a-class 之前）
 	// 再前值：6b10a3e4fb641a39c03fcdc15224d78bad1c1f30ffd44eb0867831a17ddc8b0b（P5-1 之后）
 	// 再前值：f78fff5868b1953208e62adda01f5ec87b929ac4fe68ec4abd10ae741f2d7db8（P5-1 之前）
-	allowMatrixFingerprint = "127ef19b337350bed0efaab79d56d39a0c933f8f9bab4818680f47bc52742f06"
+	allowMatrixFingerprint = "3f7cbb42c3ae7eaae051f7a95d2739cd539fefc42076bf3254f9e181fc70897d"
 
 	// allMax 限制 all: true 的规则条数，精确相等、只许改小。5 条分别是
 	// cmd/server（唯一装配点）、tools/、demo/（消费者入口）、internal/proxy
@@ -963,10 +971,9 @@ func (p phase) validNarrow() bool {
 
 var productionLedger = ledger{
 	name:    "生产侧 Imports",
-	debtMax: 2,
+	debtMax: 1,
 	keepMax: 2,
 	debt: []legacyRow{
-		{"internal/ent/schema", "internal/domain", "手写 schema 的 4 个 status 枚举直接用 domain 常量；P3 把状态枚举归入中立后 schema 只依赖 ent 自带类型", phaseP3},
 		{"internal/repository", "internal/supplier", "repository 反向依赖 supplier 聚合；P4 把供应商视图抽成端口", phaseP4},
 		// P6-2 删行（debtMax 4 → 3，只减不增）：{internal/handler,
 		// internal/sdkbridge} 这条边已**真删**——handler 不再直接 import

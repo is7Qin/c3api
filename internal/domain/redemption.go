@@ -4,7 +4,11 @@
 
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/is7qin/c3api/internal/statusenum"
+)
 
 // RedemptionType 兑换码类型：资源发放的通用载体（计费前基础设施）。
 // balance = users.balance += value；concurrency = users.max_concurrency（0 = 不限特判）；
@@ -26,21 +30,14 @@ func (t RedemptionType) Valid() bool {
 	return false
 }
 
-// RedemptionStatus 兑换码状态。
-type RedemptionStatus string
+// RedemptionStatus 兑换码状态。canonical 定义在 internal/statusenum
+// （Ent schema 与领域层共享，schema 不能依赖本包）。别名而非新类型。
+type RedemptionStatus = statusenum.RedemptionStatus
 
 const (
-	RedemptionStatusActive   RedemptionStatus = "active"
-	RedemptionStatusDisabled RedemptionStatus = "disabled"
+	RedemptionStatusActive   = statusenum.RedemptionStatusActive
+	RedemptionStatusDisabled = statusenum.RedemptionStatusDisabled
 )
-
-func (s RedemptionStatus) Valid() bool {
-	switch s {
-	case RedemptionStatusActive, RedemptionStatusDisabled:
-		return true
-	}
-	return false
-}
 
 // RedemptionCode 兑换码（不可编辑：生成后仅可失效）。
 type RedemptionCode struct {

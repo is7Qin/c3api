@@ -8,7 +8,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 
-	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/statusenum"
 )
 
 // Key 客户端 API key：独立表（重建 group 内嵌 key 语义，不向后兼容）。
@@ -22,7 +22,7 @@ func (Key) Fields() []ent.Field {
 		field.Int64("group_id"),
 		field.String("name"),
 		field.String("key_raw").Unique(), // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
-		field.Enum("status").Values(string(domain.KeyStatusActive), string(domain.KeyStatusDisabled)).Default(string(domain.KeyStatusActive)),
+		field.Enum("status").Values(string(statusenum.KeyStatusActive), string(statusenum.KeyStatusDisabled)).Default(string(statusenum.KeyStatusActive)),
 		field.Int("max_concurrency").Default(0), // 0 = 不限
 		field.Int64("quota").Default(0),         // 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限（HasQuota 短路）
 		field.Int64("quota_used").Default(0),    // 已消耗计费金额（毫分；后扣；无额度 key 恒 0）

@@ -32,7 +32,10 @@ git checkout -- go.sum          # ⚠ -mod=mod 会污染 go.sum（实测加 30 �
 - **`ttft_hist` 不进 schema**：PG `bigint[]`，ent 无数组类型（`field.Ints` 是 JSON 语义）。
 - **改 schema 可能要求新迁移**：schema 变更只新增 `internal/db/migrate/migrations/NNNN_*`，
   已应用迁移**不可变**。
-- **枚举值来自单一事实源**：`field.Enum(...).Values(string(domain.XxxActive), …)`——不要写字面量。
+- **枚举值来自单一事实源**：`field.Enum(...).Values(string(statusenum.XxxActive), …)`——不要写字面量。
+  P3 后权威在 `internal/statusenum（中立叶子，零 import），而不在 `domain：
+  schema 是 codegen 的**输入**，而 domain 的传递依赖有 200+ 个包。`domain` 对这些类型做了别名，
+  所以业务代码仍写 `domain.UserStatusActive`，两边指向同一个值。
 
 ## 验证
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/modelmap"
+	"github.com/is7qin/c3api/internal/statusenum"
 )
 
 type RequestFormat string
@@ -89,21 +90,15 @@ func CanAccessSupplierSurface(r Role) bool {
 	return slices.Contains(SupplierSurfaceRoles(), r)
 }
 
-// UserStatus 用户状态。
-type UserStatus string
+// UserStatus 用户状态。canonical 定义在 internal/statusenum（Ent schema 与领域层
+// 都必须能引用，而 schema 不能依赖本包——见该包的包文档）。别名而非新类型：
+// 全部既有调用点与 Valid() 方法保持不变。
+type UserStatus = statusenum.UserStatus
 
 const (
-	UserStatusActive   UserStatus = "active"
-	UserStatusDisabled UserStatus = "disabled"
+	UserStatusActive   = statusenum.UserStatusActive
+	UserStatusDisabled = statusenum.UserStatusDisabled
 )
-
-func (s UserStatus) Valid() bool {
-	switch s {
-	case UserStatusActive, UserStatusDisabled:
-		return true
-	}
-	return false
-}
 
 // UserSnapshot 用户快照条目（Auth 内存表元素：RequireJWT/adminAuth 共用，
 // 单次查找同时取 status+role+token_version——降权即时生效的 role 数据源，
@@ -115,38 +110,23 @@ type UserSnapshot struct {
 	TokenVersion int64 // 签发时 Claims.Ver 与此不等 → 401（改密撤销）
 }
 
-// KeyStatus 客户端 key 状态。
-type KeyStatus string
+// KeyStatus 客户端 key 状态。canonical 定义在 internal/statusenum（同 UserStatus）。
+type KeyStatus = statusenum.KeyStatus
 
 const (
-	KeyStatusActive   KeyStatus = "active"
-	KeyStatusDisabled KeyStatus = "disabled"
+	KeyStatusActive   = statusenum.KeyStatusActive
+	KeyStatusDisabled = statusenum.KeyStatusDisabled
 )
-
-func (s KeyStatus) Valid() bool {
-	switch s {
-	case KeyStatusActive, KeyStatusDisabled:
-		return true
-	}
-	return false
-}
 
 // ManagementKeyStatus 管理 key（mk-）状态。active = 可用；disabled = 软禁用
 // （快照即时 401，可再启用），区别于删除（软删，不可逆撤销）。
-type ManagementKeyStatus string
+// canonical 定义在 internal/statusenum（同 UserStatus）。
+type ManagementKeyStatus = statusenum.ManagementKeyStatus
 
 const (
-	ManagementKeyStatusActive   ManagementKeyStatus = "active"
-	ManagementKeyStatusDisabled ManagementKeyStatus = "disabled"
+	ManagementKeyStatusActive   = statusenum.ManagementKeyStatusActive
+	ManagementKeyStatusDisabled = statusenum.ManagementKeyStatusDisabled
 )
-
-func (s ManagementKeyStatus) Valid() bool {
-	switch s {
-	case ManagementKeyStatusActive, ManagementKeyStatusDisabled:
-		return true
-	}
-	return false
-}
 
 // GroupVisibility 组可见性：public 全部用户可选；private 仅授予用户。
 type GroupVisibility string

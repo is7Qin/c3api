@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/statusenum"
 )
 
 // 本文件是 U3 的双门禁：status 枚举只允许有一个权威（internal/domain），
@@ -211,10 +211,10 @@ type gateStatusEntity struct {
 // gateStatusEntities 是 4 组 status 枚举对应的实体表与权威值。CREATE TABLE 的
 // DEFAULT 与 ALTER ... SET DEFAULT 两条写入路径共用这份映射，避免两处各写一份。
 var gateStatusEntities = []gateStatusEntity{
-	{"users", string(domain.UserStatusActive)},
-	{"keys", string(domain.KeyStatusActive)},
-	{"management_keys", string(domain.ManagementKeyStatusActive)},
-	{"redemption_codes", string(domain.RedemptionStatusActive)},
+	{"users", string(statusenum.UserStatusActive)},
+	{"keys", string(statusenum.KeyStatusActive)},
+	{"management_keys", string(statusenum.ManagementKeyStatusActive)},
+	{"redemption_codes", string(statusenum.RedemptionStatusActive)},
 }
 
 // TestMigrationStatusDefaultsMatchDomain 门禁 (b)：基线 DDL 里 4 张实体表的
