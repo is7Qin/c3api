@@ -28,15 +28,46 @@ export TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres?ssl
 export C3API_REDIS_ADDR="127.0.0.1:16379"
 export E2E_LOG_DIR=/tmp/e2e-logs   # 失败 artifact：gateway/fakeupstream/compose 日志
 
-# 全套（串行；~5 分钟）。CI 同款命令：go test -tags e2e -count=1 -timeout 20m ./tools/e2e
+# 全套（单套件 × host；~5 分钟）。CI 同款命令：go test -tags e2e -count=1 -timeout 20m ./tools/e2e
 go test -tags e2e -count=1 -timeout 20m ./tools/e2e
 
-# 单场景（逐个 -run，串行；e2e 本机不要并行跑多个 go test）
+# 单场景（-run 过滤单 Test 也持套件锁；同一 host 同一时间只能有一个 e2e 套件）
 go test -tags e2e -run '^TestBillingE2E$' ./tools/e2e -count=1 -v -timeout 900s
 ```
 
-普通 test job（不带 `-tags e2e`）跑 $E2E/$R 之外的两个 gate + 平台/registry 单测：
-`go test ./tools/e2e` —— 修改 tools/e2e 任何文件后必须绿。
+普通 test job（不带 `-tags e2e`）跑 assertion/boundary gate + 平台/registry 单测：
+`go test ./tools/e2e` —— 修改 tools/e2e 任何文件后必须绿。该形态**没有** TestMain/套件锁，
+可与正在运行的 e2e 套件并发（不同资源，见下节并发口径）。
+
+## 并发口径与 host 级套件锁（spec §16，P1 fix3）
+
+**口径（收窄后；取代早期「所有 e2e 可以并发」表述）**：
+
+- **单套件 × host**：同一 host 同一时间只允许一个 e2e 套件（一个 `-tags e2e` test 二进制 =
+  一个套件；`-run` 过滤单 Test 也持锁）。第二个套件**立即 fast-fail（exit 2）**，不等待/
+  不重试/不静默 skip；同一 host 的多个 worktree 共享同一把锁（锁在 OS temp）。
+- e2e 与全量单测可并发（不同资源：单测 pgtest 克隆 + miniredis，不共享 e2e 唯一库/Redis
+  逻辑库/端口）；单套件内场景仍串行（`t.Parallel` 禁令不变）；资源层仍按每 run 唯一 PG 库/
+  Redis 逻辑库/动态端口隔离（见下节）。
+- 该锁是 **spec §16 的资源边界裁定**，不是并发缺陷修复：两个全量套件进程级并发的卡死根因
+  未完全定位（momus P1 review Important-1：双套件 >18min、registry 停在 resources_ready、
+  CPU idle）；若日后要恢复全套件并发，需单独诊断并更新 spec，**不得只删锁**。
+
+**实现**（`harness_suitelock.go` 判定逻辑 + `suite_lock_test.go` 的 `TestMain`）：
+
+- 锁路径固定：`os.TempDir()/e2e-suite.lock/`（目录）；内容 `owner.json` =
+  `pid/hostname/start/creation_time/exe/args`。
+- 抢锁：`Mkdir` 原子独占。抢不到读 owner 判定——owner 活/状态不确定（含异 host）=> 打印
+  「已有 e2e 套件在运行」+ 占用者明细并 `os.Exit(2)`；owner 同 host 且**确定死亡**
+  （`procAlive` + `procCreationTime` 优先，PID 复用安全）=> 保守接管（`Mkdir` `.claim`
+  CAS 单赢家；陈旧接管标记 >2min 才允许删后单次重抢）；坏记录（缺 owner.json/JSON 损坏/
+  字段缺失）一律**不接管**，报错要求人工确认。
+- 释放：`m.Run` 结束后（panic 也经 defer）只删「仍属于本进程」的锁；进程被强杀时锁留在
+  磁盘，下一个套件按上述死亡判定接管。普通 test job 不带 e2e tag => 无 TestMain/无锁。
+- 手工清理（仅在确认无 e2e 进程运行时）：删 `%TEMP%\e2e-suite.lock`（Windows）/
+  `$TMPDIR/e2e-suite.lock`（Unix）后重试；fast-fail 错误信息里带锁目录绝对路径与占用者。
+- 注意：`go test -tags e2e -run '^$' ./tools/e2e`（编译/空跑检查）也会短暂持锁；纯编译检查
+  用 `go build -tags e2e ./tools/e2e` 或 `go vet -tags e2e ./tools/e2e`。
 
 ## 资源隔离（每 run）
 
@@ -118,10 +149,46 @@ go test -tags e2e -run '^TestBillingE2E$' ./tools/e2e -count=1 -v -timeout 900s
   被移除断言调用相关；「明显恒真/不可达补偿」会被反空断言/不可达检测拦下。
 - 反空断言检测是「明显恒真兜底」，不宣称机械完备；新增断言请写成有期望值的 require。
 
+## 已知残余与人工清理（不宣称完备）
+
+- **boundary gate 停在字符串字面量层**（P0 r2 Minor-1，P1 fix3 记录 deferral）：固定端口
+  字面量与「字面量直接拼接/Sprintf」已拦，但拆主机（`"127.0."+"0.1:18094"`）与
+  `fmt.Sprintf("%s:%d", ...)` 的**常量折叠型**构造仍是已知 GREEN 残余（AST 常量折叠未做，
+  P2 backlog）。能力面兜底：场景**自建监听**（`net.Listen*` / `*.ListenAndServe*`）已被同一
+  gate 机械禁止，故残余是「常量构造的端口字面量」而非真实外部资源能力。
+- **不可达补偿/反空断言同属「明显项兜底」**（P0 r2 Minor-2）：只覆盖字面 `if false` /
+  `for false` / 同 block 无条件 return|panic 之后的断言；**常量折叠型恒假**（如
+  `const f = false; if f {`）未覆盖，不宣称机械完备。新增断言仍须写成有期望值的 require。
+- **registry Redis 锁 owner 不匹配**（P0 r2 Minor-3，本 fix3 已同步 `harness_registry.go`
+  :16/:790 注释）：行为是「保留记录 + 保留锁 + 返回可重试 error（下次 sweep 重试）」，不是
+  只 warn；孤儿索引不会失去追踪。
+- **真 GitHub Actions e2e job 未运行**：本机 CI 形态（同 compose + 同命令）已多轮 PASS，但
+  Linux runner 上的 compose 版本/--wait/fetch-depth:0 strict gate 仍待 owner push 后首跑核对。
+- **P1 fix2 的 4b 安全网未自然触发**：`leaders=[]` → 100% explore 分派、4b(ii)
+  keepalive+180s 两条兜底在 12 次自然样本（7 单跑 + 5 全套）中未进入；覆盖为代码审查 +
+  历史失败形态映射，P2 可用确定性注入/合成 plan 让两分支至少各触发一次（不改成 skip/retry）。
+- **legacy 固定库残留（人工清理，不自动 DROP）**：base PG 仍有旧 harness（P0/改造前）产物
+  `c3api_e2e`、`c3api_request_patch_e2e`、`c3api_routing_e2e`、
+  `c3api_routing_multi_e2e`、`c3api_supplier_e2e`。新 harness 每 run 唯一库是
+  `c3api_e2e_<host>_<pid>_<nano>_<rand>` 且 registry/sweep 只回收有 run 记录的同前缀库；
+  这些固定库**没有 owner/run 记录**、无法证明归属（可能含人工调试数据），且
+  `DROP ... WITH (FORCE)` 会踢掉任意连接 => 按「宁可泄漏不可误删」**不自动 DROP**。
+  确认无业务/调试用途后人工清理：
+
+  ```bash
+  docker exec deploy-db-1 psql -U postgres -d postgres \
+    -c 'DROP DATABASE IF EXISTS c3api_e2e' \
+    -c 'DROP DATABASE IF EXISTS c3api_request_patch_e2e' \
+    -c 'DROP DATABASE IF EXISTS c3api_routing_e2e' \
+    -c 'DROP DATABASE IF EXISTS c3api_routing_multi_e2e' \
+    -c 'DROP DATABASE IF EXISTS c3api_supplier_e2e'
+  ```
+
 ## 边界与取舍
 
 - **只支持单机**：e2e PG/Redis 与测试进程必须同 host；异 host registry 记录永不自动回收
-  （人工清）。Redis 逻辑库上限 15 个并发 run。
+  （人工清）。Redis 逻辑库上限 15 个并发 run，但套件锁下同 host 实际是单套件串行（15 为
+  历史/理论并发上限，非当前契约）。
 - **性能 1.3x 仅报告验收**（对比 06e21762 的 6 e2e 中位 294.77s），不进 CI 硬时间门禁；
   CI 只做功能 PASS。每 run 构建一次、无新增 sleep。
 - 不改生产代码/config schema；不新增外部 Go 依赖；testify 只用 `require`。
