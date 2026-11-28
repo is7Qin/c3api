@@ -10,14 +10,21 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
-// procAlive 平台 helper（Unix）：kill(pid, 0) 判活。返回 (alive, certain)：
-// certain=false 表示状态不确定（EPERM/其它错误）——sweep 对「不确定」一律不回收
-// （宁可泄漏不可误删）。
+// procAlive 平台 helper（Unix）：kill(pid, 0) 判活，Linux 额外把 zombie 视为已死。
+// 返回 (alive, certain)：certain=false 表示状态不确定（EPERM/其它错误）——sweep
+// 对「不确定」一律不回收（宁可泄漏不可误删）。
+//
+// kill(pid, 0) 对已退出但尚未被父进程 wait 的 zombie 仍返回成功；若只凭它判活，
+// registry sweep / 自测会把「已 SIGKILL、等待 reap」的进程当成活进程（CI Linux 实测
+// TestProcCreationTimeAndForceKill 10s 不收敛）。Linux 从 /proc/<pid>/stat 的 state
+// 字段识别 Z/X；其它 Unix 没有 /proc，维持 kill(0) 语义（Darwin 的 procCreationTime
+// 也不可用，sweep 本就保守跳过 PID/PGID 强杀）。
 func procAlive(pid int) (alive bool, certain bool) {
 	if pid <= 0 {
 		return false, true
@@ -25,6 +32,12 @@ func procAlive(pid int) (alive bool, certain bool) {
 	err := syscall.Kill(pid, 0)
 	switch {
 	case err == nil:
+		if runtime.GOOS == "linux" {
+			state, ok, gone := linuxProcState(pid)
+			if gone || (ok && (state == 'Z' || state == 'X')) {
+				return false, true
+			}
+		}
 		return true, true
 	case errors.Is(err, syscall.ESRCH):
 		return false, true
@@ -33,6 +46,31 @@ func procAlive(pid int) (alive bool, certain bool) {
 	default:
 		return true, false
 	}
+}
+
+// linuxProcState 读 /proc/<pid>/stat 的进程 state（字段 3）。ok=false 表示解析失败
+// 或平台无 /proc；gone=true 表示进程在 kill(0) 与读取之间已消失（/proc 不存在）。
+// comm 字段可含空格/括号，所以以最后一个 ')' 为界定位 state。
+func linuxProcState(pid int) (state byte, ok bool, gone bool) {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, false, true
+		}
+		return 0, false, false
+	}
+	idx := strings.LastIndexByte(string(data), ')')
+	if idx < 0 || idx+1 >= len(data) {
+		return 0, false, false
+	}
+	j := idx + 1
+	for j < len(data) && (data[j] == ' ' || data[j] == '	') {
+		j++
+	}
+	if j >= len(data) {
+		return 0, false, false
+	}
+	return data[j], true, false
 }
 
 // procCreationTime 进程创建时间（opaque，仅用于同 host 内比对；registry 只处理
