@@ -90,8 +90,8 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      E2E_LOG_DIR: ${{ runner.temp }}/e2e-logs
+    # E2E_LOG_DIR 不能放 job env：jobs.<id>.env 不允许 runner context（GitHub 静态校验
+    # 直接判 workflow 文件无效，run 0s 失败、不建 job）。需要它的 step 各自声明。
     steps:
       - uses: actions/checkout@v7
         with:
@@ -117,11 +117,14 @@ jobs:
         env:
           TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:15432/postgres?sslmode=disable"
           C3API_REDIS_ADDR: "127.0.0.1:16379"
+          E2E_LOG_DIR: ${{ runner.temp }}/e2e-logs
         # 6 个场景串行（t.Parallel 禁令）；-timeout 20m < job 35m。
         run: go test -tags e2e -count=1 -timeout 20m ./tools/e2e
         timeout-minutes: 25
       - name: dump base compose logs (failure diagnostics)
         if: failure()
+        env:
+          E2E_LOG_DIR: ${{ runner.temp }}/e2e-logs
         run: |
           mkdir -p "$E2E_LOG_DIR"
           docker compose -p deploy -f deploy/test-compose.yml logs --no-color --tail 1000 \
