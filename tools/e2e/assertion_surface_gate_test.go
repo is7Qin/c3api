@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // 断言基线 gate（spec §4.3/§10.5；不带 e2e build tag => 普通 test job 跑）。
-// 当前为 baseline-v2：source=P1 迁移 commit（8771fc67），allowed_removals 已清空。
+// 当前为 baseline-v2：source=P1 迁移 commit（rebase 后 17963fdc），allowed_removals 已清空。
 //
 // 防漂移机制：
 //  1. baseline 从 BASE commit 机械生成，gate 用 git show <source_commit> **重新计算**
@@ -29,7 +29,7 @@ import (
 
 // assertionBaselineSourceCommit baseline-v1 的源头 commit（spec §10.5：source_commit
 // 必须等于 baseline 文件记录值；P1 生成 baseline-v2 时更新本常量并单独 commit）。
-const assertionBaselineSourceCommit = "8771fc672b1a09205f12000bf8b897cb40d35041"
+const assertionBaselineSourceCommit = "17963fdccb526bfe986c5039eee072b02becd2f1"
 
 // assertionBaselineRelPath baseline 文件（相对仓库根）。
 const assertionBaselineRelPath = "tools/e2e/testdata/assertion_baseline.json"
